@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>Blacksite</RootNamespace>
+    <AssemblyName>BlacksiteModManager</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <Version>1.8.0</Version>
+    <Authors>Blacksite</Authors>
+    <Product>Blacksite Mod Manager</Product>
+    <Description>Single Player Tarkov (SPT) Mod Manager — real catalog browsing, dependency resolution, installation, installed-mod management and live update checks via sp-mod.com</Description>
+
+    <!-- Allows building/publishing this Windows-targeted WPF app from a non-Windows build agent -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+
+    <!-- Multi-resolution icon embedded into the executable (shield emblem) -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+
+    <!-- Single-file publish settings (also passed on the command line) -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="VirtualizingWrapPanel" Version="2.5.4" />
+    <PackageReference Include="SharpCompress" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Titlebar emblem (transparent shield) -->
+    <Resource Include="Assets\emblem.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Bundled standalone 7-Zip binaries (official 7-Zip x64 console build) — copied to the
+         build output so SevenZipService can run them from the app folder. -->
+    <None Include="tools\7zip\win\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Single-file publish excludes loose None/Content items from the publish folder, so the
+       bundled 7-Zip binaries are copied explicitly after publishing. -->
+  <Target Name="CopyBundledSevenZipToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <BundledSevenZip Include="tools\7zip\win\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BundledSevenZip)"
+          DestinationFiles="@(BundledSevenZip->'$(PublishDir)tools\7zip\win\%(Filename)%(Extension)')"
+          SkipUnchangedFiles="false" />
+  </Target>
+</Project>

@@ -1,0 +1,210 @@
+<Window x:Class="Blacksite.Views.InstallQueueWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:m="clr-namespace:Blacksite.Models"
+        Title="Installation Queue"
+        Width="640" Height="660" MinWidth="520" MinHeight="380"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource BgWindow}"
+        Foreground="{StaticResource TextPrimary}"
+        FontFamily="Segoe UI" FontSize="13"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+  <Window.Resources>
+    <!-- ============ one installation task card (shared by both tabs) ============ -->
+    <DataTemplate x:Key="QueueCardTemplate" DataType="{x:Type m:InstallQueueItem}">
+      <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource BorderSoft}"
+              BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+
+          <!-- head: mod identity | state badge -->
+          <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+              <TextBlock Text="{Binding ModName}" FontSize="14" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimary}" TextTrimming="CharacterEllipsis"
+                         ToolTip="{Binding ModName}"/>
+              <TextBlock Text="{Binding PackageId}" FontSize="10.5" FontFamily="Consolas"
+                         Foreground="{StaticResource TextMuted}" Margin="0,2,0,0"
+                         TextTrimming="CharacterEllipsis" ToolTip="{Binding PackageId}"/>
+            </StackPanel>
+
+            <Border Grid.Column="1" CornerRadius="5" Padding="9,3" VerticalAlignment="Center"
+                    Background="{StaticResource BgSurface}"
+                    ToolTip="{Binding Error, FallbackValue=''}">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Downloading}">
+                      <Setter Property="Background" Value="#3A2415"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Extracting}">
+                      <Setter Property="Background" Value="#3A2415"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Completed}">
+                      <Setter Property="Background" Value="#12291B"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Failed}">
+                      <Setter Property="Background" Value="#321414"/>
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+              <TextBlock Text="{Binding StatusText}" FontSize="11">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Downloading}">
+                        <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Extracting}">
+                        <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Completed}">
+                        <Setter Property="Foreground" Value="{StaticResource Green}"/>
+                      </DataTrigger>
+                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Failed}">
+                        <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+                        <Setter Property="FontWeight" Value="SemiBold"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+            </Border>
+          </Grid>
+
+          <!-- live progress: indeterminate pulse while queued, real % while downloading/extracting -->
+          <ProgressBar Grid.Row="1" Margin="0,9,0,0" Height="8" Minimum="0" Maximum="100"
+                       Value="{Binding Percent, Mode=OneWay}"
+                       IsIndeterminate="{Binding IsIndeterminate}">
+            <ProgressBar.Style>
+              <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Queued}">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Downloading}">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                  <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Extracting}">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </ProgressBar.Style>
+          </ProgressBar>
+
+          <!-- detail: downloaded MB / total MB · live MB/s -->
+          <StackPanel Grid.Row="2" Margin="0,8,0,0" Orientation="Horizontal">
+            <TextBlock Text="{Binding BytesText}" FontSize="11.5" Foreground="{StaticResource TextSecondary}"
+                       Visibility="{Binding BytesText, Converter={StaticResource StringToVisibility}}"/>
+            <TextBlock Text="{Binding SpeedText}" Margin="10,0,0,0" FontSize="11.5" FontFamily="Consolas"
+                       Foreground="{StaticResource AccentHover}"
+                       Visibility="{Binding SpeedText, Converter={StaticResource StringToVisibility}}"/>
+          </StackPanel>
+
+          <!-- exact failure message -->
+          <TextBlock Grid.Row="3" Margin="0,7,0,0" Text="{Binding Error}" FontSize="11.5"
+                     Foreground="{StaticResource Danger}" TextWrapping="Wrap"
+                     Visibility="{Binding Error, Converter={StaticResource StringToVisibility}}"/>
+        </Grid>
+      </Border>
+    </DataTemplate>
+  </Window.Resources>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- ============ top tabs: Install Queue / Completed ============ -->
+    <TabControl Grid.Row="0" Margin="14,10,14,0" Background="Transparent"
+                SelectedIndex="{Binding SelectedTabIndex}">
+
+      <TabItem Header="Install Queue">
+        <Grid>
+          <ListBox x:Name="ActiveList" ItemsSource="{Binding ActiveItems}"
+                   ItemTemplate="{StaticResource QueueCardTemplate}"
+                   Padding="2,10,4,10" Background="Transparent" BorderThickness="0"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   VirtualizingPanel.IsVirtualizing="True"/>
+          <TextBlock Text="No installations are running or waiting.&#10;Click Install on any mod in the catalog — tasks appear here in real time."
+                     HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                     Foreground="{StaticResource TextMuted}">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding HasItems, ElementName=ActiveList}" Value="False">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Completed">
+        <Grid>
+          <ListBox x:Name="FinishedList" ItemsSource="{Binding FinishedItems}"
+                   ItemTemplate="{StaticResource QueueCardTemplate}"
+                   Padding="2,10,4,10" Background="Transparent" BorderThickness="0"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   VirtualizingPanel.IsVirtualizing="True"/>
+          <TextBlock Text="Finished installations (✓ completed / ✗ failed) will be listed here."
+                     HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                     Foreground="{StaticResource TextMuted}">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Visibility" Value="Collapsed"/>
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding HasItems, ElementName=FinishedList}" Value="False">
+                    <Setter Property="Visibility" Value="Visible"/>
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+        </Grid>
+      </TabItem>
+    </TabControl>
+
+    <!-- ============ bottom status & action bar ============ -->
+    <Border Grid.Row="1" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource BorderSoft}"
+            BorderThickness="0,1,0,0" Padding="14,10,14,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <Button Grid.Column="0" Content="Clear Completed" Command="{Binding ClearCompletedCommand}"
+                ToolTip="Clear finished items from the Completed list"/>
+
+        <TextBlock Grid.Column="1" Text="{Binding CountersText}" HorizontalAlignment="Center"
+                   VerticalAlignment="Center" FontFamily="Consolas" FontSize="12.5"
+                   Foreground="{StaticResource TextSecondary}"/>
+
+        <Button Grid.Column="2" Style="{StaticResource AccentButton}" Content="Close" MinWidth="96"
+                Click="Close_Click" ToolTip="Close the installation queue window (installs keep running)"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>
