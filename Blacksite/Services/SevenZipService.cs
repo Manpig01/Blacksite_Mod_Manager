@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 
@@ -72,7 +73,13 @@ public sealed class SevenZipService
     /// Throws <see cref="FileNotFoundException"/> (handled) when neither the bundled binary nor a
     /// system 7-Zip is available, or when the archive does not exist.
     /// </summary>
-    public async Task<bool> ExtractArchiveAsync(string archivePath, string destinationDirectory)
+    public Task<bool> ExtractArchiveAsync(string archivePath, string destinationDirectory)
+        => ExtractArchiveAsync(archivePath, destinationDirectory, CancellationToken.None);
+
+    /// <summary>Cancellable variant used by the extraction pipeline: cancelling the token KILLS
+    /// the 7-Zip process tree immediately (the caller's staging sweep removes the partial
+    /// output), then surfaces the cancellation.</summary>
+    public async Task<bool> ExtractArchiveAsync(string archivePath, string destinationDirectory, CancellationToken cancellationToken)
     {
         string? binary = ResolveBinary();
         if (binary is null)
@@ -83,6 +90,8 @@ public sealed class SevenZipService
             throw new FileNotFoundException("Archive not found.", archivePath);
         if (string.IsNullOrWhiteSpace(destinationDirectory))
             throw new ArgumentException("Destination directory must not be empty.", nameof(destinationDirectory));
+        // A cancelled caller must never START new engine work — abort before the process launches.
+        cancellationToken.ThrowIfCancellationRequested();
 
         Directory.CreateDirectory(destinationDirectory);
 
@@ -105,9 +114,21 @@ public sealed class SevenZipService
         using var process = new Process { StartInfo = startInfo };
         process.Start();
 
+        // Cancellation kills the whole process tree immediately (task 6.3/rewrite: cancellation
+        // must abort cleanly at ANY point — never leave a 7za child running).
+        using CancellationTokenRegistration killRegistration = cancellationToken.Register(() =>
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) { }
+            catch (Win32Exception) { }
+        });
+
         // Drain stderr while the process runs (avoids a full-pipe deadlock), then wait without blocking.
         string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-        await process.WaitForExitAsync().ConfigureAwait(false);
+        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        // If cancellation and process-exit raced, the exit code may belong to a KILLED run —
+        // a cancelled caller must never see a result from it.
+        cancellationToken.ThrowIfCancellationRequested();
 
         switch (process.ExitCode)
         {

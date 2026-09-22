@@ -69,6 +69,10 @@ public sealed class InstallService
         _settings = settings;
     }
 
+    /// <summary>The shared API client (the queue engine subscribes to its <see cref="SpModApiClient.Notice"/>
+    /// to surface rate-limit waits on the active card — task 6.1, Fix B).</summary>
+    public SpModApiClient Client => _api;
+
     // ------------------------------------------------------------- SPT root checks
 
     /// <summary>True when the folder looks like a Single Player Tarkov server root.</summary>
@@ -190,6 +194,7 @@ public sealed class InstallService
 
             // (3) Dependency check -------------------------------------------------------
             progress.Report(new InstallProgress(InstallStage.Dependencies, "Checking dependencies…", -1));
+            InstallTrace.Stage(mod.DisplayName, "dependencies");
             string dependencyWarning = string.Empty;
             DependencyPlan plan;
             string? sptForDeps = ResolveSptVersionForDependencies(sptVersion, target.SptVersionConstraint);
@@ -203,7 +208,13 @@ public sealed class InstallService
             {
                 try
                 {
+                    progress.Report(new InstallProgress(InstallStage.Dependencies, "Resolving dependencies…", -1,
+                        SubTask: "Resolving dependencies…"));
                     plan = await BuildDependencyPlanAsync(mod.Id, target.Version, sptForDeps, sptDirectory, cancellationToken).ConfigureAwait(false);
+                    if (plan.Missing.Count > 0)
+                        progress.Report(new InstallProgress(InstallStage.Dependencies,
+                            $"Resolving dependencies ({plan.Missing.Count} found)…", -1,
+                            SubTask: $"Resolving dependencies ({plan.Missing.Count} found)…"));
                 }
                 catch (ApiException ex) when (ex.Message.Contains("SPT version", StringComparison.OrdinalIgnoreCase))
                 {
@@ -225,6 +236,7 @@ public sealed class InstallService
                 }
             }
 
+            bool depsResolvedSeparately = false;
             if (plan.Missing.Count > 0 || plan.Unresolved.Count > 0 || plan.Conflicts.Count > 0)
             {
                 var prompt = new DependencyPrompt(mod.DisplayName, target.Version, plan.Missing, plan.Conflicts, plan.Unresolved, dependencyWarning);
@@ -233,21 +245,25 @@ public sealed class InstallService
                 if (decision == DependencyPromptResult.Cancel)
                     return new InstallResult(false, "Installation cancelled by user.");
 
-                if (decision == DependencyPromptResult.InstallWithDeps)
-                {
-                    // Install dependencies first, deepest first (plan.InstallQueue is already in that order).
-                    foreach (ResolvedDependency dep in plan.InstallQueue)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        await DownloadExtractRecordAsync(dep.Id, dep.Name, dep.Version, dep.Url, dep.Size, sptDirectory, progress, cancellationToken).ConfigureAwait(false);
-                    }
-                }
+                // Task 6.3 — dependencies are NEVER downloaded inline inside this task (that was
+                // the freeze: one card monopolizing its slot through N nested downloads with no
+                // per-dependency visibility, cancellation or retry). The production flow resolves
+                // the tree UPFRONT (ResolveDependenciesAsync — fully async, cycle-safe, skips
+                // already-installed/already-queued mods) and pushes each dependency into the
+                // InstallQueue as its own independent item BEFORE this mod's card is enqueued.
+                // This in-task path therefore installs ONLY the target; the pre-queue resolver
+                // owns the dependencies.
+                depsResolvedSeparately = decision == DependencyPromptResult.InstallWithDeps && plan.InstallQueue.Count > 0;
+                if (depsResolvedSeparately)
+                    InstallTrace.Prompt(mod.DisplayName,
+                        $"{plan.InstallQueue.Count} dependencies resolved separately (pre-queued as independent items)");
             }
 
             // (4-6) Download, extract, cleanup for the target mod -------------------------
-            await DownloadExtractRecordAsync(mod.Id, mod.DisplayName, target.Version, target.Link!, target.ContentLength, sptDirectory, progress, cancellationToken).ConfigureAwait(false);
+            await DownloadExtractRecordAsync(mod.Id, mod.DisplayName, target.Version, target.Link!, target.ContentLength,
+                sptDirectory, progress, cancellationToken).ConfigureAwait(false);
 
-            string suffix = plan.InstallQueue.Count > 0 ? $" (+{plan.InstallQueue.Count} dependencies)" : "";
+            string suffix = depsResolvedSeparately ? $" (+{plan.InstallQueue.Count} dependencies resolved separately)" : "";
             return new InstallResult(true, $"{dependencyWarning}{targetLabel} installed{suffix}.", target.Version);
         }
         catch (OperationCanceledException)
@@ -255,6 +271,10 @@ public sealed class InstallService
             return new InstallResult(false, "Installation cancelled.");
         }
         catch (InvalidDataException ex)
+        {
+            return new InstallResult(false, ex.Message);
+        }
+        catch (DownloadStallException ex)
         {
             return new InstallResult(false, ex.Message);
         }
@@ -295,7 +315,7 @@ public sealed class InstallService
                     $"Extracting {displayName}… {percent:F0}%", Math.Clamp(percent, 0, 100), BytesText: $"{percent:F0}%")));
 
             progress.Report(new InstallProgress(InstallStage.Extracting, $"Extracting {displayName} into {sptDirectory}…", -1));
-            await ExtractDownloadedArchiveAsync(archivePath, sptDirectory, displayName, extractionProgress, kind)
+            await ExtractDownloadedArchiveAsync(archivePath, sptDirectory, displayName, extractionProgress, kind, cancellationToken)
                 .ConfigureAwait(false);
 
             return new InstallResult(true, $"{displayName} installed from local archive.", null);
@@ -347,6 +367,15 @@ public sealed class InstallService
 
             foreach (string file in Directory.EnumerateFiles(temp, "*.zip.part"))
                 TryDeleteFile(file);
+
+            // Update-replace asides live inside the SPT root (same volume as the mods); a crash
+            // mid-update can leave one behind — sweep those too (best-effort, settings-driven).
+            string? sptRoot = SettingsService.Instance?.Settings.SptDirectory;
+            if (!string.IsNullOrWhiteSpace(sptRoot) && Directory.Exists(sptRoot))
+            {
+                foreach (string dir in Directory.EnumerateDirectories(sptRoot, "bs-staging-old-*"))
+                    ArchiveExtractor.DeleteDirectoryRobust(dir);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -392,6 +421,22 @@ public sealed class InstallService
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
+
+            // Update-replace asides inside the SPT root (crash leftovers) are part of the purge.
+            string? sptRoot = SettingsService.Instance?.Settings.SptDirectory;
+            if (!string.IsNullOrWhiteSpace(sptRoot) && Directory.Exists(sptRoot))
+            {
+                foreach (string dir in Directory.EnumerateDirectories(sptRoot, "bs-staging-old-*"))
+                {
+                    try
+                    {
+                        bytes += Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+                        ArchiveExtractor.DeleteDirectoryRobust(dir);
+                        files++;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -409,7 +454,8 @@ public sealed class InstallService
     /// layout-aware ArchiveExtractor.
     /// </summary>
     public static async Task ExtractDownloadedArchiveAsync(string archivePath, string sptRoot, string modNameForPayloadFolder,
-        IProgress<double>? extractionProgress = null, ArchiveKind? kind = null)
+        IProgress<double>? extractionProgress = null, ArchiveKind? kind = null,
+        CancellationToken cancellationToken = default)
     {
         ArchiveKind actualKind = kind ?? ArchiveExtractor.DetectWithExtensionFallback(archivePath);
         if (actualKind is ArchiveKind.Html or ArchiveKind.Unknown)
@@ -417,13 +463,14 @@ public sealed class InstallService
                 ? "The download URL returned a web page or error payload instead of an archive (the file link is probably dead — open the mod page and download manually)."
                 : "The downloaded file is not a recognized archive (zip/rar/7z).");
 
-        // Both layouts route through the staged parallel engine: unique %TEMP% staging folder →
-        // concurrent tiny-file extraction (ProcessorCount workers) + sequential large files →
-        // atomic Directory.Move into the SPT root (no per-file writes through the game directory).
+        // Extraction pipeline (clean-slate rewrite): 7-Zip FIRST (bundled official engine),
+        // SharpCompress staged engine as the automatic fallback. Always staged into
+        // %TEMP%\bs-extract-* → atomic/merge placement; cancellation aborts cleanly at any point.
         await ArchiveExtractor.ExtractSmartAsync(archivePath, actualKind, sptRoot,
             payloadTargetDir: null,
             looseFolderName: SanitizeFolderName(modNameForPayloadFolder),
-            progress: extractionProgress).ConfigureAwait(false);
+            progress: extractionProgress,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public static string SanitizeFolderName(string name)
@@ -435,7 +482,8 @@ public sealed class InstallService
 
     private async Task DownloadExtractRecordAsync(
         int id, string name, string version, string url, long? expectedSize,
-        string sptDirectory, IProgress<InstallProgress> progress, CancellationToken cancellationToken)
+        string sptDirectory, IProgress<InstallProgress> progress, CancellationToken cancellationToken,
+        string? subTask = null)
     {
         // (4) Download the real archive to %TEMP%\{modId}.zip with live progress ----------
         string tempZip = Path.Combine(Path.GetTempPath(), $"{id}.zip");
@@ -448,11 +496,14 @@ public sealed class InstallService
                 string totalMb = dp.TotalBytes is > 0 ? $" / {(dp.TotalBytes.Value / (1024.0 * 1024.0)).ToString("F1")} MB" : " MB";
                 string speed = dp.BytesPerSecond > 0 ? $"{dp.BytesPerSecond / (1024.0 * 1024.0):F2} MB/s" : "—";
                 progress.Report(new InstallProgress(InstallStage.Downloading,
-                    $"Downloading {name} {version}… {downloadedMb}{totalMb}", percent, speed, $"{downloadedMb}{totalMb}"));
+                    $"Downloading {name} {version}… {downloadedMb}{totalMb}", percent, speed, $"{downloadedMb}{totalMb}",
+                    SubTask: subTask));
             });
 
-            progress.Report(new InstallProgress(InstallStage.Downloading, $"Downloading {name} {version}…", -1, null));
+            progress.Report(new InstallProgress(InstallStage.Downloading, $"Downloading {name} {version}…", -1, null, SubTask: subTask));
+            InstallTrace.Download($"{name} {version}", expectedSize, finished: false);
             long bytes = await _api.DownloadFileAsync(url, tempZip, downloadProgress, cancellationToken).ConfigureAwait(false);
+            InstallTrace.Download($"{name} {version}", bytes, finished: true);
 
             if (bytes == 0)
                 throw new IOException("Download produced an empty file.");
@@ -476,9 +527,10 @@ public sealed class InstallService
             var extractionProgress = new SyncProgress<double>(percent =>
                 progress.Report(new InstallProgress(InstallStage.Extracting,
                     $"Extracting {name} {version}… {percent:F0}%", Math.Clamp(percent, 0, 100),
-                    BytesText: $"{percent:F0}%")));
-            progress.Report(new InstallProgress(InstallStage.Extracting, $"Extracting {name} {version} into {sptDirectory}…", -1));
-            await ExtractDownloadedArchiveAsync(tempZip, sptDirectory, name, extractionProgress).ConfigureAwait(false);
+                    BytesText: $"{percent:F0}%", SubTask: subTask)));
+            progress.Report(new InstallProgress(InstallStage.Extracting, $"Extracting {name} {version} into {sptDirectory}…", -1, SubTask: subTask));
+            await ExtractDownloadedArchiveAsync(tempZip, sptDirectory, name, extractionProgress,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
 
             // (6) Cleanup + record ---------------------------------------------------------
             progress.Report(new InstallProgress(InstallStage.Extracting, "Cleaning up temporary files…", 100));
@@ -631,6 +683,10 @@ public sealed class InstallService
         {
             return new InstallResult(false, ex.Message);
         }
+        catch (DownloadStallException ex)
+        {
+            return new InstallResult(false, ex.Message);
+        }
         catch (Exception ex)
         {
             return new InstallResult(false, $"{ex.GetType().Name}: {ex.Message}");
@@ -701,8 +757,13 @@ public sealed class InstallService
             return plan;
 
         // Flatten the dependency tree depth-first (post-order → deepest dependencies first).
+        // The visited set is SEEDED WITH THE REQUESTED MOD'S OWN ID (task 6.3): a circular tree
+        // (Mod A requires B requires A) then terminates AND never lists the requested mod as its
+        // own dependency. The set is method-local — one resolution flow owns it exclusively; the
+        // cross-install "already queued?" guarantee is enforced atomically by the queue engine
+        // (InstallQueueEngine.EnqueueResolvedIfAbsent), so shared deps are never double-downloaded.
         var flat = new List<DependencyInfo>();
-        var seen = new HashSet<int>();
+        var seen = new HashSet<int> { modId };
         void Flatten(DependencyInfo d)
         {
             if (!seen.Add(d.Id)) return;

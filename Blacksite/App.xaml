@@ -9,7 +9,6 @@
         <ResourceDictionary Source="Themes/Dark.xaml"/>
       </ResourceDictionary.MergedDictionaries>
 
-      <conv:InverseNullToVisibilityConverter x:Key="InverseNullToVisibility"/>
       <conv:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
       <conv:CountToVisibilityConverter x:Key="CountToVisibility"/>
       <conv:StringToVisibilityConverter x:Key="StringToVisibility"/>

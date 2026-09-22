@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:m="clr-namespace:Blacksite.Models"
         Title="Installation Queue"
-        Width="640" Height="660" MinWidth="520" MinHeight="380"
+        Width="680" Height="720" MinWidth="540" MinHeight="420"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BgWindow}"
         Foreground="{StaticResource TextPrimary}"
@@ -12,118 +12,235 @@
         UseLayoutRounding="True">
 
   <Window.Resources>
-    <!-- ============ one installation task card (shared by both tabs) ============ -->
-    <DataTemplate x:Key="QueueCardTemplate" DataType="{x:Type m:InstallQueueItem}">
+
+    <!-- ============ section header ============ -->
+    <Style x:Key="SectionHeader" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+      <Setter Property="Margin" Value="2,14,0,6"/>
+    </Style>
+
+    <!-- ============ state badge (shared) ============ -->
+    <DataTemplate x:Key="StateBadge">
+      <Border CornerRadius="5" Padding="9,3" VerticalAlignment="Center"
+              Background="{StaticResource BgSurface}"
+              ToolTip="{Binding Item.Error, FallbackValue=''}">
+        <Border.Style>
+          <Style TargetType="Border">
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Downloading}">
+                <Setter Property="Background" Value="#3A2415"/>
+              </DataTrigger>
+              <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Extracting}">
+                <Setter Property="Background" Value="#3A2415"/>
+              </DataTrigger>
+              <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.WaitingForUser}">
+                <Setter Property="Background" Value="#3A2415"/>
+              </DataTrigger>
+              <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Completed}">
+                <Setter Property="Background" Value="#12291B"/>
+              </DataTrigger>
+              <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Failed}">
+                <Setter Property="Background" Value="#321414"/>
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <TextBlock Text="{Binding Item.StatusText}" FontSize="11">
+          <TextBlock.Style>
+            <Style TargetType="TextBlock">
+              <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Downloading}">
+                  <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Extracting}">
+                  <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.WaitingForUser}">
+                  <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
+                  <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Completed}">
+                  <Setter Property="Foreground" Value="{StaticResource Green}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Failed}">
+                  <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+                  <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </TextBlock.Style>
+        </TextBlock>
+      </Border>
+    </DataTemplate>
+
+    <!-- ============ ACTIVE card: thumbnail, stage, live speed/bytes, progress, cancel ============ -->
+    <DataTemplate x:Key="ActiveCardTemplate">
       <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource BorderSoft}"
               BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
         <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-          </Grid.RowDefinitions>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
 
-          <!-- head: mod identity | state badge -->
-          <Grid Grid.Row="0">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+          <!-- thumbnail (placeholder box until the cached image arrives) -->
+          <Border Grid.Column="0" Width="48" Height="48" CornerRadius="6" Margin="0,2,12,0"
+                  Background="{StaticResource BgSurface}" VerticalAlignment="Top">
+            <Image Source="{Binding Thumb}" Width="48" Height="48" Stretch="UniformToFill">
+              <Image.Clip>
+                <RectangleGeometry Rect="0,0,48,48" RadiusX="6" RadiusY="6"/>
+              </Image.Clip>
+            </Image>
+          </Border>
 
-            <StackPanel Grid.Column="0" VerticalAlignment="Center">
-              <TextBlock Text="{Binding ModName}" FontSize="14" FontWeight="SemiBold"
+          <Grid Grid.Column="1" Margin="0,0,12,0">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Horizontal">
+              <TextBlock Text="{Binding Item.ModName}" FontSize="14" FontWeight="SemiBold"
                          Foreground="{StaticResource TextPrimary}" TextTrimming="CharacterEllipsis"
-                         ToolTip="{Binding ModName}"/>
-              <TextBlock Text="{Binding PackageId}" FontSize="10.5" FontFamily="Consolas"
-                         Foreground="{StaticResource TextMuted}" Margin="0,2,0,0"
-                         TextTrimming="CharacterEllipsis" ToolTip="{Binding PackageId}"/>
+                         MaxWidth="340" ToolTip="{Binding Item.ModName}" VerticalAlignment="Center"/>
+              <ContentControl Content="{Binding}" ContentTemplate="{StaticResource StateBadge}"
+                              Margin="10,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
 
-            <Border Grid.Column="1" CornerRadius="5" Padding="9,3" VerticalAlignment="Center"
-                    Background="{StaticResource BgSurface}"
-                    ToolTip="{Binding Error, FallbackValue=''}">
-              <Border.Style>
-                <Style TargetType="Border">
-                  <Style.Triggers>
-                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Downloading}">
-                      <Setter Property="Background" Value="#3A2415"/>
-                    </DataTrigger>
-                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Extracting}">
-                      <Setter Property="Background" Value="#3A2415"/>
-                    </DataTrigger>
-                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Completed}">
-                      <Setter Property="Background" Value="#12291B"/>
-                    </DataTrigger>
-                    <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Failed}">
-                      <Setter Property="Background" Value="#321414"/>
-                    </DataTrigger>
-                  </Style.Triggers>
-                </Style>
-              </Border.Style>
-              <TextBlock Text="{Binding StatusText}" FontSize="11">
-                <TextBlock.Style>
-                  <Style TargetType="TextBlock">
-                    <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Downloading}">
-                        <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Extracting}">
-                        <Setter Property="Foreground" Value="{StaticResource AccentHover}"/>
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Completed}">
-                        <Setter Property="Foreground" Value="{StaticResource Green}"/>
-                      </DataTrigger>
-                      <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Failed}">
-                        <Setter Property="Foreground" Value="{StaticResource Danger}"/>
-                        <Setter Property="FontWeight" Value="SemiBold"/>
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </TextBlock.Style>
-              </TextBlock>
-            </Border>
+            <ProgressBar Grid.Row="1" Margin="0,9,0,0" Height="8" Minimum="0" Maximum="100"
+                         Value="{Binding Item.Percent, Mode=OneWay}"
+                         IsIndeterminate="{Binding Item.IsIndeterminate}"/>
+
+            <StackPanel Grid.Row="2" Margin="0,8,0,0" Orientation="Horizontal">
+              <TextBlock Text="{Binding Item.BytesText}" FontSize="11.5" Foreground="{StaticResource TextSecondary}"
+                         Visibility="{Binding Item.BytesText, Converter={StaticResource StringToVisibility}}"/>
+              <TextBlock Text="{Binding Item.SpeedText}" Margin="10,0,0,0" FontSize="11.5" FontFamily="Consolas"
+                         Foreground="{StaticResource AccentHover}"
+                         Visibility="{Binding Item.SpeedText, Converter={StaticResource StringToVisibility}}"/>
+            </StackPanel>
+
+            <!-- live pipeline notice: rate-limit countdown, retries, prompt timeout (task 6.1) -->
+            <TextBlock Grid.Row="3" Margin="0,6,0,0" Text="{Binding Item.StatusDetail}" FontSize="11.5"
+                       Foreground="{StaticResource AccentHover}" TextTrimming="CharacterEllipsis"
+                       ToolTip="{Binding Item.StatusDetail}"
+                       Visibility="{Binding Item.StatusDetail, Converter={StaticResource StringToVisibility}}"/>
           </Grid>
 
-          <!-- live progress: indeterminate pulse while queued, real % while downloading/extracting -->
-          <ProgressBar Grid.Row="1" Margin="0,9,0,0" Height="8" Minimum="0" Maximum="100"
-                       Value="{Binding Percent, Mode=OneWay}"
-                       IsIndeterminate="{Binding IsIndeterminate}">
-            <ProgressBar.Style>
-              <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+          <!-- per-card cancel -->
+          <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="✕" FontSize="14"
+                  Width="34" Height="30" VerticalAlignment="Top"
+                  Command="{Binding CancelCommand}"
+                  ToolTip="Cancel this install (queued items are removed; running downloads are aborted)"/>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <!-- ============ QUEUED card: compact row + cancel ============ -->
+    <DataTemplate x:Key="QueuedCardTemplate">
+      <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource BorderSoft}"
+              BorderThickness="1" CornerRadius="8" Padding="12,7" Margin="0,0,0,6">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <Border Grid.Column="0" Width="48" Height="48" CornerRadius="6" Margin="0,2,12,0"
+                  Background="{StaticResource BgSurface}" VerticalAlignment="Top">
+            <Image Source="{Binding Thumb}" Width="48" Height="48" Stretch="UniformToFill">
+              <Image.Clip>
+                <RectangleGeometry Rect="0,0,48,48" RadiusX="6" RadiusY="6"/>
+              </Image.Clip>
+            </Image>
+          </Border>
+
+          <StackPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding Item.ModName}" FontSize="13.5" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimary}" TextTrimming="CharacterEllipsis"
+                       ToolTip="{Binding Item.ModName}"/>
+            <TextBlock Text="{Binding Item.Teaser, FallbackValue='Waiting…'}" FontSize="11"
+                       Foreground="{StaticResource TextMuted}" Margin="0,2,0,0"/>
+          </StackPanel>
+
+          <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="✕" FontSize="14"
+                  Width="34" Height="30" VerticalAlignment="Center"
+                  Command="{Binding CancelCommand}"
+                  ToolTip="Remove this item from the queue"/>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
+    <!-- ============ FINISHED card: result, version/time, error, retry ============ -->
+    <DataTemplate x:Key="FinishedCardTemplate">
+      <Border Background="{StaticResource BgCard}" BorderBrush="{StaticResource BorderSoft}"
+              BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,8">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>
+          </Grid.ColumnDefinitions>
+
+          <Border Grid.Column="0" Width="48" Height="48" CornerRadius="6" Margin="0,2,12,0"
+                  Background="{StaticResource BgSurface}" VerticalAlignment="Top">
+            <Image Source="{Binding Thumb}" Width="48" Height="48" Stretch="UniformToFill">
+              <Image.Clip>
+                <RectangleGeometry Rect="0,0,48,48" RadiusX="6" RadiusY="6"/>
+              </Image.Clip>
+            </Image>
+          </Border>
+
+          <Grid Grid.Column="1" Margin="0,0,12,0">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Horizontal">
+              <TextBlock Text="{Binding Item.ModName}" FontSize="13.5" FontWeight="SemiBold"
+                         Foreground="{StaticResource TextPrimary}" TextTrimming="CharacterEllipsis"
+                         MaxWidth="300" ToolTip="{Binding Item.ModName}" VerticalAlignment="Center"/>
+              <ContentControl Content="{Binding}" ContentTemplate="{StaticResource StateBadge}"
+                              Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+
+            <TextBlock Grid.Row="1" Margin="0,4,0,0" FontSize="11.5" Foreground="{StaticResource TextSecondary}"
+                       Text="{Binding Item.BytesText, FallbackValue=''}"
+                       Visibility="{Binding Item.BytesText, Converter={StaticResource StringToVisibility}}"/>
+
+            <TextBlock Grid.Row="2" Margin="0,6,0,0" Text="{Binding Item.Error}" FontSize="11.5"
+                       Foreground="{StaticResource Danger}" TextWrapping="Wrap"
+                       Visibility="{Binding Item.Error, Converter={StaticResource StringToVisibility}}"/>
+          </Grid>
+
+          <!-- retry (failed cards only) -->
+          <Button Grid.Column="2" Content="↻ Retry" FontSize="12"
+                  Padding="10,4" VerticalAlignment="Top"
+                  Command="{Binding RetryCommand}"
+                  ToolTip="Retry this install — re-queued with the same mod and version">
+            <Button.Style>
+              <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
                 <Setter Property="Visibility" Value="Collapsed"/>
                 <Style.Triggers>
-                  <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Queued}">
-                    <Setter Property="Visibility" Value="Visible"/>
-                  </DataTrigger>
-                  <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Downloading}">
-                    <Setter Property="Visibility" Value="Visible"/>
-                  </DataTrigger>
-                  <DataTrigger Binding="{Binding State}" Value="{x:Static m:InstallTaskState.Extracting}">
+                  <DataTrigger Binding="{Binding Item.State}" Value="{x:Static m:InstallTaskState.Failed}">
                     <Setter Property="Visibility" Value="Visible"/>
                   </DataTrigger>
                 </Style.Triggers>
               </Style>
-            </ProgressBar.Style>
-          </ProgressBar>
-
-          <!-- detail: downloaded MB / total MB · live MB/s -->
-          <StackPanel Grid.Row="2" Margin="0,8,0,0" Orientation="Horizontal">
-            <TextBlock Text="{Binding BytesText}" FontSize="11.5" Foreground="{StaticResource TextSecondary}"
-                       Visibility="{Binding BytesText, Converter={StaticResource StringToVisibility}}"/>
-            <TextBlock Text="{Binding SpeedText}" Margin="10,0,0,0" FontSize="11.5" FontFamily="Consolas"
-                       Foreground="{StaticResource AccentHover}"
-                       Visibility="{Binding SpeedText, Converter={StaticResource StringToVisibility}}"/>
-          </StackPanel>
-
-          <!-- exact failure message -->
-          <TextBlock Grid.Row="3" Margin="0,7,0,0" Text="{Binding Error}" FontSize="11.5"
-                     Foreground="{StaticResource Danger}" TextWrapping="Wrap"
-                     Visibility="{Binding Error, Converter={StaticResource StringToVisibility}}"/>
+            </Button.Style>
+          </Button>
         </Grid>
       </Border>
     </DataTemplate>
+
   </Window.Resources>
 
   <Grid>
@@ -132,58 +249,70 @@
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
 
-    <!-- ============ top tabs: Install Queue / Completed ============ -->
-    <TabControl Grid.Row="0" Margin="14,10,14,0" Background="Transparent"
-                SelectedIndex="{Binding SelectedTabIndex}">
+    <!-- ============ the three live sections ============ -->
+    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="14,4,14,10">
 
-      <TabItem Header="Install Queue">
-        <Grid>
-          <ListBox x:Name="ActiveList" ItemsSource="{Binding ActiveItems}"
-                   ItemTemplate="{StaticResource QueueCardTemplate}"
-                   Padding="2,10,4,10" Background="Transparent" BorderThickness="0"
-                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                   VirtualizingPanel.IsVirtualizing="True"/>
-          <TextBlock Text="No installations are running or waiting.&#10;Click Install on any mod in the catalog — tasks appear here in real time."
-                     HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
-                     Foreground="{StaticResource TextMuted}">
-            <TextBlock.Style>
-              <Style TargetType="TextBlock">
-                <Setter Property="Visibility" Value="Collapsed"/>
-                <Style.Triggers>
-                  <DataTrigger Binding="{Binding HasItems, ElementName=ActiveList}" Value="False">
-                    <Setter Property="Visibility" Value="Visible"/>
-                  </DataTrigger>
-                </Style.Triggers>
-              </Style>
-            </TextBlock.Style>
-          </TextBlock>
-        </Grid>
-      </TabItem>
+        <!-- ACTIVE DOWNLOADS -->
+        <TextBlock Text="ACTIVE DOWNLOADS" Style="{StaticResource SectionHeader}"/>
+        <ItemsControl ItemsSource="{Binding ActiveCards}" ItemTemplate="{StaticResource ActiveCardTemplate}"/>
+        <TextBlock Text="Nothing is downloading right now.&#10;Queue an install from Browse Mods — live progress appears here."
+                   HorizontalAlignment="Center" TextAlignment="Center" Margin="0,10,0,4"
+                   Foreground="{StaticResource TextMuted}">
+          <TextBlock.Style>
+            <Style TargetType="TextBlock">
+              <Setter Property="Visibility" Value="Collapsed"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding HasActive}" Value="False">
+                  <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </TextBlock.Style>
+        </TextBlock>
 
-      <TabItem Header="Completed">
-        <Grid>
-          <ListBox x:Name="FinishedList" ItemsSource="{Binding FinishedItems}"
-                   ItemTemplate="{StaticResource QueueCardTemplate}"
-                   Padding="2,10,4,10" Background="Transparent" BorderThickness="0"
-                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                   VirtualizingPanel.IsVirtualizing="True"/>
-          <TextBlock Text="Finished installations (✓ completed / ✗ failed) will be listed here."
-                     HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
-                     Foreground="{StaticResource TextMuted}">
-            <TextBlock.Style>
-              <Style TargetType="TextBlock">
-                <Setter Property="Visibility" Value="Collapsed"/>
-                <Style.Triggers>
-                  <DataTrigger Binding="{Binding HasItems, ElementName=FinishedList}" Value="False">
-                    <Setter Property="Visibility" Value="Visible"/>
-                  </DataTrigger>
-                </Style.Triggers>
-              </Style>
-            </TextBlock.Style>
-          </TextBlock>
-        </Grid>
-      </TabItem>
-    </TabControl>
+        <Border Background="{StaticResource BorderSoft}" Height="1" Margin="0,10,0,0"/>
+
+        <!-- QUEUED -->
+        <TextBlock Text="{Binding QueuedHeaderText}" Style="{StaticResource SectionHeader}"/>
+        <ItemsControl ItemsSource="{Binding QueuedCards}" ItemTemplate="{StaticResource QueuedCardTemplate}"/>
+        <TextBlock Text="No items are waiting."
+                   HorizontalAlignment="Center" Margin="0,8,0,4" FontSize="12"
+                   Foreground="{StaticResource TextMuted}">
+          <TextBlock.Style>
+            <Style TargetType="TextBlock">
+              <Setter Property="Visibility" Value="Collapsed"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding HasQueued}" Value="False">
+                  <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </TextBlock.Style>
+        </TextBlock>
+
+        <Border Background="{StaticResource BorderSoft}" Height="1" Margin="0,10,0,0"/>
+
+        <!-- COMPLETED / FAILED -->
+        <TextBlock Text="COMPLETED / FAILED" Style="{StaticResource SectionHeader}"/>
+        <ItemsControl ItemsSource="{Binding FinishedCards}" ItemTemplate="{StaticResource FinishedCardTemplate}"/>
+        <TextBlock Text="Finished installs (✓ completed / ✗ failed) will be listed here with their version and time."
+                   HorizontalAlignment="Center" TextAlignment="Center" Margin="0,8,0,4"
+                   Foreground="{StaticResource TextMuted}">
+          <TextBlock.Style>
+            <Style TargetType="TextBlock">
+              <Setter Property="Visibility" Value="Collapsed"/>
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding HasFinished}" Value="False">
+                  <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </TextBlock.Style>
+        </TextBlock>
+
+      </StackPanel>
+    </ScrollViewer>
 
     <!-- ============ bottom status & action bar ============ -->
     <Border Grid.Row="1" Background="{StaticResource BgPanel}" BorderBrush="{StaticResource BorderSoft}"
@@ -196,7 +325,7 @@
         </Grid.ColumnDefinitions>
 
         <Button Grid.Column="0" Content="Clear Completed" Command="{Binding ClearCompletedCommand}"
-                ToolTip="Clear finished items from the Completed list"/>
+                ToolTip="Clear finished items from the Completed / Failed section"/>
 
         <TextBlock Grid.Column="1" Text="{Binding CountersText}" HorizontalAlignment="Center"
                    VerticalAlignment="Center" FontFamily="Consolas" FontSize="12.5"

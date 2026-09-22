@@ -10,7 +10,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
 
-    <Version>1.8.0</Version>
+    <Version>1.9.0</Version>
+    <AssemblyVersion>1.9.0</AssemblyVersion>
+    <FileVersion>1.9.0</FileVersion>
     <Authors>Blacksite</Authors>
     <Product>Blacksite Mod Manager</Product>
     <Description>Single Player Tarkov (SPT) Mod Manager — real catalog browsing, dependency resolution, installation, installed-mod management and live update checks via sp-mod.com</Description>

@@ -5,15 +5,6 @@ using System.Windows.Data;
 
 namespace Blacksite.Converters;
 
-/// <summary>null → Visible, non-null → Collapsed (used for the thumbnail placeholder).</summary>
-public sealed class InverseNullToVisibilityConverter : IValueConverter
-{
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is null ? Visibility.Visible : Visibility.Collapsed;
-
-    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotSupportedException();
-}
 
 /// <summary>true → Visible, false → Collapsed. Pass "Inverse" as parameter to flip.</summary>
 public sealed class BoolToVisibilityConverter : IValueConverter

@@ -1,5 +1,5 @@
 ================================================================================
- BLACKSITE MOD MANAGER  ALPHA v1.8.0
+ BLACKSITE MOD MANAGER  BETA v1.9.0
  Single Player Tarkov (SPT) Mod Manager — built for the sp-mod.com ecosystem
 ================================================================================
 
@@ -99,6 +99,25 @@ thousands of tiny files (database JSONs):
 • Crashed runs leave no litter: bs-extract-* staging folders are swept
   at startup and by "Clear Temp Files".
 
+UPDATE ENGINE REWRITE, ONE CARD PER MOD & BETA (new in v1.9.0-BETA)
+-------------------------------------------------------------------
+• The "Update available" verdict is now computed with strict semantic
+  version comparison (central VersionUtils parser): the orange Update
+  button appears ONLY when the Forge version parses strictly newer than
+  the installed one. Formatting drift ("v4.1.0" vs "4.1.0", "-release"
+  suffixes, " RC2" annotations) can no longer fabricate updates.
+• One card per mod: client + server halves of the same mod (e.g. a
+  BepInEx plugin + its user\mods server package) are consolidated into a
+  single Installed Mods card with both category pills; uninstall/disable
+  act on every component path.
+• 1-click updates persist the installed version (verified from the
+  package.json/DLL on disk), so mods no longer appear outdated again
+  after a restart.
+• Extraction rebuilt on a 7-Zip-first pipeline (bundled official engine,
+  in-process fallback) with atomic placement and cancellation at any
+  point; bs-staging-old-* rollback asides for safe folder replacement.
+• Version bumped to v1.9.0-BETA (titlebar, window title, assembly).
+
 STANDALONE 7-ZIP EXTRACTION
 ----------------------------
 • Bundles the official standalone 7-Zip console binaries (7za.exe +
@@ -147,7 +166,7 @@ UNIFIED CARD GRID, APP ICON & THUMBNAILS (new in ALPHA v1.8.0)
 • Executable icon: the Blacksite shield emblem, embedded as a
   multi-resolution .ico (16-256px) via <ApplicationIcon>.
 • The custom titlebar now shows the transparent shield emblem next to
-  the app name "Blacksite Mod Manager - ALPHA v1.8.0".
+  the app name "Blacksite Mod Manager - BETA v1.9.0".
 • Installed Mods was rebuilt onto the exact same card grid as Browse:
   3-column responsive wrap layout, vertical-only scrolling, compact
   220px-tall cards on #181b20 with 8px corners and 6px margins.

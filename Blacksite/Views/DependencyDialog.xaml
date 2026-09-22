@@ -8,7 +8,8 @@
         Foreground="{StaticResource TextPrimary}"
         FontFamily="Segoe UI" FontSize="13"
         TextOptions.TextFormattingMode="Display"
-        UseLayoutRounding="True">
+        UseLayoutRounding="True"
+        ShowActivated="True">
 
   <Window.Resources>
     <!-- one bulleted dependency line -->

@@ -56,8 +56,10 @@ public static class ModFilterEngine
 
         if (filter.HideOutdated && row.Outcome is { Status: UpdateStatus.UpdateAvailable }) return false;
 
-        if (filter.OnlyServer && row.Info.Kind != InstalledModKind.Server) return false;
-        if (filter.OnlyClient && row.Info.Kind != InstalledModKind.Client) return false;
+        // Component flags (not raw Kind): a consolidated card carrying BOTH a server and a
+        // client half must appear under either filter. For raw single rows these equal Kind.
+        if (filter.OnlyServer && !row.Info.HasServerMod) return false;
+        if (filter.OnlyClient && !row.Info.HasClientPlugin) return false;
 
         // "Show Only Server" and "Show Only Client" are mutually exclusive by definition.
         return true;

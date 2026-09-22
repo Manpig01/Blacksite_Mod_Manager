@@ -8,6 +8,9 @@ public enum InstallTaskState
     Queued,
     Downloading,
     Extracting,
+    /// <summary>The pipeline is blocked on the dependency-prompt dialog (task 6.1, Fix C).
+    /// Occupies a processing slot; auto-cancels after the engine's prompt timeout.</summary>
+    WaitingForUser,
     Completed,
     Failed
 }
@@ -23,10 +26,16 @@ public sealed class InstallQueueItem : INotifyPropertyChanged
     public required string PackageId { get; init; }
     public string? Teaser { get; init; }
 
+    /// <summary>Catalog thumbnail URL (null for local archives / pre-resolved dependencies
+    /// without one) — the queue window loads it through the shared ImageCache.</summary>
+    public string? ThumbnailUrl { get; init; }
+
     private InstallTaskState _state = InstallTaskState.Queued;
     private double _percent;              // -1 → indeterminate
     private string _speedText = string.Empty;
     private string _bytesText = string.Empty;
+    private string? _subTask;             // pipeline label override ("Dependency 2/3: CommonLib")
+    private string? _statusDetail;        // live notice line ("Rate limited by sp-mod.com — waiting 45s (attempt 2 of 6)")
     private string? _error;
     private DateTime? _completedAt;
     private string? _installedVersion;
@@ -41,8 +50,8 @@ public sealed class InstallQueueItem : INotifyPropertyChanged
         set { if (_state != value) { _state = value; Raise(nameof(State)); Raise(nameof(IsBusy)); Raise(nameof(StatusText)); } }
     }
 
-    /// <summary>True while the task occupies a processing slot (downloading or extracting).</summary>
-    public bool IsBusy => _state is InstallTaskState.Downloading or InstallTaskState.Extracting;
+    /// <summary>True while the task occupies a processing slot (downloading, extracting or waiting for the user).</summary>
+    public bool IsBusy => _state is InstallTaskState.Downloading or InstallTaskState.Extracting or InstallTaskState.WaitingForUser;
 
     public double Percent
     {
@@ -57,15 +66,38 @@ public sealed class InstallQueueItem : INotifyPropertyChanged
     /// <summary>“117.2 / 117.2 MB” while downloading; “43%” style detail while extracting.</summary>
     public string BytesText { get => _bytesText; set { if (_bytesText != value) { _bytesText = value; Raise(nameof(BytesText)); } } }
 
-    public string StatusText => State switch
+    public string StatusText => SubTask is { Length: > 0 } subTask
+        ? subTask
+        : State switch
+        {
+            InstallTaskState.Queued => "Pending…",
+            InstallTaskState.Downloading => "Downloading…",
+            InstallTaskState.Extracting => "Extracting…",
+            InstallTaskState.WaitingForUser => "Waiting for your answer — choose how to handle dependencies",
+            InstallTaskState.Completed => $"✓ Completed {(_completedAt?.ToString("HH:mm:ss") ?? "")}".Trim(),
+            InstallTaskState.Failed => "✗ Failed",
+            _ => "Queued"
+        };
+
+    /// <summary>Pipeline label override while a card moves through sub-operations —
+    /// "Resolving dependencies (2 found)…", "Dependency 2/3: CommonLib". Null → plain state label.</summary>
+    public string? SubTask
     {
-        InstallTaskState.Queued => "Pending…",
-        InstallTaskState.Downloading => "Downloading…",
-        InstallTaskState.Extracting => "Extracting…",
-        InstallTaskState.Completed => $"✓ Completed {(_completedAt?.ToString("HH:mm:ss") ?? "")}".Trim(),
-        InstallTaskState.Failed => "✗ Failed",
-        _ => "Queued"
-    };
+        get => _subTask;
+        set { if (_subTask != value) { _subTask = value; Raise(nameof(SubTask)); Raise(nameof(StatusText)); } }
+    }
+
+    /// <summary>Live secondary line from the HTTP pipeline — e.g. the rate-limit countdown
+    /// "Rate limited by sp-mod.com — waiting 45s (attempt 2 of 6)". Cleared on completion.</summary>
+    public string? StatusDetail
+    {
+        get => _statusDetail;
+        set { if (_statusDetail != value) { _statusDetail = value; Raise(nameof(StatusDetail)); } }
+    }
+
+    /// <summary>Set when the dependency prompt timed out and the default Cancel was applied
+    /// (task 6.1, Fix C) — the engine turns it into the card's failure note.</summary>
+    public bool PromptTimedOut { get; set; }
 
     /// <summary>Exact exception/result message for failed tasks.</summary>
     public string? Error
@@ -84,6 +116,21 @@ public sealed class InstallQueueItem : INotifyPropertyChanged
     {
         get => _installedVersion;
         set { if (_installedVersion != value) { _installedVersion = value; Raise(nameof(InstalledVersion)); } }
+    }
+
+    /// <summary>Resets a finished card for a retry re-enqueue (task 6.1, Fix D).</summary>
+    public void Reset()
+    {
+        PromptTimedOut = false;
+        State = InstallTaskState.Queued;
+        Percent = -1;
+        SpeedText = string.Empty;
+        BytesText = string.Empty;
+        SubTask = null;
+        StatusDetail = null;
+        Error = null;
+        CompletedAt = null;
+        InstalledVersion = null;
     }
 
     public override string ToString() => $"[{State}] {ModName} ({PackageId})";

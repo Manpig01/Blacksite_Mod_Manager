@@ -37,10 +37,16 @@ public partial class MainWindow : Window
     /// catalog stays interactive while installs stream their live progress.</summary>
     private void OpenQueueWindow()
     {
+        // Task 6.3 — the footer button TOGGLES the queue window from any tab:
+        // closed → open; open but not focused → bring to front; focused → close.
         if (_queueWindow is null || !_queueWindow.IsLoaded)
         {
             _queueWindow = new InstallQueueWindow(_viewModel.QueueViewModel) { Owner = this };
             _queueWindow.Show();
+        }
+        else if (_queueWindow.IsActive)
+        {
+            _queueWindow.Close();
         }
         else
         {

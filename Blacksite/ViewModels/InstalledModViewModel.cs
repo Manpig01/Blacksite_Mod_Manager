@@ -153,6 +153,13 @@ public sealed class InstalledModViewModel : ViewModelBase
     /// <summary>Gray pill #1: where the mod lives (server mod / client plugin).</summary>
     public string PrimaryTagText => KindText;
 
+    /// <summary>Gray pill (consolidated cards): the OTHER component kind — a mod with both a
+    /// server half and a client half shows BOTH pills ("Server Mod" + "Client Plugin").</summary>
+    public string SecondaryKindTagText => _info.HasServerMod && _info.HasClientPlugin
+        ? (_info.Kind == InstalledModKind.Server ? "Client Plugin" : "Server Mod")
+        : string.Empty;
+    public bool HasSecondaryKindTag => SecondaryKindTagText.Length > 0;
+
     /// <summary>Gray pill #2: catalog category (when the mod is matched).</summary>
     public string SecondaryTagText => _catalogMatch?.Category?.Title ?? string.Empty;
     public bool HasSecondaryTag => !string.IsNullOrEmpty(SecondaryTagText);
@@ -262,13 +269,21 @@ public sealed class InstalledModViewModel : ViewModelBase
     public bool IsEnabled => !_info.IsDisabled;
     public string RelativePathText => _info.InstallPath;
 
-    public bool HasUpdate => _outcome?.Status == UpdateStatus.UpdateAvailable;
+    /// <summary>STRICT update gate (the false-⬆-Update fix): the button/badge only appear when
+    /// the outcome's remote version parses STRICTLY newer than the local one. The server's
+    /// verdict alone is not trusted — equal, older or unparseable remotes never show an
+    /// update, and a stale outcome falls away the moment Info refreshes with the new version.</summary>
+    private bool StrictlyOutdated =>
+        _outcome is { Status: UpdateStatus.UpdateAvailable } &&
+        VersionUtils.IsNewer(_outcome.NewVersion, _info.Version);
 
-    public bool CanUpdateNow => _outcome is { Status: UpdateStatus.UpdateAvailable, Link: not null };
+    public bool HasUpdate => StrictlyOutdated;
+
+    public bool CanUpdateNow => StrictlyOutdated && _outcome is { Link: not null };
 
     public string UpdateBadgeText => _outcome?.Status switch
     {
-        UpdateStatus.UpdateAvailable => $"Update available → v{_outcome!.NewVersion}",
+        UpdateStatus.UpdateAvailable => StrictlyOutdated ? $"Update available → v{_outcome!.NewVersion}" : "Up to date",
         UpdateStatus.UpToDate => "Up to date",
         UpdateStatus.Incompatible => string.IsNullOrWhiteSpace(_outcome!.NewVersion)
             ? "No version for this SPT"
@@ -280,14 +295,14 @@ public sealed class InstalledModViewModel : ViewModelBase
     /// <summary>Brush key for the update badge (resolved via DynamicResource-free lookup in XAML triggers).</summary>
     public string UpdateBadgeBrushKey => _outcome?.Status switch
     {
-        UpdateStatus.UpdateAvailable => "Warn",
+        UpdateStatus.UpdateAvailable => StrictlyOutdated ? "Warn" : "Green",
         UpdateStatus.UpToDate => "Green",
         UpdateStatus.Incompatible => "Danger",
         UpdateStatus.Blocked => "Danger",
         _ => "Muted"
     };
 
-    public string VersionDetailText => _outcome is { Status: UpdateStatus.UpdateAvailable, NewVersion: not null }
+    public string VersionDetailText => _outcome is { Status: UpdateStatus.UpdateAvailable, NewVersion: not null } && StrictlyOutdated
         ? $"v{_info.Version ?? "?"} installed  →  v{_outcome.NewVersion} available"
         : InstalledVersionText;
 

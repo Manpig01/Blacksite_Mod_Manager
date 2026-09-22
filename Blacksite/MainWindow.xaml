@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wpf="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel"
-        Title="Blacksite Mod Manager - ALPHA v1.8.0"
+        Title="Blacksite Mod Manager - BETA v1.9.0"
         Height="920" Width="1500" MinHeight="640" MinWidth="1080"
         WindowStyle="None"
         WindowStartupLocation="CenterScreen"
@@ -34,7 +34,7 @@
           <Image Source="Assets/emblem.png" Width="22" Height="22" VerticalAlignment="Center"
                  Margin="0,0,10,0" RenderOptions.BitmapScalingMode="HighQuality"
                  ToolTip="Blacksite Mod Manager"/>
-          <TextBlock Text="Blacksite Mod Manager - ALPHA v1.8.0" FontSize="13" FontWeight="SemiBold"
+          <TextBlock Text="Blacksite Mod Manager - BETA v1.9.0" FontSize="13" FontWeight="SemiBold"
                      Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
         </StackPanel>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Stretch"
@@ -654,6 +654,14 @@
                             <TextBlock Text="{Binding PrimaryTagText}" FontSize="11"
                                        Foreground="{StaticResource TextSecondary}"/>
                           </Border>
+                          <!-- Second kind pill: a consolidated card with BOTH a server and a client
+                               component shows both ("Server Mod" + "Client Plugin"). -->
+                          <Border Background="{StaticResource BgSurface}" BorderBrush="{StaticResource BorderSoft}"
+                                  BorderThickness="1" CornerRadius="9" Padding="9,2" Margin="0,0,5,3"
+                                  Visibility="{Binding HasSecondaryKindTag, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock Text="{Binding SecondaryKindTagText}" FontSize="11"
+                                       Foreground="{StaticResource TextSecondary}"/>
+                          </Border>
                           <Border Background="{StaticResource BgSurface}" BorderBrush="{StaticResource BorderSoft}"
                                   BorderThickness="1" CornerRadius="9" Padding="9,2" Margin="0,0,5,3"
                                   Visibility="{Binding HasSecondaryTag, Converter={StaticResource BoolToVisibility}}">
@@ -852,22 +860,21 @@
                      VerticalAlignment="Center" ToolTip="{Binding StatusText}"/>
         </StackPanel>
 
-        <!-- bottom-center: Installation Queue label + live badge + opener -->
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-          <TextBlock Text="Installation Queue" FontSize="12.5" Foreground="{StaticResource TextSecondary}"
-                     VerticalAlignment="Center"
-                     ToolTip="Live installation queue: downloads, extraction progress and results"/>
-          <Border Background="{StaticResource Accent}" CornerRadius="8" Padding="7,1" Margin="8,0,0,0"
-                  VerticalAlignment="Center"
-                  Visibility="{Binding QueueBadgeVisible, Converter={StaticResource BoolToVisibility}}">
-            <TextBlock Text="{Binding QueueBadgeText}" FontSize="10.5" FontWeight="SemiBold"
-                       Foreground="White" HorizontalAlignment="Center"/>
-          </Border>
-          <Button Style="{StaticResource GhostButton}" Content="Open installation queue" Margin="12,0,0,0"
-                  Padding="9,4" FontSize="12.5"
-                  Command="{Binding OpenQueueWindowCommand}"
-                  ToolTip="Open the Installation Queue window — live cards for every queued, running and finished install"/>
-        </StackPanel>
+        <!-- bottom-center: Installation Queue toggle button + live count badge (task 6.3) -->
+        <Button Style="{StaticResource GhostButton}" Command="{Binding OpenQueueWindowCommand}"
+                Padding="12,5" MinWidth="220"
+                ToolTip="Open / close the Installation Queue — live downloads, extraction and results (works from every tab)">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Installation Queue" FontSize="12.5" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center"/>
+            <Border Background="{StaticResource Accent}" CornerRadius="8" Padding="7,1" Margin="8,0,0,0"
+                    VerticalAlignment="Center"
+                    Visibility="{Binding QueueBadgeVisible, Converter={StaticResource BoolToVisibility}}">
+              <TextBlock Text="{Binding QueueBadgeText}" FontSize="10.5" FontWeight="SemiBold"
+                         Foreground="White" HorizontalAlignment="Center"/>
+            </Border>
+          </StackPanel>
+        </Button>
 
         <!-- right: transfer speed + progress -->
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">

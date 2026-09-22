@@ -39,6 +39,7 @@ public sealed class MainViewModel : ViewModelBase
     private List<InstalledModViewModel> _installedAll = new();
     private Dictionary<string, Mod> _catalogByGuid = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, Mod> _catalogBySlug = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<int, Mod> _catalogById = new();
     private bool _isScanning;
     private bool _suppressFilterReload;                 // while programmatically restoring filter selections
     private CatalogFilter? _lastStartedFilter;         // dedupes debounce ticks vs. already-loaded filters
@@ -533,11 +534,13 @@ public sealed class MainViewModel : ViewModelBase
         _settings = new SettingsService();
         _api = new SpModApiClient();
         _api.Notice += notice => _dispatcher.BeginInvoke(() => StatusText = notice);
+        // Task 6.1, Fix D: configurable download stall watchdog (downloadStallTimeoutSeconds, default 60).
+        _api.DownloadStallTimeout = TimeSpan.FromSeconds(Math.Max(10, _settings.Settings.DownloadStallTimeoutSeconds));
         _imageCache = new ImageCache(_api);
         _installer = new InstallService(_api, _settings);
         _installedService = new InstalledModsService(_api, _settings);
         _installQueue = new InstallQueueEngine(_installer);
-        _queueViewModel = new InstallQueueViewModel(_installQueue);
+        _queueViewModel = new InstallQueueViewModel(_installQueue, _imageCache);
 
         // Footer + card state follow the queue engine in real time.
         _installQueue.ItemUpdated += item =>
@@ -847,10 +850,12 @@ public sealed class MainViewModel : ViewModelBase
     {
         _catalogByGuid = new Dictionary<string, Mod>(StringComparer.OrdinalIgnoreCase);
         _catalogBySlug = new Dictionary<string, Mod>(StringComparer.OrdinalIgnoreCase);
+        _catalogById = new Dictionary<int, Mod>();
         foreach (Mod mod in mods)
         {
             if (!string.IsNullOrWhiteSpace(mod.Guid)) _catalogByGuid.TryAdd(mod.Guid!, mod);
             if (!string.IsNullOrWhiteSpace(mod.Slug)) _catalogBySlug.TryAdd(mod.Slug!, mod);
+            _catalogById[mod.Id] = mod;
         }
 
         var existing = _allCards.ToDictionary(c => c.Mod.Id);
@@ -1067,11 +1072,13 @@ public sealed class MainViewModel : ViewModelBase
 
             if (decision == DependencyPromptResult.InstallWithDeps)
             {
+                // Task 6.3: each dependency enters the queue as its OWN item (own card, progress,
+                // cancel and retry). EnqueueResolvedIfAbsent is atomic — a shared dependency
+                // (CommonLib, BigBrain, …) already queued or installing is never enqueued twice.
                 foreach (InstallService.ResolvedDependency dep in resolution.InstallQueue)
                 {
-                    if (_installQueue.ContainsMod(dep.Id)) continue; // already queued ahead of us
-                    _installQueue.EnqueueResolved(dep, SptDirectory);
-                    ShowQueuedToast(dep.Name);
+                    if (_installQueue.EnqueueResolvedIfAbsent(dep, SptDirectory) is { } depCard)
+                        ShowQueuedToast(dep.Name);
                 }
             }
         }
@@ -1422,8 +1429,34 @@ public sealed class MainViewModel : ViewModelBase
         var tcs = new TaskCompletionSource<DependencyPromptResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         _dispatcher.Invoke(() =>
         {
-            var dialog = new DependencyDialog(prompt) { Owner = Application.Current.MainWindow };
+            // Task 6.1, Fix C — un-missable prompt: owned by the main window, activated on show,
+            // taskbar flash when the app is in the background, and a hard timeout so the flow can
+            // never block forever (defaults to Cancel, same as the engine's prompt watchdog).
+            var dialog = new DependencyDialog(prompt) { Owner = Application.Current.MainWindow, ShowActivated = true };
+            dialog.Loaded += (_, _) =>
+            {
+                dialog.Activate();
+                NativeMethods.FlashTaskbar(dialog);
+                NativeMethods.FlashTaskbar(Application.Current.MainWindow);
+            };
+
+            var timeout = new DispatcherTimer { Interval = Services.InstallQueueEngine.DefaultPromptTimeout };
+            timeout.Tick += (_, _) =>
+            {
+                timeout.Stop();
+                if (dialog.IsLoaded)
+                {
+                    dialog.Close(); // Result stays Cancel — the default
+                    StatusText = "Timed out waiting for dependency choice — nothing was queued.";
+                }
+            };
+            dialog.Loaded += (_, _) => timeout.Start();
+            dialog.Closed += (_, _) => timeout.Stop();
+
+            Services.InstallTrace.Prompt(prompt.ModName,
+                $"pre-queue dialog shown ({prompt.MissingCount} missing, {prompt.Conflicts.Count} conflicts)");
             dialog.ShowDialog();
+            Services.InstallTrace.Prompt(prompt.ModName, $"pre-queue dialog answered: {dialog.Result}");
             tcs.TrySetResult(dialog.Result);
         });
         return tcs.Task;
@@ -1454,6 +1487,23 @@ public sealed class MainViewModel : ViewModelBase
 
             List<InstalledModInfo> found = await Task.Run(() => _scanner.Scan(SptDirectory));
 
+            // One card per MOD, not per component: the client and server halves of a dual mod
+            // (BepInEx\plugins\X + user\mods\X.Server) consolidate here — grouped by the
+            // catalog's mod id when known, otherwise a fuzzy author/name match.
+            found = InstalledModsService.ConsolidateComponents(found, info => MatchCatalog(info)?.Id);
+
+            // Self-heal: the disk is the source of truth — reconcile the persisted install
+            // records with what the scanner just read (stale versions from older builds correct
+            // themselves here) and refresh any Browse cards that pointed at a stale version.
+            List<(int ModId, string Version)> healedRecords = await Task.Run(()
+                => _installedService.ReconcileInstallRecordsWithDisk(
+                    found, id => _catalogById.TryGetValue(id, out Mod? m) ? m : null));
+            foreach ((int healedId, string healedVersion) in healedRecords)
+            {
+                ModCardViewModel? card = _allCards.FirstOrDefault(c => c.Mod.Id == healedId);
+                if (card is not null) card.InstalledVersion = healedVersion;
+            }
+
             var existing = _installedAll.ToDictionary(v => v.IdentityKey);
             var rows = new List<InstalledModViewModel>(found.Count);
             foreach (InstalledModInfo info in found)
@@ -1475,8 +1525,8 @@ public sealed class MainViewModel : ViewModelBase
             ApplyInstalledFilter();
             UpdateInstalledSummary();
 
-            int server = rows.Count(r => r.Info.Kind == InstalledModKind.Server);
-            int client = rows.Count - server;
+            int server = rows.Count(r => r.Info.HasServerMod);   // dual cards count on both sides
+            int client = rows.Count(r => r.Info.HasClientPlugin);
             StatusText = $"Scan complete — {rows.Count} installed mods ({server} server, {client} client).";
 
             _ = RunConflictDetectionAsync(); // background conflict/duplicate scan (never blocks the UI)
@@ -1497,7 +1547,18 @@ public sealed class MainViewModel : ViewModelBase
     {
         foreach (InstalledModViewModel row in _installedAll)
         {
-            row.CatalogMatch ??= MatchCatalog(row.Info);
+            if (row.CatalogMatch is not null) continue;
+            row.CatalogMatch = MatchCatalog(row.Info);
+            // a consolidated card may match the catalog through ANY of its components
+            // (e.g. the catalog guid belongs to the client half)
+            if (row.CatalogMatch is null && row.Info.Components is not null)
+            {
+                foreach (InstalledModInfo component in row.Info.Components)
+                {
+                    row.CatalogMatch = MatchCatalog(component);
+                    if (row.CatalogMatch is not null) break;
+                }
+            }
         }
     }
 
@@ -1701,21 +1762,28 @@ public sealed class MainViewModel : ViewModelBase
 
             UpdateActionResult result = await _installedService.UpdateAsync(
                 row.Info, outcome.Link, outcome.ContentLength, SptDirectory, progress,
-                CancellationToken.None, outcome.NewVersion);
+                CancellationToken.None, outcome.NewVersion,
+                catalogModId: row.CatalogMatch?.Id ?? outcome.CatalogModId,
+                releaseId: outcome.ReleaseId);
 
             row.Outcome = null; // stale either way — a rescan picks up the new on-disk version
             await RescanInstalledAsync();
 
             if (result.Success)
             {
+                // Disk-verified version (falls back to the catalog's version string) — patches
+                // the in-memory card so the "Update Available" badge clears immediately; the
+                // persisted record was already committed inside UpdateAsync.
+                string? installedNow = result.VerifiedVersion ?? outcome.NewVersion;
                 ProgressPercent = 100;
                 SpeedText = string.Empty;
-                StatusText = $"Update complete — {row.DisplayName} → v{outcome.NewVersion}.";
+                StatusText = $"Update complete — {row.DisplayName} → v{installedNow}.";
 
-                if (row.CatalogMatch is not null)
+                int? cardId = row.CatalogMatch?.Id ?? outcome.CatalogModId;
+                if (cardId is not null)
                 {
-                    ModCardViewModel? card = _allCards.FirstOrDefault(c => c.Mod.Id == row.CatalogMatch.Id);
-                    if (card is not null) card.InstalledVersion = outcome.NewVersion;
+                    ModCardViewModel? card = _allCards.FirstOrDefault(c => c.Mod.Id == cardId.Value);
+                    if (card is not null) card.InstalledVersion = installedNow;
                 }
             }
             else
@@ -1851,9 +1919,10 @@ public sealed class MainViewModel : ViewModelBase
 
     private async Task UninstallModAsync(InstalledModViewModel row)
     {
+        string uninstallPaths = string.Join("\n", row.Info.Components?.Select(c => c.InstallPath) ?? new[] { row.Info.InstallPath });
         MessageBoxResult confirm = MessageBox.Show(
             Application.Current.MainWindow,
-            $"Are you sure you want to uninstall “{row.DisplayName}”?\n\nThis will permanently delete:\n{row.Info.InstallPath}\n\nThis cannot be undone.",
+            $"Are you sure you want to uninstall “{row.DisplayName}”?\n\nThis will permanently delete:\n{uninstallPaths}\n\nThis cannot be undone.",
             "Uninstall mod",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,

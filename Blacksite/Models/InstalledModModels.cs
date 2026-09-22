@@ -15,6 +15,8 @@ public sealed class UpdateCheckOutcome
     public long? ContentLength { get; init; }
     public string? Reason { get; init; }
     public int? CatalogModId { get; init; }
+    /// <summary>Forge release id of the recommended version row (persisted with the install record).</summary>
+    public int? ReleaseId { get; init; }
 }
 
 /// <summary>One mod detected on disk by the local scanner.</summary>
@@ -37,6 +39,27 @@ public sealed class InstalledModInfo
     public required bool IsDisabled { get; init; }
     /// <summary>Where the metadata came from: package.json / BepInPlugin / manifest.json / assembly info / folder.</summary>
     public required string InfoSource { get; init; }
+
+    /// <summary>Every installation piece of this mod (its client AND server components), self
+    /// included — set on CONSOLIDATED rows. Null on raw single-component scanner rows; iterate
+    /// with <c>Components ?? new[]{ info }</c>. Uninstall/disable/update act on all of them.</summary>
+    public IReadOnlyList<InstalledModInfo>? Components { get; init; }
+
+    /// <summary>True when any component (or the row itself) is a server mod.</summary>
+    public bool HasServerMod => Kind == InstalledModKind.Server ||
+                                (Components?.Any(c => c.Kind == InstalledModKind.Server) ?? false);
+
+    /// <summary>True when any component (or the row itself) is a client plugin.</summary>
+    public bool HasClientPlugin => Kind == InstalledModKind.Client ||
+                                   (Components?.Any(c => c.Kind == InstalledModKind.Client) ?? false);
+
+    /// <summary>Install path of the server component (this row's own path when it IS the server row).</summary>
+    public string? ServerPath => Kind == InstalledModKind.Server ? InstallPath
+        : Components?.FirstOrDefault(c => c.Kind == InstalledModKind.Server)?.InstallPath;
+
+    /// <summary>Install path of the client component (this row's own path when it IS the client row).</summary>
+    public string? ClientPath => Kind == InstalledModKind.Client ? InstallPath
+        : Components?.FirstOrDefault(c => c.Kind == InstalledModKind.Client)?.InstallPath;
 
     /// <summary>Stable identity across rescans/renames (enable/disable changes the path, not the identity).</summary>
     public string IdentityKey => $"{Kind}:{(PackageId ?? DisplayName).ToLowerInvariant()}";

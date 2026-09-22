@@ -2,6 +2,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using Blacksite.Models;
 
 namespace Blacksite.Services;
 
@@ -21,6 +22,10 @@ public sealed class SlidingWindowRateLimiter
     private readonly Queue<long> _burstStamps = new();
     private readonly Queue<long> _sustainedStamps = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    /// <summary>Raised when the local window imposes a visible (>1s) wait, so installs never
+    /// look frozen while the burst/sustained budget refills (task 6.1, Fix B).</summary>
+    public event Action<string>? WaitNotice;
 
     /// <summary>Blocks (asynchronously) until a request slot is available, then consumes it.</summary>
     public async Task WaitAsync(CancellationToken cancellationToken = default)
@@ -57,6 +62,8 @@ public sealed class SlidingWindowRateLimiter
             }
 
             if (delayMs <= 0) return;
+            if (delayMs > 1000)
+                WaitNotice?.Invoke($"Local rate-limit window — waiting {delayMs / 1000.0:F0}s…");
             await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -74,11 +81,31 @@ public sealed class RateLimitedRetryHandler : DelegatingHandler
     private readonly Action<string>? _onNotice;
     private static readonly TimeSpan RetryAfterCap = TimeSpan.FromMinutes(5);
 
+    /// <summary>Longest SINGLE rate-limit wait the pipeline will sit through visibly (task 6.1,
+    /// Fix B). A server demanding more than this fails the call with a clear retryable error
+    /// instead of hanging the install. Default 90s.</summary>
+    public TimeSpan MaxSingleRateLimitWait { get; set; } = TimeSpan.FromSeconds(90);
+
+    /// <summary>Cap on CUMULATIVE 429 wait per request — even visible, countdown-driven waits
+    /// eventually have to give up. Default 180s.</summary>
+    public TimeSpan MaxCumulativeRateLimitWait { get; set; } = TimeSpan.FromSeconds(180);
+
     public RateLimitedRetryHandler(SlidingWindowRateLimiter limiter, Action<string>? onNotice = null)
         : base(CreateInnerHandler())
     {
         _limiter = limiter;
         _onNotice = onNotice;
+        _limiter.WaitNotice += msg => _onNotice?.Invoke(msg);
+    }
+
+    /// <summary>Test/DI overload: wraps an injected transport (e.g. a fake HttpMessageHandler)
+    /// instead of creating a real SocketsHttpHandler — same limiter + retry semantics.</summary>
+    public RateLimitedRetryHandler(SlidingWindowRateLimiter limiter, HttpMessageHandler transport, Action<string>? onNotice = null)
+        : base(transport)
+    {
+        _limiter = limiter;
+        _onNotice = onNotice;
+        _limiter.WaitNotice += msg => _onNotice?.Invoke(msg);
     }
 
     private static HttpMessageHandler CreateInnerHandler()
@@ -97,6 +124,7 @@ public sealed class RateLimitedRetryHandler : DelegatingHandler
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         HttpResponseMessage? response = null;
+        TimeSpan totalRateLimitWait = TimeSpan.Zero;
 
         for (int attempt = 1; attempt <= MaxAttempts; attempt++)
         {
@@ -123,10 +151,39 @@ public sealed class RateLimitedRetryHandler : DelegatingHandler
             if (response.StatusCode == HttpStatusCode.TooManyRequests) // 429
             {
                 TimeSpan wait = GetRetryAfter(response) ?? TimeSpan.FromSeconds(Math.Min(30, 2 * Math.Pow(2, attempt)));
-                _onNotice?.Invoke($"API rate limit hit (HTTP 429) — waiting {wait.TotalSeconds:F0}s before retry…");
                 response.Dispose();
-                try { await Task.Delay(wait, cancellationToken).ConfigureAwait(false); }
-                catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+
+                // Task 6.1, Fix B: a single wait beyond the visible-wait cap fails the call with a
+                // clear RETRYABLE error instead of hanging the install; cumulative 429 waits are
+                // capped too. Waits within the caps are visible (per-second countdown) and
+                // cancellable (the caller's token flows through every delay below).
+                bool overSingle = wait > MaxSingleRateLimitWait;
+                bool overCumulative = totalRateLimitWait + wait > MaxCumulativeRateLimitWait;
+                if (overSingle || overCumulative)
+                {
+                    InstallTrace.RateLimitWait(wait.TotalSeconds, attempt, MaxAttempts, refused: true);
+                    throw new ApiException(
+                        $"sp-mod.com rate limit demands a {wait.TotalSeconds:N0}s wait"
+                        + (overSingle ? $" — over the {MaxSingleRateLimitWait.TotalSeconds:N0}s visible-wait cap" : "")
+                        + (overCumulative && !overSingle ? " — cumulative rate-limit waits exceeded" : "")
+                        + ". Nothing was installed. Please retry in a few minutes.");
+                }
+
+                InstallTrace.RateLimitWait(wait.TotalSeconds, attempt, MaxAttempts, refused: false);
+                // Visible countdown: emit the remaining seconds every second while we hold the item.
+                DateTime until = DateTime.UtcNow + wait;
+                while (true)
+                {
+                    double remaining = (until - DateTime.UtcNow).TotalSeconds;
+                    if (remaining <= 0) break;
+                    _onNotice?.Invoke($"Rate limited by sp-mod.com — waiting {Math.Ceiling(remaining):N0}s (attempt {attempt} of {MaxAttempts})");
+                    int slice = (int)Math.Min(1000, Math.Max(1, remaining * 1000));
+                    try { await Task.Delay(slice, cancellationToken).ConfigureAwait(false); }
+                    catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+                }
+
+                totalRateLimitWait += wait;
+                _onNotice?.Invoke($"Rate-limit wait over — retrying (attempt {attempt + 1} of {MaxAttempts})…");
                 continue;
             }
 

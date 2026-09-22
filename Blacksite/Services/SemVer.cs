@@ -29,6 +29,9 @@ public sealed partial class SemVersion : IComparable<SemVersion>, IEquatable<Sem
     {
         version = null;
         if (string.IsNullOrWhiteSpace(text)) return false;
+        // Authors write versions as "v4.1.0", "V2.0"… — the leading marker is formatting, not
+        // semantics, and must never fail a parse (it used to silently drop such mods from the
+        // update check entirely).
         var m = VersionRegex().Match(text.Trim());
         if (!m.Success) return false;
 
@@ -81,7 +84,23 @@ public sealed partial class SemVersion : IComparable<SemVersion>, IEquatable<Sem
     public override int GetHashCode() => HashCode.Combine(Major, Minor, Patch, Build, Prerelease?.ToLowerInvariant());
     public override string ToString() => Original;
 
-    [GeneratedRegex(@"^(?<major>\d+)(?:\.(?<minor>\d+))?(?:\.(?<patch>\d+))?(?:\.(?<build>\d+))?(?:-(?<pre>[0-9A-Za-z\-.]+))?(?:\+(?<meta>[0-9A-Za-z\-.]+))?$")]
+    /// <summary>Core-only comparison (major.minor.patch.build) — prefixes and prerelease/
+    /// release suffixes ("-beta", "-release") are ignored, per the update-check spec: formatting
+    /// inconsistencies between authors must never fabricate an update.</summary>
+    public int CompareCoreTo(SemVersion? other)
+    {
+        if (other is null) return 1;
+        int c = Major.CompareTo(other.Major); if (c != 0) return c;
+        c = Minor.CompareTo(other.Minor); if (c != 0) return c;
+        c = Patch.CompareTo(other.Patch); if (c != 0) return c;
+        return Build.CompareTo(other.Build);
+    }
+
+    /// <summary>Canonical wire form: major.minor.patch[.build] — what gets sent to the API and
+    /// compared, so "v4.1.0-release" and "4.1.0" normalize to the same string core.</summary>
+    public string ToCoreString() => Build > 0 ? $"{Major}.{Minor}.{Patch}.{Build}" : $"{Major}.{Minor}.{Patch}";
+
+    [GeneratedRegex(@"^[vV]?(?<major>\d+)(?:\.(?<minor>\d+))?(?:\.(?<patch>\d+))?(?:\.(?<build>\d+))?(?:-(?<pre>[0-9A-Za-z\-.]+))?(?:\+(?<meta>[0-9A-Za-z\-.]+))?$")]
     private static partial Regex VersionRegex();
 }
 

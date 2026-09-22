@@ -29,15 +29,65 @@ public sealed class SpModApiClient : IDisposable
 
     private readonly HttpClient _api;       // rate-limited + retrying, used for API calls and mod downloads
     private readonly HttpClient _media;     // plain client for CDN assets (thumbnails); sends the Referer the CDN requires
+    private readonly RateLimitedRetryHandler _retryHandler;
 
     /// <summary>Human-readable notices from the HTTP pipeline (throttle waits, retries…).</summary>
     public event Action<string>? Notice;
 
+    /// <summary>Download stall watchdog (task 6.1, Fix D): a stream read that produces no bytes
+    /// for this long fails the download with <see cref="DownloadStallException"/> — the item
+    /// fails cleanly and can be retried, instead of hanging at a fixed percent. Default 60s;
+    /// configurable via the <c>downloadStallTimeoutSeconds</c> setting.</summary>
+    public TimeSpan DownloadStallTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Longest single 429 wait the pipeline will sit through (forwarded to the retry
+    /// handler; see its doc for semantics). Default 90s.</summary>
+    public TimeSpan MaxRateLimitSingleWait
+    {
+        get => _retryHandler.MaxSingleRateLimitWait;
+        set => _retryHandler.MaxSingleRateLimitWait = value;
+    }
+
+    /// <summary>Cap on cumulative 429 waits per request. Default 180s.</summary>
+    public TimeSpan MaxRateLimitCumulativeWait
+    {
+        get => _retryHandler.MaxCumulativeRateLimitWait;
+        set => _retryHandler.MaxCumulativeRateLimitWait = value;
+    }
+
     public SpModApiClient()
     {
         var limiter = new SlidingWindowRateLimiter();
-        var handler = new RateLimitedRetryHandler(limiter, msg => Notice?.Invoke(msg));
-        _api = new HttpClient(handler) { BaseAddress = new Uri(BaseUrl), Timeout = Timeout.InfiniteTimeSpan };
+        _retryHandler = new RateLimitedRetryHandler(limiter, msg => Notice?.Invoke(msg));
+        _api = new HttpClient(_retryHandler) { BaseAddress = new Uri(BaseUrl), Timeout = Timeout.InfiniteTimeSpan };
+        _api.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+        _api.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+
+        var mediaHandler = new SocketsHttpHandler
+        {
+            AutomaticDecompression = System.Net.DecompressionMethods.All,
+            AllowAutoRedirect = true,
+            MaxAutomaticRedirections = 10,
+            ConnectTimeout = TimeSpan.FromSeconds(20),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5)
+        };
+        _media = new HttpClient(mediaHandler) { Timeout = TimeSpan.FromSeconds(60) };
+        _media.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) BlacksiteModManager/1.0");
+        _media.DefaultRequestHeaders.Referrer = new Uri(SiteUrl);
+    }
+
+    /// <summary>DI/test overload (task 6.1): wraps an injected transport — e.g. a fake
+    /// HttpMessageHandler serving canned 429s or stalled streams — in the SAME rate limiter +
+    /// retry pipeline the production client uses.</summary>
+    public SpModApiClient(HttpMessageHandler transport, string? baseUrl = null)
+    {
+        var limiter = new SlidingWindowRateLimiter();
+        _retryHandler = new RateLimitedRetryHandler(limiter, transport, msg => Notice?.Invoke(msg));
+        _api = new HttpClient(_retryHandler)
+        {
+            BaseAddress = new Uri(baseUrl ?? BaseUrl),
+            Timeout = Timeout.InfiniteTimeSpan
+        };
         _api.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
         _api.DefaultRequestHeaders.Accept.ParseAdd("application/json");
 
@@ -232,7 +282,7 @@ public sealed class SpModApiClient : IDisposable
     public async Task<long> DownloadFileAsync(string url, string destinationPath, IProgress<DownloadProgress>? progress, CancellationToken cancellationToken)
     {
         const int MaxAttempts = 6;
-        TimeSpan readStallTimeout = TimeSpan.FromSeconds(90);
+        TimeSpan readStallTimeout = DownloadStallTimeout;
 
         string partPath = destinationPath + ".part";
         string? dir = Path.GetDirectoryName(destinationPath);
@@ -253,6 +303,7 @@ public sealed class SpModApiClient : IDisposable
                 if (have > 0)
                     request.Headers.Range = new RangeHeaderValue(have, null);
 
+                InstallTrace.Download($"GET {url}", null, finished: false);
                 using var response = await _api.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
 
                 if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable && have > 0)
@@ -326,7 +377,13 @@ public sealed class SpModApiClient : IDisposable
                         try { read = await source.ReadAsync(buffer, readCts.Token).ConfigureAwait(false); }
                         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                         {
-                            throw new IOException($"Download stalled — no data for {readStallTimeout.TotalSeconds:N0}s at byte {have + receivedThisAttempt}.");
+                            // Task 6.1, Fix D: fail the ITEM fast and cleanly — no silent multi-minute
+                            // retry ladder. DownloadStallException deliberately does not match the
+                            // resume-retry filter below, so it propagates to the queue immediately.
+                            InstallTrace.Stall(readStallTimeout.TotalSeconds, have + receivedThisAttempt);
+                            throw new DownloadStallException(
+                                $"Download stalled — no data for {readStallTimeout.TotalSeconds:N0}s at byte {(have + receivedThisAttempt):N0}. " +
+                                "The connection went silent. Retry the install; partial bytes were discarded.");
                         }
 
                         if (read <= 0) break;
@@ -374,6 +431,7 @@ public sealed class SpModApiClient : IDisposable
                 double finalSpeed = stopwatch.Elapsed.TotalSeconds > 0 ? receivedThisAttempt / stopwatch.Elapsed.TotalSeconds : 0;
                 progress?.Report(new DownloadProgress(have, expectedTotal ?? have, finalSpeed));
                 File.Move(partPath, destinationPath, overwrite: true);
+                InstallTrace.Download($"GET {url}", have, finished: true, seconds: stopwatch.Elapsed.TotalSeconds);
                 return have;
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or SocketException
@@ -442,6 +500,7 @@ public sealed class SpModApiClient : IDisposable
 
     private async Task<T> GetJsonAsync<T>(string relativeUrl, CancellationToken cancellationToken)
     {
+        InstallTrace.ApiCall("GET /" + relativeUrl);
         using var response = await _api.GetAsync(relativeUrl, cancellationToken).ConfigureAwait(false);
         string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 

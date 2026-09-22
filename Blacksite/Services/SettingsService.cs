@@ -14,6 +14,10 @@ public sealed class AppSettings
     [JsonPropertyName("serverModPath")] public string? ServerModPath { get; set; }
     /// <summary>Last catalog SPT-version constraint chosen in the filter panel (persists between launches).</summary>
     [JsonPropertyName("sptVersionFilter")] public string? SptVersionFilter { get; set; }
+
+    /// <summary>Download stall watchdog (task 6.1, Fix D): a stream read with no bytes for this
+    /// many seconds fails the install with a clean retryable error. Default 60.</summary>
+    [JsonPropertyName("downloadStallTimeoutSeconds")] public int DownloadStallTimeoutSeconds { get; set; } = 60;
     [JsonPropertyName("installedMods")] public Dictionary<int, InstalledModRecord> InstalledMods { get; set; } = new();
 }
 
@@ -22,6 +26,9 @@ public sealed class InstalledModRecord
     [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
     [JsonPropertyName("version")] public string Version { get; set; } = string.Empty;
     [JsonPropertyName("installedAtUtc")] public DateTime InstalledAtUtc { get; set; }
+    /// <summary>Forge release id (the catalog's version-row id) this install came from;
+    /// null on records written by older builds. Optional so existing settings.json files load.</summary>
+    [JsonPropertyName("releaseId")] public int? ReleaseId { get; set; }
 }
 
 /// <summary>Persists settings to %AppData%\BlacksiteModManager\settings.json.</summary>
@@ -198,14 +205,15 @@ public sealed class SettingsService
         }
     }
 
-    public void RecordInstall(int modId, string name, string version)
+    public void RecordInstall(int modId, string name, string version, int? releaseId = null)
     {
         Settings.InstalledMods[modId] = new InstalledModRecord
         {
             Name = name,
             Version = version,
-            InstalledAtUtc = DateTime.UtcNow
+            InstalledAtUtc = DateTime.UtcNow,
+            ReleaseId = releaseId
         };
-        Save();
+        Save(); // explicit flush — the record must survive a restart the moment the install/update lands
     }
 }

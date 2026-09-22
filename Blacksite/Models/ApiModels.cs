@@ -247,7 +247,9 @@ public sealed record CatalogProgress(int Page, int LastPage, int ModsLoaded);
 public sealed record DownloadProgress(long BytesReceived, long? TotalBytes, double BytesPerSecond);
 
 /// <summary>Live progress of one install pipeline run.</summary>
-public sealed record InstallProgress(InstallStage Stage, string StatusText, double Percent, string? SpeedText = null, string? BytesText = null);
+public sealed record InstallProgress(
+    InstallStage Stage, string StatusText, double Percent, string? SpeedText = null, string? BytesText = null,
+    string? SubTask = null);
 
 public enum InstallStage
 {
@@ -258,6 +260,15 @@ public enum InstallStage
     Extracting,
     Complete,
     Failed
+}
+
+/// <summary>A download produced no bytes for the configured stall window (task 6.1, Fix D).
+/// Deliberately NOT an IOException/HttpRequestException so the auto-resume retry filter in
+/// SpModApiClient.DownloadFileAsync lets it through — the item fails fast and cleanly instead
+/// of hanging through six 60-second stall cycles.</summary>
+public sealed class DownloadStallException : Exception
+{
+    public DownloadStallException(string message) : base(message) { }
 }
 
 public sealed class ApiException : Exception
