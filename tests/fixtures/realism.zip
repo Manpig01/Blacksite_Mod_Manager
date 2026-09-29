@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html
+    lang="en"
+    class="dark"
+    data-authenticated="0"
+>
+
+<head>
+    <meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+    <meta
+        name="csrf-token"
+        content="6SabX9Z3N1NjPAksjMTJl6iwFbMnWecX303SoEqV"
+    >
+            <title>Page Not Found - The Forge</title>
+    <meta
+        property="og:title"
+        content="Page Not Found - The Forge"
+    >
+    <meta
+        name="description"
+        content="The greatest resource available for Single Player Tushonka modifications. Where modding legends are made. Discover powerful tools, expert-written guides, and exclusive mods. Transform the game."
+    >
+    <meta
+        property="og:description"
+        content="The greatest resource available for Single Player Tushonka modifications. Where modding legends are made. Discover powerful tools, expert-written guides, and exclusive mods. Transform the game."
+    >
+    <link
+        rel="canonical"
+        href="https://sp-mod.com/mod/download/1353/spt-realism-mod/0.14.11"
+    >
+    <meta
+        property="og:url"
+        content="https://sp-mod.com/mod/download/1353/spt-realism-mod/0.14.11"
+    >
+        <link
+        rel="icon"
+        type="image/png"
+        href="/favicon-96x96.png"
+        sizes="96x96"
+    />
+    <link
+        rel="icon"
+        type="image/svg+xml"
+        href="/favicon.svg"
+    />
+    <link
+        rel="shortcut icon"
+        href="/favicon.ico"
+    />
+    <link
+        rel="apple-touch-icon"
+        sizes="180x180"
+        href="/apple-touch-icon.png"
+    />
+    <meta
+        name="apple-mobile-web-app-title"
+        content="TheForge"
+    />
+    <link
+        rel="manifest"
+        href="/site.webmanifest"
+    />
+    <link
+        href="//fonts.bunny.net"
+        rel="preconnect"
+    >
+    <link
+        href="//fonts.bunny.net/css?family=figtree:400,500,600&display=swap"
+        rel="stylesheet"
+    >
+    <link
+        href="https://sp-mod.com"
+        rel="dns-prefetch"
+    >
+
+    
+
+    <!-- Livewire Styles --><style >[wire\:loading][wire\:loading], [wire\:loading\.delay][wire\:loading\.delay], [wire\:loading\.list-item][wire\:loading\.list-item], [wire\:loading\.inline-block][wire\:loading\.inline-block], [wire\:loading\.inline][wire\:loading\.inline], [wire\:loading\.block][wire\:loading\.block], [wire\:loading\.flex][wire\:loading\.flex], [wire\:loading\.table][wire\:loading\.table], [wire\:loading\.grid][wire\:loading\.grid], [wire\:loading\.inline-flex][wire\:loading\.inline-flex] {display: none;}[wire\:loading\.delay\.none][wire\:loading\.delay\.none], [wire\:loading\.delay\.shortest][wire\:loading\.delay\.shortest], [wire\:loading\.delay\.shorter][wire\:loading\.delay\.shorter], [wire\:loading\.delay\.short][wire\:loading\.delay\.short], [wire\:loading\.delay\.default][wire\:loading\.delay\.default], [wire\:loading\.delay\.long][wire\:loading\.delay\.long], [wire\:loading\.delay\.longer][wire\:loading\.delay\.longer], [wire\:loading\.delay\.longest][wire\:loading\.delay\.longest] {display: none;}[wire\:offline][wire\:offline] {display: none;}[wire\:dirty]:not(textarea):not(input):not(select) {display: none;}:root {--livewire-progress-bar-color: #2299dd;}[x-cloak] {display: none !important;}[wire\:cloak] {display: none !important;}dialog#livewire-error::backdrop {background-color: rgba(0, 0, 0, .6);}</style>
+    <link rel="preload" as="style" href="https://sp-mod.com/build/assets/app-nahVNk8d.css" /><link rel="stylesheet" href="https://sp-mod.com/build/assets/app-nahVNk8d.css" data-navigate-track="reload" />
+<script>
+     window.addEventListener('load', () => window.setTimeout(() => {
+        const makeLink = (asset) => {
+            const link = document.createElement('link')
+
+            Object.keys(asset).forEach((attribute) => {
+                link.setAttribute(attribute, asset[attribute])
+            })
+
+            return link
+        }
+
+        const fragment = new DocumentFragment;
+        [].forEach((asset) => fragment.append(makeLink(asset)))
+        document.head.append(fragment)
+     }))
+</script></head>
+
+<body class="flex min-h-screen flex-col font-sans antialiased">
+    <a
+        href="#main-content"
+        class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-[100] focus:rounded-md focus:bg-gray-900 focus:px-4 focus:py-2 focus:text-gray-100 focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+    >Skip to main content</a>
+
+    <div x-persist="toast">
+        <ui-toast-group x-data x-on:toast-show.document="$el.showToast($event.detail)" popover="manual" position="top end"  wire:ignore>
+    <ui-toast x-data x-on:toast-show.document="! $el.closest('ui-toast-group') && $el.showToast($event.detail)" popover="manual" position="bottom end" wire:ignore>
+    <template>
+        <div class="max-w-sm in-[ui-toast-group]:max-w-auto in-[ui-toast-group]:w-xs sm:in-[ui-toast-group]:w-sm" data-variant="" data-flux-toast-dialog>
+            <div class="p-2 flex rounded-xl shadow-lg bg-white border border-zinc-200 border-b-zinc-300/80 dark:bg-zinc-700 dark:border-zinc-600">
+                <div class="flex-1 flex items-start gap-4 overflow-hidden">
+                    <div class="flex-1 py-1.5 ps-2.5 flex gap-2">
+                        
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="hidden [[data-flux-toast-dialog][data-variant=success]_&]:block shrink-0 mt-0.5 size-4 text-lime-600 dark:text-lime-400">
+                            <path fill-rule="evenodd" d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14Zm3.844-8.791a.75.75 0 0 0-1.188-.918l-3.7 4.79-1.649-1.833a.75.75 0 1 0-1.114 1.004l2.25 2.5a.75.75 0 0 0 1.15-.043l4.25-5.5Z" clip-rule="evenodd" />
+                        </svg>
+
+                        
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="hidden [[data-flux-toast-dialog][data-variant=warning]_&]:block shrink-0 mt-0.5 size-4 text-amber-500 dark:text-amber-400">
+                            <path fill-rule="evenodd" d="M6.701 2.25c.577-1 2.02-1 2.598 0l5.196 9a1.5 1.5 0 0 1-1.299 2.25H2.804a1.5 1.5 0 0 1-1.3-2.25l5.197-9ZM8 4a.75.75 0 0 1 .75.75v3a.75.75 0 1 1-1.5 0v-3A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" />
+                        </svg>
+
+                        
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="hidden [[data-flux-toast-dialog][data-variant=info]_&]:block shrink-0 mt-0.5 size-4 text-cyan-500 dark:text-cyan-400">
+                            <path fill-rule="evenodd" d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0ZM9 5a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM6.75 8a.75.75 0 0 0 0 1.5h.75v1.75a.75.75 0 0 0 1.5 0v-2.5A.75.75 0 0 0 8.25 8h-1.5Z" clip-rule="evenodd" />
+                        </svg>
+
+                        
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="hidden [[data-flux-toast-dialog][data-variant=danger]_&]:block shrink-0 mt-0.5 size-4 text-rose-500 dark:text-rose-400">
+                            <path fill-rule="evenodd" d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14ZM8 4a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd" />
+                        </svg>
+
+                        <div>
+                            
+                            <div class="font-medium text-sm text-zinc-800 dark:text-white [&:not(:empty)+div]:font-normal [&:not(:empty)+div]:text-zinc-500 [&:not(:empty)+div]:dark:text-zinc-300 [&:not(:empty)]:pb-2"><slot name="heading"></slot></div>
+
+                            
+                            <div class="font-medium text-sm text-zinc-800 dark:text-white"><slot name="text"></slot></div>
+
+                            
+                            <template name="link">
+                                <a class="block mt-2 font-medium text-sm text-[var(--color-accent-content)] decoration-[color-mix(in_oklab,var(--color-accent-content),transparent_80%)] underline underline-offset-[6px] hover:decoration-current"><slot name="text"></slot></a>
+                            </template>
+                        </div>
+                    </div>
+
+                    
+                    <ui-close class="flex items-center">
+                        <button type="button" class="inline-flex items-center font-medium justify-center gap-2 truncate disabled:opacity-50 dark:disabled:opacity-75 disabled:cursor-default h-8 text-sm rounded-md w-8 bg-transparent hover:bg-zinc-800/5 dark:hover:bg-white/15 text-zinc-400 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-white" as="button">
+                            <div>
+                                <svg class="[:where(&)]:size-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" data-slot="icon">
+                                    <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"></path>
+                                </svg>
+                            </div>
+                        </button>
+                    </ui-close>
+                </div>
+            </div>
+        </div>
+    </template>
+</ui-toast>
+</ui-toast-group>
+    </div>
+
+    <div class="flex-grow bg-gray-800">
+                    <nav
+    x-data="{ profileDropdownOpen: false, mobileMenuOpen: false }"
+    class="relative z-50 border-b border-gray-800 bg-gradient-to-br from-gray-900 via-black to-gray-950"
+    aria-label="Main navigation"
+>
+    <div class="absolute inset-0 overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-br from-gray-800/30 via-transparent to-black/40">
+        </div>
+        <div class="absolute inset-0 bg-gradient-to-tl from-gray-700/20 to-transparent">
+        </div>
+        <div
+            class="absolute inset-0 opacity-35"
+            style="background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.08) 1px, transparent 0); background-size: 4px 4px;"
+        ></div>
+        <div class="absolute left-1/4 top-0 h-px w-32 rotate-2 transform bg-gray-600/30"></div>
+        <div class="absolute bottom-0 right-1/3 h-px w-24 -rotate-1 transform bg-gray-500/25"></div>
+        <div class="absolute right-0 top-1/3 h-16 w-px bg-gray-600/20"></div>
+        <div class="absolute inset-0 shadow-inner shadow-black/60"></div>
+    </div>
+    <div class="relative z-10 mx-auto max-w-7xl px-2 sm:px-4 lg:px-8">
+        <div class="relative flex h-16 items-center justify-between">
+            <div class="flex items-center px-2 lg:px-0">
+                <div class="shrink-0">
+                    <a
+                        href="https://sp-mod.com"
+                        wire:navigate
+                    >
+                        <div class="flex flex-nowrap items-center justify-start gap-1">
+    <img
+        src="https://sp-mod.com/build/assets/spt-small-CoSRvm-1.png"
+        srcset="https://sp-mod.com/build/assets/spt-small-CoSRvm-1.png 1x, https://sp-mod.com/build/assets/spt-small@2x-C13VxvnR.png 2x, https://sp-mod.com/build/assets/spt-small@3x-CBlplZdt.png 3x, https://sp-mod.com/build/assets/spt-small@4x-DQWFifMM.png 4x"
+        alt="Single Player Tushonka Logo"
+        class="h-4 w-8 shrink-0"
+    />
+    <h1 class="text-[1.15rem] font-extrabold leading-none text-white">Forge</h1>
+</div>
+                    </a>
+                </div>
+                <div class="hidden lg:ml-6 lg:block">
+                    <div class="flex items-center space-x-4">
+                        <a
+    wire:navigate
+    class="rounded-md px-3 py-2 text-sm font-medium text-gray-200 hover:bg-gray-700/50 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/installer"
+>
+    Install
+</a>
+                        <ui-dropdown position="bottom start"  data-flux-dropdown>
+    <button
+                                type="button"
+                                class="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium text-gray-200 transition duration-150 ease-in-out hover:bg-gray-700/50 hover:text-white"
+                            >
+                                Mods
+                                <svg class="shrink-0 [:where(&amp;)]:size-6 ml-1 size-3" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/>
+</svg>
+
+                                    </button>
+                            <nav class="[:where(&amp;)]:min-w-48 p-[.3125rem] rounded-lg shadow-xs border border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-700" popover="manual" data-flux-navmenu>
+    <a href="https://sp-mod.com/mods" class="group flex items-center px-2 py-2 lg:py-1.5 w-full rounded-md text-start text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:text-white dark:hover:bg-zinc-600 **:data-navmenu-icon:text-zinc-400 dark:**:data-navmenu-icon:text-white/60 [&amp;:hover_[data-navmenu-icon]]:text-current" data-flux-navmenu-item="data-flux-navmenu-item" wire:navigate="">
+        <svg class="shrink-0 [:where(&amp;)]:size-5 me-2" data-navmenu-icon="data-navmenu-icon" data-flux-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" data-slot="icon">
+  <path fill-rule="evenodd" d="M4.25 2A2.25 2.25 0 0 0 2 4.25v2.5A2.25 2.25 0 0 0 4.25 9h2.5A2.25 2.25 0 0 0 9 6.75v-2.5A2.25 2.25 0 0 0 6.75 2h-2.5Zm0 9A2.25 2.25 0 0 0 2 13.25v2.5A2.25 2.25 0 0 0 4.25 18h2.5A2.25 2.25 0 0 0 9 15.75v-2.5A2.25 2.25 0 0 0 6.75 11h-2.5Zm9-9A2.25 2.25 0 0 0 11 4.25v2.5A2.25 2.25 0 0 0 13.25 9h2.5A2.25 2.25 0 0 0 18 6.75v-2.5A2.25 2.25 0 0 0 15.75 2h-2.5Zm0 9A2.25 2.25 0 0 0 11 13.25v2.5A2.25 2.25 0 0 0 13.25 18h2.5A2.25 2.25 0 0 0 18 15.75v-2.5A2.25 2.25 0 0 0 15.75 11h-2.5Z" clip-rule="evenodd"/>
+</svg>
+
+            
+    Browse All Mods
+    </a>
+                                <a href="https://sp-mod.com/lists" class="group flex items-center px-2 py-2 lg:py-1.5 w-full rounded-md text-start text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:text-white dark:hover:bg-zinc-600 **:data-navmenu-icon:text-zinc-400 dark:**:data-navmenu-icon:text-white/60 [&amp;:hover_[data-navmenu-icon]]:text-current" data-flux-navmenu-item="data-flux-navmenu-item" wire:navigate="">
+        <svg class="shrink-0 [:where(&amp;)]:size-5 me-2" data-navmenu-icon="data-navmenu-icon" data-flux-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" data-slot="icon">
+  <path fill-rule="evenodd" d="M6 4.75A.75.75 0 0 1 6.75 4h10.5a.75.75 0 0 1 0 1.5H6.75A.75.75 0 0 1 6 4.75ZM6 10a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H6.75A.75.75 0 0 1 6 10Zm0 5.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H6.75a.75.75 0 0 1-.75-.75ZM1.99 4.75a1 1 0 0 1 1-1H3a1 1 0 0 1 1 1v.01a1 1 0 0 1-1 1h-.01a1 1 0 0 1-1-1v-.01ZM1.99 15.25a1 1 0 0 1 1-1H3a1 1 0 0 1 1 1v.01a1 1 0 0 1-1 1h-.01a1 1 0 0 1-1-1v-.01ZM1.99 10a1 1 0 0 1 1-1H3a1 1 0 0 1 1 1v.01a1 1 0 0 1-1 1h-.01a1 1 0 0 1-1-1V10Z" clip-rule="evenodd"/>
+</svg>
+
+            
+    Browse Lists
+    </a>
+</nav>
+</ui-dropdown>
+                        <a
+    wire:navigate
+    class="rounded-md px-3 py-2 text-sm font-medium text-gray-200 hover:bg-gray-700/50 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/developers"
+>
+    API
+</a>
+                        <a
+                            href="https://wiki.sp-tushonka.com/"
+                            target="_blank"
+                            class="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-gray-200 transition duration-150 ease-in-out hover:bg-gray-700/50 hover:text-white"
+                        >
+                            Wiki
+                            <svg class="shrink-0 [:where(&amp;)]:size-6 h-3 w-3" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+</svg>
+
+                                </a>
+                    </div>
+                </div>
+            </div>
+
+            <div wire:key="lw-2578821078-2" wire:snapshot="{&quot;data&quot;:{&quot;query&quot;:&quot;&quot;,&quot;isModCatVisible&quot;:true,&quot;isUserCatVisible&quot;:true,&quot;isAddonCatVisible&quot;:true,&quot;isListCatVisible&quot;:true},&quot;memo&quot;:{&quot;id&quot;:&quot;W3cyaqbFnVwTkaGYPf5W&quot;,&quot;name&quot;:&quot;global-search&quot;,&quot;path&quot;:&quot;mod\/download\/1353\/spt-realism-mod\/0.14.11&quot;,&quot;method&quot;:&quot;GET&quot;,&quot;release&quot;:&quot;a-a-a&quot;,&quot;children&quot;:[],&quot;scripts&quot;:[],&quot;assets&quot;:[],&quot;errors&quot;:[],&quot;locale&quot;:&quot;en&quot;,&quot;islands&quot;:[]},&quot;checksum&quot;:&quot;3d5451b08c46b26861cde7e62e2590adefa2d3928b1951f9de243a22e597f26e&quot;}" wire:effects="[]" wire:id="W3cyaqbFnVwTkaGYPf5W" wire:name="global-search"
+    class="flex flex-1 justify-end px-2 lg:ml-6"
+    x-data="{ open: false }"
+    x-on:keydown.cmd.k.window.prevent="open = true"
+    x-on:keydown.ctrl.k.window.prevent="open = true"
+>
+    <div class="relative z-10 w-40 sm:w-48">
+        
+        <button class="w-full border rounded-lg block disabled:shadow-none dark:shadow-none appearance-none text-sm py-1.5 h-8 leading-[1.125rem] ps-10 pe-10 bg-white dark:bg-white/10 dark:disabled:bg-white/[7%] text-zinc-700 disabled:text-zinc-500 placeholder-zinc-400 disabled:placeholder-zinc-400/70 dark:text-zinc-300 dark:disabled:text-zinc-400 dark:placeholder-zinc-400 dark:disabled:placeholder-zinc-500 shadow-xs border-zinc-200 border-b-zinc-300/80 disabled:border-b-zinc-200 dark:border-white/10 dark:disabled:border-white/5 data-invalid:shadow-none data-invalid:border-red-500 dark:data-invalid:border-red-500 disabled:data-invalid:border-red-500 dark:disabled:data-invalid:border-red-500  w-full relative flex !border-gray-700 !bg-gray-800" type="button" placeholder="Search..." x-on:click="open = true">
+                    <div class="absolute top-0 bottom-0 flex items-center justify-center text-xs text-zinc-400/75 ps-3 start-0">
+                <svg class="shrink-0 [:where(&amp;)]:size-5" data-flux-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" data-slot="icon">
+  <path fill-rule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM2 9a7 7 0 1 1 12.452 4.391l3.328 3.329a.75.75 0 1 1-1.06 1.06l-3.329-3.328A7 7 0 0 1 2 9Z" clip-rule="evenodd"/>
+</svg>
+
+                    </div>
+        
+                    <div class="block self-center text-start flex-1 font-medium text-zinc-400 dark:text-white/40">
+                Search...
+            </div>
+        
+                    <div class="absolute top-0 bottom-0 flex items-center justify-center text-xs text-zinc-400/75 pe-4 end-0">
+                ⌘K
+            </div>
+        
+            </button>
+    </div>
+
+    
+    <template x-teleport="body">
+        <div
+            x-show="open"
+            x-trap.noreturn.noscroll="open"
+            x-on:keydown.escape.window="open = false; $wire.set('query', '')"
+            class="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh]"
+            style="display: none;"
+        >
+            
+            <div
+                x-show="open"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0"
+                x-transition:enter-end="opacity-100"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100"
+                x-transition:leave-end="opacity-0"
+                class="fixed inset-0 bg-black/70"
+                x-on:click="open = false; $wire.set('query', '')"
+            ></div>
+
+            
+            <div
+                x-show="open"
+                x-transition:enter="transition ease-out duration-200"
+                x-transition:enter-start="opacity-0 scale-95"
+                x-transition:enter-end="opacity-100 scale-100"
+                x-transition:leave="transition ease-in duration-150"
+                x-transition:leave-start="opacity-100 scale-100"
+                x-transition:leave-end="opacity-0 scale-95"
+                x-on:keydown.down.prevent="
+                    if (document.activeElement === $refs.searchInput) {
+                        $refs.resultsList?.querySelector('[tabindex=&quot;0&quot;]')?.focus();
+                    } else if ($refs.resultsList) {
+                        $focus.within($refs.resultsList).next();
+                    }
+                "
+                x-on:keydown.up.prevent="
+                    if ($refs.resultsList) {
+                        const first = $refs.resultsList.querySelector('[tabindex=&quot;0&quot;]');
+                        if (document.activeElement === first) {
+                            $refs.searchInput.focus();
+                        } else {
+                            $focus.within($refs.resultsList).previous();
+                        }
+                    }
+                "
+                x-init="$watch('open', value => { if (value) $nextTick(() => $refs.searchInput.focus()) })"
+                class="relative z-10 w-full max-w-[36rem] overflow-hidden rounded-xl bg-gray-900 shadow-2xl ring-1 ring-gray-700/50"
+            >
+                
+                <div class="flex items-center gap-2 border-b border-gray-700/40 px-4">
+                    <svg class="shrink-0 [:where(&amp;)]:size-6 size-5 shrink-0 text-gray-400" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/>
+</svg>
+
+                            <input
+                        x-ref="searchInput"
+                        id="global-search"
+                        type="search"
+                        wire:model.live.debounce.250ms="query"
+                        placeholder="Search everything..."
+                        class="min-w-0 flex-1 border-0 bg-transparent py-3.5 text-sm text-gray-100 placeholder:text-gray-500 focus:outline-none focus:ring-0 [&::-webkit-search-cancel-button]:hidden"
+                        autocomplete="off"
+                        x-on:keydown.enter.prevent="$refs.resultsList?.querySelector('a[role=listitem]')?.click()"
+                    />
+                    <!--[if BLOCK]><![endif]--><!--[if ENDBLOCK]><![endif]-->                    <kbd
+                        class="shrink-0 rounded border border-gray-600 bg-gray-800 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">ESC</kbd>
+                </div>
+
+                
+                <!--[if BLOCK]><![endif]-->                    <div class="px-6 py-14 text-center">
+                        <svg class="shrink-0 [:where(&amp;)]:size-6 mx-auto size-6 text-gray-500" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/>
+</svg>
+
+                                <p class="mt-4 text-sm text-gray-400">
+                            Start typing to search mods, addons, lists, and users.</p>
+                    </div>
+                <!--[if ENDBLOCK]><![endif]-->
+                
+                <!--[if BLOCK]><![endif]--><!--[if ENDBLOCK]><![endif]-->            </div>
+        </div>
+    </template>
+</div>
+            <div class="flex lg:hidden">
+                
+                <button
+                    x-on:click="mobileMenuOpen = !mobileMenuOpen"
+                    type="button"
+                    class="focus:outline-hidden relative inline-flex items-center justify-center rounded-md p-2 text-gray-300 hover:bg-gray-700/50 hover:text-white focus:ring-2 focus:ring-inset focus:ring-white"
+                    aria-controls="mobile-menu"
+                    :aria-expanded="mobileMenuOpen"
+                >
+                    <span class="absolute -inset-0.5"></span>
+                    <span class="sr-only">Open main menu</span>
+                    <svg class="shrink-0 [:where(&amp;)]:size-6 h-6 w-6" x-show="!mobileMenuOpen" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/>
+</svg>
+
+                            <svg class="shrink-0 [:where(&amp;)]:size-6 h-6 w-6" x-show="mobileMenuOpen" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/>
+</svg>
+
+                        </button>
+            </div>
+            <div class="hidden lg:ml-4 lg:block">
+                <div class="flex items-center gap-4">
+                    
+                    <div class="flex items-center gap-2">
+                        
+                        
+                        
+                        
+                        
+                                            </div>
+
+                                                                <div>
+                            <a
+                                href="https://sp-mod.com/login"
+                                wire:navigate
+                                class="whitespace-nowrap text-sm font-semibold leading-6 text-gray-100"
+                            >Log in <span aria-hidden="true">&rarr;</span></a>
+                        </div>
+                                    </div>
+            </div>
+        </div>
+    </div>
+
+    
+    <div
+        class="relative z-50 lg:hidden"
+        x-show="mobileMenuOpen"
+        id="mobile-menu"
+    >
+        <div class="mx-3 space-y-1 border-y border-gray-700 py-3">
+            <a
+    wire:navigate
+    class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/installer"
+>
+    Install
+</a>
+            <a
+    wire:navigate
+    class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/mods"
+>
+    Mods
+</a>
+            <a
+    wire:navigate
+    class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/lists"
+>
+    Lists
+</a>
+                        <a
+    wire:navigate
+    class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/developers"
+>
+    API
+</a>
+            <a
+                href="https://wiki.sp-tushonka.com/"
+                target="_blank"
+                class="block flex items-center gap-2 rounded-md px-3 py-2 text-base font-medium text-gray-400 transition duration-150 ease-in-out hover:bg-gray-700 hover:text-white"
+            >
+                Wiki
+                <svg class="shrink-0 [:where(&amp;)]:size-6 h-4 w-4" data-flux-icon xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true" data-slot="icon">
+  <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+</svg>
+
+                    </a>
+        </div>
+                            <div class="mx-3 space-y-1 py-3">
+                <a
+    wire:navigate
+    class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/login"
+>
+    Log in
+</a>
+                                    <a
+    wire:navigate
+    class="block rounded-md px-3 py-2 text-base font-medium text-gray-400 hover:bg-gray-700 hover:text-white transition duration-150 ease-in-out" href="https://sp-mod.com/register"
+>
+    Register
+</a>
+                            </div>
+            </div>
+</nav>
+        
+        
+        <main
+            id="main-content"
+            class="pb-6 sm:py-12"
+        >
+            <div class="flex min-h-[60vh] items-center justify-center px-4">
+        <div class="w-full max-w-2xl">
+            <div class="rounded-lg bg-gray-900 p-8 shadow-lg md:p-12">
+                <div class="text-center">
+                    <div class="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-full bg-yellow-900/20">
+                        <svg
+                            class="h-8 w-8 text-gray-900"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                            ></path>
+                        </svg>
+                    </div>
+
+                    <h1 class="mb-4 text-3xl font-bold text-white md:text-4xl">
+                        Page Not Found
+                    </h1>
+
+                    <p class="mb-8 text-lg text-gray-400">
+                        The page you're looking for doesn't exist or has been moved.
+                    </p>
+
+                    <div class="flex flex-col justify-center gap-4 sm:flex-row">
+                        <a href="https://sp-mod.com" data-flux-button="data-flux-button" class="relative items-center font-medium justify-center gap-2 whitespace-nowrap disabled:opacity-75 dark:disabled:opacity-75 disabled:cursor-default disabled:pointer-events-none justify-center h-10 text-sm rounded-lg ps-4 pe-4 inline-flex  bg-[var(--color-accent)] hover:bg-[color-mix(in_oklab,_var(--color-accent),_transparent_10%)] text-[var(--color-accent-foreground)] border border-black/10 dark:border-0 shadow-[inset_0px_1px_--theme(--color-white/.2)] [[data-flux-button-group]_&amp;]:border-e-0 [:is([data-flux-button-group]&gt;&amp;:last-child,_[data-flux-button-group]_:last-child&gt;&amp;)]:border-e-[1px] dark:[:is([data-flux-button-group]&gt;&amp;:last-child,_[data-flux-button-group]_:last-child&gt;&amp;)]:border-e-0 dark:[:is([data-flux-button-group]&gt;&amp;:last-child,_[data-flux-button-group]_:last-child&gt;&amp;)]:border-s-[1px] [:is([data-flux-button-group]&gt;&amp;:not(:first-child),_[data-flux-button-group]_:not(:first-child)&gt;&amp;)]:border-s-[color-mix(in_srgb,var(--color-accent-foreground),transparent_85%)]" data-flux-group-target="data-flux-group-target" wire:navigate="">
+        Go Back
+    </a>
+
+                        <a href="https://sp-mod.com" data-flux-button="data-flux-button" class="relative items-center font-medium justify-center gap-2 whitespace-nowrap disabled:opacity-75 dark:disabled:opacity-75 disabled:cursor-default disabled:pointer-events-none justify-center h-10 text-sm rounded-lg ps-4 pe-4 inline-flex  bg-transparent hover:bg-zinc-800/5 dark:hover:bg-white/15 text-zinc-800 dark:text-white" wire:navigate="">
+        Go to Homepage
+    </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+        </main>
+    </div>
+
+            <footer
+    class="bg-gray-900"
+    aria-labelledby="footer-heading"
+>
+    <h2
+        id="footer-heading"
+        class="sr-only"
+    >Footer</h2>
+    <div class="lg:pt-29 mx-auto max-w-7xl px-6 pb-8 pt-14 sm:pt-20 lg:px-8">
+        <div class="xl:grid xl:grid-cols-3 xl:gap-8">
+            <div>
+                <div class="flex flex-nowrap items-center justify-start gap-1">
+    <img
+        src="https://sp-mod.com/build/assets/spt-small-CoSRvm-1.png"
+        srcset="https://sp-mod.com/build/assets/spt-small-CoSRvm-1.png 1x, https://sp-mod.com/build/assets/spt-small@2x-C13VxvnR.png 2x, https://sp-mod.com/build/assets/spt-small@3x-CBlplZdt.png 3x, https://sp-mod.com/build/assets/spt-small@4x-DQWFifMM.png 4x"
+        alt="Single Player Tushonka Logo"
+        class="h-4 w-8 shrink-0"
+    />
+    <h1 class="text-[1.15rem] font-extrabold leading-none text-white">Forge</h1>
+</div>
+                <p class="mt-6 flex space-x-4">
+                    <a
+                        href="https://github.com/SP-Tushonka/forge"
+                        target="_blank"
+                        title="View on GitHub"
+                    >
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            class="h-6 w-6 text-white hover:text-gray-300"
+                        >
+                            <path
+                                d="M12 0C5.374 0 0 5.373 0 12 0 17.302 3.438 21.8 8.207 23.387c.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"
+                            />
+                        </svg>
+                    </a>
+                    <a
+                        href="https://discord.com/invite/Xn9msqQZan"
+                        title="Join Our Discord!"
+                    >
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 127.14 96.36"
+                            class="h-6 w-6 text-white hover:text-gray-300"
+                        >
+                            <path
+                                fill="currentColor"
+                                d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"
+                            />
+                        </svg>
+                    </a>
+                </p>
+                <p class="mt-4 text-sm text-gray-400">
+                    This site is open source.<br /><a
+                        href="https://github.com/SP-Tushonka/forge"
+                        target="_blank"
+                        class="text-white underline hover:text-gray-300"
+                    >Help build it!</a>
+                </p>
+            </div>
+            <div class="mt-16 grid grid-cols-1 gap-8 sm:grid-cols-2 md:grid-cols-3 xl:col-span-2 xl:mt-0">
+                <div class="sm:order-first">
+                    <h3 class="text-sm font-semibold leading-6 text-white">Single Player Tushonka</h3>
+                    <ul
+                        role="list"
+                        class="mt-6 space-y-4"
+                    >
+                        <li><a
+                                href="https://sp-mod.com/installer"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Installer</a></li>
+                        <li><a
+                                href="https://sp-mod.com/mods"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Mods</a></li>
+                        <li><a
+                                href="https://sp-mod.com/developers"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >API</a></li>
+                        <li><a
+                                href="https://wiki.sp-tushonka.com/"
+                                target="_blank"
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >SPT Wiki</a></li>
+                        <li><a
+                                href="https://github.com/SP-Tushonka/build/releases"
+                                target="_blank"
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >SPT Changelog</a></li>
+                        <li><a
+                                href="https://sp-mod.com/contact"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Contact</a></li>
+                    </ul>
+                </div>
+                <!--
+                <div class="sm:order-last">
+                    <h3 class="text-sm font-semibold leading-6 text-white">Escape from Tushonka</h3>
+                    <ul
+                        role="list"
+                        class="mt-6 space-y-4"
+                    >
+                        <li><a
+                                href="https://www.escapefromtarkov.com/preorder-page"
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Purchase</a></li>
+                        <li><a
+                                href="https://escapefromtarkov.fandom.com/wiki/Escape_from_Tarkov_Wiki"
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >EFT Wiki</a></li>
+                        <li><a
+                                href="https://escapefromtarkov.fandom.com/wiki/Changelog"
+                                target="_blank"
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >EFT Changelog</a></li>
+                    </ul>
+                </div>
+                -->
+                <div>
+                    <h3 class="text-sm font-semibold leading-6 text-white">Legal Stuff</h3>
+                    <ul
+                        role="list"
+                        class="mt-6 space-y-4"
+                    >
+                        <li><a
+                                href="https://sp-mod.com/community-standards"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Community Standards</a></li>
+                        <li><a
+                                href="https://sp-mod.com/content-guidelines"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Content Guidelines</a></li>
+                        <li><a
+                                href="https://sp-mod.com/terms-of-service"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Terms of Service</a></li>
+                        <li><a
+                                href="https://sp-mod.com/privacy-policy"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >Privacy Policy</a></li>
+                        <li><a
+                                href="https://sp-mod.com/dmca"
+                                wire:navigate
+                                class="text-sm leading-6 text-gray-300 hover:text-white"
+                            >DMCA</a></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <div class="mt-8 border-t border-white/10 pt-8">
+            <div class="flex flex-col space-y-6 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
+                <div class="flex flex-col space-y-2 text-xs text-gray-400">
+                    <p>
+                        &copy; 2026 The Forge. All rights reserved.<br />
+                    </p>
+                </div>
+                <div>
+                    <div class="text-xs text-gray-400">
+    
+            <div class="text-left sm:text-right">
+            <span class="font-medium text-gray-300">196</span>
+            visitors
+            <span class="text-gray-500">
+                in the last 5 minutes
+            </span>
+        </div>
+    
+    
+            <div class="text-left sm:text-right">
+            <span class="text-gray-500">Peak:</span>
+            <span class="font-medium text-gray-400">625</span>
+            <span class="text-gray-500">on Aug 15, 2026</span>
+        </div>
+    
+    
+            <div class="mt-1 text-left sm:text-right">
+            <span class="font-medium text-gray-400">248,058</span>
+            <span class="text-gray-500">API requests in the last 24h</span>
+        </div>
+                    <div class="text-left text-gray-500 sm:text-right">
+                47% served from cache
+            </div>
+            </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</footer>
+    
+        <script  data-navigate-once="true">window.livewireScriptConfig = {"csrf":"6SabX9Z3N1NjPAksjMTJl6iwFbMnWecX303SoEqV","uri":"https:\/\/sp-mod.com\/livewire-6e3bcd93\/update","moduleUrl":"https:\/\/sp-mod.com\/livewire-6e3bcd93","progressBar":"","nonce":""};</script>
+    <script src="https://sp-mod.com/flux/flux.min.js?id=1ea4120f" data-navigate-once></script>
+    <link rel="preload" as="style" href="https://sp-mod.com/build/assets/app-C8LL_u4z.css" /><link rel="modulepreload" as="script" href="https://sp-mod.com/build/assets/app-0DvnqIAG.js" crossorigin="anonymous" /><link rel="stylesheet" href="https://sp-mod.com/build/assets/app-C8LL_u4z.css" data-navigate-track="reload" /><script type="module" src="https://sp-mod.com/build/assets/app-0DvnqIAG.js" data-navigate-track="reload" crossorigin="anonymous"></script>
+<script>
+     window.addEventListener('load', () => window.setTimeout(() => {
+        const makeLink = (asset) => {
+            const link = document.createElement('link')
+
+            Object.keys(asset).forEach((attribute) => {
+                link.setAttribute(attribute, asset[attribute])
+            })
+
+            return link
+        }
+
+        const fragment = new DocumentFragment;
+        JSON.parse('[{\u0022rel\u0022:\u0022prefetch\u0022,\u0022as\u0022:\u0022script\u0022,\u0022href\u0022:\u0022https:\\\/\\\/sp-mod.com\\\/build\\\/assets\\\/cropper-SNGqV8vR.js\u0022,\u0022crossorigin\u0022:\u0022anonymous\u0022,\u0022fetchpriority\u0022:\u0022low\u0022}]').forEach((asset) => fragment.append(makeLink(asset)))
+        document.head.append(fragment)
+     }))
+</script>    <script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a3d4a518c9e7a33e',t:'MTc4OTc3OTUzNg=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+
+</html>

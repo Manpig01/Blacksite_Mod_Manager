@@ -1,0 +1,70 @@
+=== Blacksite Dependency Freeze Fixes smoke test (task 6.1) ===
+
+--- 0. Install trace: timestamped events + rolling size cap ---
+  [PASS] trace file exists  [/tmp/BlacksiteModManager/install-trace.log]
+  [PASS] trace rolled to install-trace.log.1 at the size cap
+  [PASS] active trace file respects the cap  [1926 B]
+  [PASS] lines carry timestamps + category  [06:41:24.289 [test] xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
+
+--- A. 429 with a SHORT Retry-After: visible countdown, wait honored ---
+  [PASS] request succeeds after the visible wait
+  [PASS] the 2s Retry-After was actually honored  [2.1s]
+  [PASS] per-second countdown surfaced through Notice  [Rate limited by sp-mod.com — waiting 2s (attempt 1 of 6) | Rate limited by sp-mod.com — waiting 1s (attempt 1 of 6) | Rate limited by sp-mod.com — waiting 1s (attempt 1 of 6) | Rate-limit wait over — retrying (attempt 2 of 6)…]
+  [PASS] countdown names the attempt
+  [PASS] wait-end notice announces the retry
+
+--- B. 429 with a LONG Retry-After: fails fast + retryable (cap respected) ---
+  [PASS] item fails instead of hanging on the 400s demand
+  [PASS] failure is FAST (no 400s wait, no 6× ladder)  [0.0s]
+  [PASS] error names the cap and is retryable  [ApiException: sp-mod.com rate limit demands a 300s wait — over the 90s visible-wait cap. Nothing was installed. Please retry in a few minutes.]
+  [PASS] queue slot freed for the next item (single-slot engine invariant)
+  [PASS] Retry re-enqueues the failed item
+  [PASS] retried item completes against a healthy server  [Completed ]
+  [PASS] retried install wrote the mod files
+
+--- C. Stalled stream: watchdog fails the item fast, Retry then succeeds ---
+  [PASS] stalled download fails the item cleanly
+  [PASS] error states the watchdog window  [Download stalled — no data for 3s at byte 0. The connection went silent. Retry the install; partial bytes were discarded.]
+  [PASS] failed inside the watchdog window — NOT six 3s stall-retries  [3.0s]
+  [PASS] stall watchdog event landed in the install trace
+  [PASS] Retry re-enqueues the stalled item
+  [PASS] retried download completes  [Completed ]
+  [PASS] files landed after the retry
+
+--- D. Unanswered dependency prompt: WaitingForUser → auto-cancel ---
+  [PASS] card entered WaitingForUser while the prompt was open
+  [PASS] waiting label is explicit on the card  [✗ Failed]
+  [PASS] unanswered prompt ends as a clean failure, not a hang  [Failed]
+  [PASS] card note names the timeout default  [Timed out waiting for dependency choice — nothing was installed. Installation cancelled by user.]
+  [PASS] prompt-shown + timeout landed in the install trace
+
+--- E. Pre-queue batch resolution: deps enqueued as INDEPENDENT queue items ---
+  [PASS] resolver flattens the tree into a batch list of missing deps  [1 dep(s): WTT CommonLib]
+  [PASS] prompt carries the missing dep row
+  [PASS] dependency enqueued as an independent card
+  [PASS] dep card is labelled as a dependency  [Dependency · v1.0.0]
+  [PASS] shared dependency enqueued twice → second enqueue is deduped (never downloaded twice)
+  [PASS] two independent items waiting  [Current: 0 | Queue: 2 | Completed: 0]
+  [PASS] both independent items completed  [(2310, Completed) | (1776, Completed)]
+  [PASS] dependency finishes BEFORE the mod that needs it  [2310 → 1776]
+  [PASS] dependency files landed
+  [PASS] mod files landed
+
+--- F. Engine-direct install: target only, cycles terminate, cancel, installed-skip ---
+  [PASS] engine-direct install of the target succeeds
+  [PASS] target files landed
+  [PASS] dependency NOT downloaded inline inside the mod's task (pre-queued upstream instead)
+  [PASS] no error on the card
+  [PASS] resolving label still reports the found count on the target card  [Resolving dependencies… | Resolving dependencies (1 found)…]
+  [PASS] circular tree (A→B→A) terminates — visited set prevents infinite recursion  [1 dep(s)]
+  [PASS] dependency already installed locally is skipped (not re-downloaded)  [0 dep(s)]
+  [PASS] Cancel on a QUEUED item is accepted
+  [PASS] queued item fails immediately with a clear message  [Cancelled — removed from the queue before it started.]
+  [PASS] queued-item cancel is instantaneous  [1ms]
+  [PASS] Cancel on a RUNNING (stalled-download) item is accepted
+  [PASS] running item aborts via cancellation — not the stall watchdog  [Installation cancelled.]
+  [PASS] Retry re-enqueues the cancelled item
+  [PASS] retried item completes
+  [PASS] files landed after the retry
+  [PASS] Cancel on a finished item is a no-op
+RESULT: 54 passed, 0 failed, 0 skipped

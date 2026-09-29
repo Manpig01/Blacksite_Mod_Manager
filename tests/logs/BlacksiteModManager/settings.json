@@ -1,0 +1,28 @@
+{
+  "sptDirectory": null,
+  "sptVersion": null,
+  "clientModPath": null,
+  "serverModPath": null,
+  "sptVersionFilter": null,
+  "downloadStallTimeoutSeconds": 60,
+  "installedMods": {
+    "1776": {
+      "name": "Komrade\u0027s Basics",
+      "version": "2.0.0",
+      "installedAtUtc": "2026-09-22T06:41:28.3412762Z",
+      "releaseId": null
+    },
+    "147": {
+      "name": "Medical Attention",
+      "version": "4.1.3",
+      "installedAtUtc": "2026-09-22T06:41:02.5762283Z",
+      "releaseId": null
+    },
+    "236": {
+      "name": "SvmServer",
+      "version": "2.1.3",
+      "installedAtUtc": "2026-09-22T06:41:21.5653656Z",
+      "releaseId": 14849
+    }
+  }
+}

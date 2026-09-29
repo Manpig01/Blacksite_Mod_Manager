@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Building the windows TFM from the Linux build host (the app csproj does the same). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Blacksite.Smoke2</RootNamespace>
+    <AssemblyName>InstalledSmokeTest</AssemblyName>
+    <NoWarn>CS1591;CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpCompress" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compile the REAL production sources (non-WPF layers) -->
+    <Compile Include="../Blacksite/Models/ApiModels.cs" />
+    <Compile Include="../Blacksite/Models/InstalledModModels.cs" />
+    <Compile Include="../Blacksite/Services/InstallTrace.cs" />
+    <Compile Include="../Blacksite/Services/RateLimitedRetryHandler.cs" />
+    <Compile Include="../Blacksite/Services/SemVer.cs" />
+    <Compile Include="../Blacksite/Services/SpModApiClient.cs" />
+    <Compile Include="../Blacksite/Services/SettingsService.cs" />
+    <Compile Include="../Blacksite/Services/PluginMetadata.cs" />
+    <Compile Include="../Blacksite/Services/ArchiveExtractor.cs" />
+    <Compile Include="../Blacksite/Services/Extraction/ArchiveInspector.cs" />
+    <Compile Include="../Blacksite/Services/Extraction/SptRouteTable.cs" />
+    <Compile Include="../Blacksite/Services/Extraction/PlacementEngine.cs" />
+    <Compile Include="../Blacksite/Services/Extraction/SharpCompressExtractor.cs" />
+    <Compile Include="../Blacksite/Services/Extraction/SevenZipFirstExtractor.cs" />
+    <Compile Include="../Blacksite/Services/SevenZipService.cs" />
+    <Compile Include="../Blacksite/Services/InstallService.cs" />
+    <Compile Include="../Blacksite/Services/LocalModScanner.cs" />
+    <Compile Include="../Blacksite/Services/InstalledModsService.cs" />
+    <Compile Include="../Blacksite/Services/VersionUtils.cs" />
+    <!-- ViewModels (real sources) — the ⬆ Update button lives in InstalledModViewModel -->
+    <Compile Include="../Blacksite/ViewModels/Mvvm.cs" />
+    <Compile Include="../Blacksite/ViewModels/InstalledModViewModel.cs" />
+    <Compile Include="../Blacksite/ViewModels/ModCardViewModel.cs" />
+    <Compile Include="../Blacksite/Services/ImageCache.cs" />
+    <Compile Include="../Blacksite/Services/ConflictDetector.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Hermetic test fixtures (repo: tests/fixtures) - copied next to the test binary. -->
+    <None Include="../tests/fixtures/**/*.*" CopyToOutputDirectory="PreserveNewest" Link="fixtures/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+  <!-- The harness COMPILES the real ViewModels (which expose WPF ImageSource types) but never
+       EXECUTES WPF code — strip the WindowsDesktop framework requirement from runtimeconfig
+       so the plain NETCore host runs it on Linux. The shipped app is untouched by this. -->
+  <Target Name="StripDesktopFrameworkFromRuntimeConfig" AfterTargets="Build">
+    <Exec Command="python3 -c &quot;import json;p='$(OutputPath)$(AssemblyName).runtimeconfig.json';d=json.load(open(p));d['runtimeOptions']['frameworks']=[f for f in d['runtimeOptions']['frameworks'] if f['name']!='Microsoft.WindowsDesktop.App'];json.dump(d,open(p,'w'),indent=2)&quot;" />
+  </Target>
+</Project>
