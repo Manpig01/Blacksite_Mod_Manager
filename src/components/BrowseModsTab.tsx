@@ -1,7 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { Search, RotateCw, ChevronLeft, ChevronRight, Upload, History, ExternalLink, Download, Check, Sparkles } from 'lucide-react';
+import { Search, RotateCw, ChevronLeft, ChevronRight, Upload, History, ExternalLink, Download, Check, Sparkles, Heart, Calendar, ThumbsUp } from 'lucide-react';
 import { Mod, ModCategory, SptVersionInfo, CatalogSortOption, InstalledMod } from '../types';
 import { apiService, CatalogQueryResult } from '../services/apiService';
+import { storageService } from '../services/storageService';
+import { ModThumbnail } from './ModThumbnail';
+import { RecommendedModsSection } from './RecommendedModsSection';
+
+function formatForgeDate(dateString?: string | null): string {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  const diffDays = Math.floor(diffHours / 24);
+
+  const timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  if (diffHours < 24 && date.getDate() === now.getDate()) {
+    return `Today at ${timeStr}`;
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (date.getDate() === yesterday.getDate() && date.getMonth() === yesterday.getMonth()) {
+    return `Yesterday at ${timeStr}`;
+  }
+  if (diffDays < 7) {
+    const dayName = date.toLocaleDateString([], { weekday: 'long' });
+    return `${dayName} at ${timeStr}`;
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 interface BrowseModsTabProps {
   sptVersion: string;
@@ -27,7 +57,7 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
   const [searchText, setSearchText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
   const [selectedSptVersion, setSelectedSptVersion] = useState<string>('All');
-  const [selectedSort, setSelectedSort] = useState<CatalogSortOption>('downloads');
+  const [selectedSort, setSelectedSort] = useState<CatalogSortOption>('recent');
   const [perPage, setPerPage] = useState<number>(20);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
@@ -36,6 +66,8 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
   const [hideContainsAi, setHideContainsAi] = useState<boolean>(false);
   const [hideInstalled, setHideInstalled] = useState<boolean>(false);
   const [fikaOnly, setFikaOnly] = useState<boolean>(false);
+  const [favoritesOnly, setFavoritesOnly] = useState<boolean>(false);
+  const [favoriteIds, setFavoriteIds] = useState<Set<number>>(() => new Set(storageService.loadFavoriteModIds()));
 
   const [queryResult, setQueryResult] = useState<CatalogQueryResult>({
     mods: [],
@@ -86,12 +118,58 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
         fikaOnly,
         installedGuids,
       });
-      setQueryResult(res);
+
+      const currentFavs = new Set(storageService.loadFavoriteModIds());
+      setFavoriteIds(currentFavs);
+      const modsWithFavorites: Mod[] = res.mods.map((m) => ({
+        ...m,
+        favorite: currentFavs.has(m.id),
+      }));
+
+      setQueryResult({
+        ...res,
+        mods: modsWithFavorites,
+      });
     } catch (err) {
       console.error(err);
       onShowToast('Catalog Query Error', 'Failed to retrieve mods from catalog.', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleFavorite = (mod: Mod, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const isNowFavorite = storageService.toggleFavoriteMod(mod.id);
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (isNowFavorite) {
+        next.add(mod.id);
+      } else {
+        next.delete(mod.id);
+      }
+      return next;
+    });
+
+    setQueryResult((prev) => ({
+      ...prev,
+      mods: prev.mods.map((m) =>
+        m.id === mod.id ? { ...m, favorite: isNowFavorite } : m
+      ),
+    }));
+
+    if (isNowFavorite) {
+      onShowToast(
+        'Added to Favorites',
+        `"${mod.name}" was added to your favorites.`,
+        'success'
+      );
+    } else {
+      onShowToast(
+        'Removed from Favorites',
+        `"${mod.name}" was removed from your favorites.`,
+        'info'
+      );
     }
   };
 
@@ -105,6 +183,7 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
     setHideContainsAi(false);
     setHideInstalled(false);
     setFikaOnly(false);
+    setFavoritesOnly(false);
     setCurrentPage(1);
   };
 
@@ -317,6 +396,23 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
             <span>Fika Comp Only</span>
           </label>
 
+          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]">
+            <input
+              type="checkbox"
+              checked={favoritesOnly}
+              onChange={(e) => setFavoritesOnly(e.target.checked)}
+              className="accent-[#EF4444]"
+            />
+            <span className="flex items-center gap-1">
+              <Heart
+                className={`w-3 h-3 ${
+                  favoritesOnly || favoriteIds.size > 0 ? 'text-[#EF4444] fill-[#EF4444]' : 'text-[#9AA3AF]'
+                }`}
+              />
+              <span>Favorites ({favoriteIds.size})</span>
+            </span>
+          </label>
+
           {/* Pagination controls */}
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -360,166 +456,176 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
 
       {/* Catalog Mod Grid (Virtualizing 3-column compact 220px cards) */}
       <div className="flex-1 overflow-y-auto pr-1">
+        {/* Recommended for You Section based on installed mod categories */}
+        <RecommendedModsSection
+          installedMods={installedMods}
+          categories={categories}
+          installedGuids={installedGuids}
+          onInstallMod={onInstallMod}
+          onOpenVersions={onOpenVersions}
+        />
+
         {loading && queryResult.mods.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-[#9AA3AF]">
             <div className="w-8 h-8 border-2 border-[#EA580C] border-t-transparent rounded-full animate-spin mb-3"></div>
             <p>Loading mods catalog...</p>
           </div>
-        ) : queryResult.mods.length === 0 ? (
+        ) : (favoritesOnly ? queryResult.mods.filter((m) => favoriteIds.has(m.id)) : queryResult.mods).length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-[#9AA3AF]">
-            <span className="text-4xl opacity-50 mb-2">🐉</span>
-            <p className="text-base font-medium text-[#E8EAEE]">No mods found matching your query</p>
-            <p className="text-sm">Try broadening your search term or resetting active filters.</p>
+            <span className="text-4xl opacity-50 mb-2">{favoritesOnly ? '❤️' : '🐉'}</span>
+            <p className="text-base font-medium text-[#E8EAEE]">
+              {favoritesOnly ? 'No favorite mods found' : 'No mods found matching your query'}
+            </p>
+            <p className="text-sm">
+              {favoritesOnly
+                ? 'Click the heart icon on any mod card to save it to your favorites.'
+                : 'Try broadening your search term or resetting active filters.'}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pb-6">
-            {queryResult.mods.map((mod) => {
+            {(favoritesOnly ? queryResult.mods.filter((m) => favoriteIds.has(m.id)) : queryResult.mods).map((mod) => {
               const isInstalled = mod.guid ? installedGuids.includes(mod.guid) : false;
-              const hasThumbnail = Boolean(mod.thumbnail);
               const authorName = mod.owner?.name || 'Unknown';
-              const packageId = mod.guid || mod.slug || `id-${mod.id}`;
+              const isFavorite = Boolean(mod.favorite ?? favoriteIds.has(mod.id));
+              const displayVersion = mod.versions?.[0]?.version || '';
+              const formattedDate = formatForgeDate(mod.published_at);
 
               return (
                 <div
                   key={mod.id}
-                  className="h-[220px] bg-[#181B20] border border-[#23272E] hover:border-[#EA580C] rounded-lg p-3 transition-colors flex gap-3 relative group"
+                  className="h-[210px] bg-[#181B20] border border-[#23272E] hover:border-[#EA580C] rounded-lg p-3 transition-colors flex gap-3 relative group"
                 >
-                  {/* Thumbnail column (135x135) with overlays */}
-                  <div className="w-[135px] h-[135px] shrink-0 relative bg-[#20252D] rounded-md overflow-hidden self-center border border-[#23272E]">
-                    {hasThumbnail ? (
-                      <img
-                        src={mod.thumbnail}
-                        alt={mod.name}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                        }}
-                      />
-                    ) : null}
+                  {/* Top-Right Favorite Heart Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => handleToggleFavorite(mod, e)}
+                    className={`absolute top-2.5 right-2.5 z-10 p-1.5 rounded-full transition-all cursor-pointer ${
+                      isFavorite
+                        ? 'bg-[#2A1015] border border-[#EF4444] text-[#EF4444] shadow-[0_0_8px_rgba(239,68,68,0.35)] scale-105'
+                        : 'bg-[#20252D]/85 hover:bg-[#2A2F38] text-[#9AA3AF] hover:text-[#EF4444] border border-[#2A2F38] hover:border-[#EF4444]/40 opacity-80 group-hover:opacity-100'
+                    }`}
+                    title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    aria-label={isFavorite ? `Remove ${mod.name} from favorites` : `Add ${mod.name} to favorites`}
+                  >
+                    <Heart
+                      className={`w-3.5 h-3.5 transition-transform active:scale-125 ${
+                        isFavorite ? 'fill-[#EF4444] text-[#EF4444]' : ''
+                      }`}
+                    />
+                  </button>
 
-                    {/* Placeholder fallback initial */}
-                    <div className="absolute inset-0 flex items-center justify-center text-4xl font-bold text-[#3A4150] -z-10 select-none">
-                      {mod.name.charAt(0).toUpperCase()}
-                    </div>
-
-                    {/* Top-left: green SPT version badge */}
-                    <div className="absolute top-1 left-1 bg-[#16A34A] rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-white tracking-tight shadow">
-                      SPT 4.x
-                    </div>
-
-                    {/* Bottom-left: Fika Compatible overlay */}
-                    {mod.fika_compatibility && (
-                      <div className="absolute bottom-1 left-1 bg-[#0E2A18] border border-[#16A34A] rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-[#22C55E] tracking-tight shadow">
-                        Fika Compatible
-                      </div>
-                    )}
-                  </div>
+                  {/* Thumbnail column (135x135) with Forge hotlink proxy image */}
+                  <ModThumbnail mod={mod} />
 
                   {/* Content area right */}
-                  <div className="flex-1 flex flex-col justify-between overflow-hidden min-w-0">
+                  <div className="flex-1 flex flex-col justify-between overflow-hidden min-w-0 pr-6">
                     <div>
-                      {/* Title */}
-                      <h3
-                        className="text-[14px] font-bold text-[#E8EAEE] truncate tracking-tight"
-                        title={mod.name}
-                      >
-                        {mod.name}
-                      </h3>
+                      {/* Title + Version */}
+                      <div className="flex items-baseline gap-2 truncate pr-2">
+                        <h3
+                          className="text-[14px] font-bold text-[#E8EAEE] tracking-tight truncate"
+                          title={mod.name}
+                        >
+                          {mod.name}
+                        </h3>
+                        {displayVersion && (
+                          <span className="text-[11.5px] font-normal text-[#9AA3AF] shrink-0 font-mono">
+                            {displayVersion}
+                          </span>
+                        )}
+                      </div>
 
-                      {/* Package ID in Consolas */}
-                      <p
-                        className="font-mono text-[10.5px] text-[#6B7480] truncate mt-0.5"
-                        title={packageId}
-                      >
-                        {packageId}
+                      {/* Author */}
+                      <p className="text-[11.5px] text-[#9AA3AF] mt-0.5 truncate">
+                        Created by <span className="text-[#C2C9D6] font-medium">{authorName}</span>
                       </p>
 
-                      {/* Tag pills: Orange Author pill + Category pill */}
-                      <div className="flex items-center gap-1.5 mt-1.5 overflow-hidden flex-wrap max-h-6">
-                        <span
-                          className="bg-[#3A2415] border border-[#EA580C] text-[#F97316] text-[11px] font-semibold px-2 py-0.5 rounded-full truncate max-w-[120px]"
-                          title={authorName}
-                        >
-                          {authorName}
+                      {/* Badges row */}
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        <span className="bg-[#16A34A] text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">
+                          SPT 4.1.6
                         </span>
-
+                        {mod.fika_compatibility && (
+                          <span className="bg-[#0E2A18] text-[#4ADE80] border border-[#16A34A]/40 text-[10px] font-semibold px-2 py-0.5 rounded">
+                            Fika
+                          </span>
+                        )}
                         {mod.category?.title && (
-                          <span className="bg-[#20252D] border border-[#23272E] text-[#9AA3AF] text-[11px] px-2 py-0.5 rounded-full truncate">
+                          <span className="bg-[#20252D] border border-[#23272E] text-[#9AA3AF] text-[10px] px-2 py-0.5 rounded">
                             {mod.category.title}
                           </span>
                         )}
-
                         {mod.featured && (
-                          <span className="bg-[#EA580C]/20 border border-[#EA580C]/50 text-[#EA580C] text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                          <span className="bg-[#EA580C]/20 border border-[#EA580C]/50 text-[#EA580C] text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
                             <Sparkles className="w-2.5 h-2.5" /> Featured
                           </span>
                         )}
                       </div>
 
-                      {/* Stats row */}
-                      <div className="text-[11.5px] text-[#9AA3AF] mt-1.5 truncate">
-                        <span>{mod.downloads.toLocaleString()} downloads</span>
-                        <span className="mx-1.5">·</span>
-                        <span>⭐ {mod.favourites_count}</span>
-                        {mod.endorsements_count > 0 && (
-                          <>
-                            <span className="mx-1.5">·</span>
-                            <span>👍 {mod.endorsements_count}</span>
-                          </>
-                        )}
-                      </div>
-
                       {/* 2-line teaser description with word ellipsis */}
                       <p
-                        className="text-[11px] text-[#6B7480] mt-1 line-clamp-2 leading-[14px]"
+                        className="text-[11.5px] text-[#9AA3AF] mt-1.5 line-clamp-2 leading-[16px]"
                         title={mod.teaser || ''}
                       >
                         {mod.teaser || 'No description provided.'}
                       </p>
                     </div>
 
-                    {/* Action row at bottom */}
-                    <div className="flex items-center justify-between pt-1 border-t border-[#23272E]/50">
-                      {isInstalled ? (
-                        <div className="flex items-center gap-1 text-[11px] text-[#16A34A] font-semibold">
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Installed</span>
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-[#6B7480]">Available</div>
-                      )}
+                    {/* Bottom metadata row matching Forge website */}
+                    <div className="flex items-center justify-between pt-1.5 border-t border-[#23272E]/60 gap-1.5">
+                      <div className="flex items-center gap-2 text-[11px] text-[#9AA3AF] truncate">
+                        {formattedDate && (
+                          <span className="flex items-center gap-1 text-[#848E9C]" title={mod.published_at || ''}>
+                            <Calendar className="w-3 h-3 text-[#6B7480]" />
+                            <span className="truncate">{formattedDate}</span>
+                          </span>
+                        )}
+                        {mod.favourites_count > 0 && (
+                          <span className="flex items-center gap-0.5 text-[#F87171]" title={`${mod.favourites_count} favorites`}>
+                            <span>❤️</span>
+                            <span className="font-mono text-[10.5px]">{mod.favourites_count}</span>
+                          </span>
+                        )}
+                        {mod.endorsements_count > 0 && (
+                          <span className="flex items-center gap-0.5 text-[#FBBF24]" title={`${mod.endorsements_count} endorsements`}>
+                            <ThumbsUp className="w-3 h-3 text-[#FBBF24]" />
+                            <span className="font-mono text-[10.5px]">{mod.endorsements_count}</span>
+                          </span>
+                        )}
+                        <span className="flex items-center gap-0.5 text-[#9AA3AF]" title={`${mod.downloads.toLocaleString()} downloads`}>
+                          <Download className="w-3 h-3 text-[#6B7480]" />
+                          <span className="font-mono text-[10.5px]">{mod.downloads.toLocaleString()}</span>
+                        </span>
+                      </div>
 
-                      <div className="flex items-center gap-1.5">
-                        {/* Versions button (task 6.2) */}
+                      <div className="flex items-center gap-1 shrink-0">
                         <button
                           onClick={() => onOpenVersions(mod)}
-                          className="h-7 px-2 bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] rounded text-xs flex items-center justify-center transition-colors cursor-pointer"
-                          title="Pick a specific release — full version list with changelogs"
+                          className="h-6 px-2 bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] rounded text-[10.5px] flex items-center gap-1 transition-colors cursor-pointer"
+                          title="Pick a specific release"
                           type="button"
                         >
-                          <History className="w-3.5 h-3.5" />
+                          <History className="w-3 h-3 text-[#9AA3AF]" />
+                          <span>Versions</span>
                         </button>
 
-                        {/* Mod page link */}
                         {mod.detail_url && (
                           <a
                             href={mod.detail_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="h-7 px-2.5 bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] rounded text-xs flex items-center gap-1 transition-colors"
-                            title="Open the mod page on sp-mod.com"
+                            className="h-6 px-1.5 bg-[#20252D] hover:bg-[#2A2F38] text-[#9AA3AF] hover:text-[#E8EAEE] rounded text-[10.5px] flex items-center transition-colors"
+                            title="Open on sp-mod.com"
                           >
-                            <span>Mod Page</span>
-                            <ExternalLink className="w-3 h-3 text-[#9AA3AF]" />
+                            <ExternalLink className="w-3 h-3" />
                           </a>
                         )}
 
-                        {/* Install button */}
                         <button
                           onClick={() => onInstallMod(mod)}
-                          className="h-7 px-3 bg-[#16A34A] hover:bg-[#22C55E] text-white rounded text-xs font-semibold flex items-center gap-1 transition-colors shadow-sm cursor-pointer"
-                          title="Download the latest compatible release and extract it into your SPT folder"
+                          className="h-6 px-2.5 bg-[#16A34A] hover:bg-[#22C55E] text-white rounded text-[10.5px] font-semibold flex items-center gap-1 transition-colors shadow-sm cursor-pointer"
+                          title="Download and install mod"
                           type="button"
                         >
                           <Download className="w-3 h-3" />

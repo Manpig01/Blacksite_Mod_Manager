@@ -1,5 +1,5 @@
 import React from 'react';
-import { Folder, Play, Layers } from 'lucide-react';
+import { Folder, Play, Layers, Download } from 'lucide-react';
 import { SettingsState, ModProfile } from '../types';
 
 interface HeaderProps {
@@ -10,6 +10,7 @@ interface HeaderProps {
   profiles: ModProfile[];
   onSelectProfile: (profileId: string) => void;
   onCreateProfile: () => void;
+  onOpenDownloadModal?: () => void;
   isLaunching?: boolean;
 }
 
@@ -21,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({
   profiles,
   onSelectProfile,
   onCreateProfile,
+  onOpenDownloadModal,
   isLaunching = false,
 }) => {
   return (
@@ -38,10 +40,24 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Profile Selector (task 2.5) */}
-        <div className="flex items-center gap-2">
-          <Layers className="w-3.5 h-3.5 text-[#9AA3AF]" />
-          <span className="text-xs text-[#9AA3AF]">Profile:</span>
+        {/* Action Controls: Windows Download + Profile Selector */}
+        <div className="flex items-center gap-2.5">
+          {onOpenDownloadModal && (
+            <button
+              onClick={onOpenDownloadModal}
+              className="bg-[#20252D] hover:bg-[#282F3A] border border-[#2B303C] hover:border-[#EA580C]/60 text-[#E8EAEE] text-xs font-semibold px-2.5 py-1.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs group"
+              title="Download Blacksite Windows Desktop Standalone (.exe)"
+              type="button"
+            >
+              <Download className="w-3.5 h-3.5 text-[#EA580C] group-hover:scale-110 transition-transform" />
+              <span>Windows .EXE</span>
+            </button>
+          )}
+
+          {/* Profile Selector (task 2.5) */}
+          <div className="flex items-center gap-2">
+            <Layers className="w-3.5 h-3.5 text-[#9AA3AF]" />
+            <span className="text-xs text-[#9AA3AF]">Profile:</span>
           <select
             value={settings.activeProfileId}
             onChange={(e) => {
@@ -60,6 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
             ))}
             <option value="__new__">+ New Profile...</option>
           </select>
+          </div>
         </div>
       </div>
 

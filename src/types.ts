@@ -68,6 +68,14 @@ export interface Mod {
   category?: ModCategory | null;
   versions?: ModVersion[];
   dependencies?: string[];
+  favorite?: boolean;
+}
+
+export interface RecommendedModItem {
+  mod: Mod;
+  reason: string;
+  categoryTitle: string;
+  installedCategoryCount: number;
 }
 
 export type ModKind = 'Server' | 'Client' | 'Both';

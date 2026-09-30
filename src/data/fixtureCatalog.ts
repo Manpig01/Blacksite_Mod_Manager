@@ -31,6 +31,356 @@ export const MOD_CATEGORIES: ModCategory[] = [
 
 export const FIXTURE_MODS: Mod[] = [
   {
+    id: 3084,
+    hub_id: null,
+    guid: "com.custom.flashlightmodifier",
+    name: "Better Flashlights",
+    slug: "better-flashlights",
+    teaser: "A lightweight, tactical flashlight overhaul for players and bots with custom Kelvin temperature and procedural beams",
+    thumbnail: "https://files.sp-mod.com/mods/QZiC1tunsf7P5tSiRfunb6JnKMUtp5PtKv7OVgwl.png",
+    downloads: 156,
+    favourites_count: 4,
+    endorsements_count: 1,
+    detail_url: "https://sp-mod.com/mod/3084/better-flashlights",
+    fika_compatibility: false,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 15,
+    published_at: "2026-09-30T03:19:00.000000Z",
+    owner: {
+      id: 36725,
+      name: "ThanashsK",
+      profile_photo_url: "https://files.sp-mod.com/profile-photos/iNJLEanYXhS3HEyeSZGWrDpxbtKBHqtJoBqHjqOw_128w.webp"
+    },
+    versions: [
+      {
+        id: 14201,
+        version: "1.0.0",
+        description: "<p>Tactical flashlight overhaul with procedural Kelvin beam rendering.</p>",
+        link: "https://files.sp-mod.com/mods/better-flashlights-1.0.0.zip",
+        content_length: 150000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 156,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-30T03:19:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3083,
+    hub_id: null,
+    guid: "com.hj.modsource",
+    name: "Hj's Mod Source",
+    slug: "hjs-mod-source",
+    teaser: "See which mod added what",
+    thumbnail: "https://files.sp-mod.com/mods/a58M5EaTtl9uVfHftBNe8qJavelmthBkLbCAFHMN.jpg",
+    downloads: 137,
+    favourites_count: 6,
+    endorsements_count: 5,
+    detail_url: "https://sp-mod.com/mod/3083/hjs-mod-source",
+    fika_compatibility: false,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 1,
+    published_at: "2026-09-29T23:52:00.000000Z",
+    owner: {
+      id: 2059,
+      name: "Hj",
+      profile_photo_url: "https://files.sp-mod.com/profile-photos/R7T9Uom9mp9FnxyIGz44xarnoLa15G4Bvi68xk82_256w.webp"
+    },
+    versions: [
+      {
+        id: 14202,
+        version: "1.0.0",
+        description: "<p>Source indicator for custom items, traders and scripts.</p>",
+        link: "https://files.sp-mod.com/mods/hjs-mod-source-1.0.0.zip",
+        content_length: 85000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 137,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-29T23:52:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3082,
+    hub_id: null,
+    guid: "com.hj.taskitemindicator",
+    name: "Hj's Task Item Indicator",
+    slug: "hjs-task-item-indicator",
+    teaser: "1:1 Task Item Indicator Ring from EFT 1.0.5",
+    thumbnail: "https://files.sp-mod.com/mods/1946QM5zEatL3eVE0Pp3nPGvasEUXQa12XGzf1xy.png",
+    downloads: 188,
+    favourites_count: 8,
+    endorsements_count: 5,
+    detail_url: "https://sp-mod.com/mod/3082/hjs-task-item-indicator",
+    fika_compatibility: true,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 1,
+    published_at: "2026-09-29T22:16:00.000000Z",
+    owner: {
+      id: 2059,
+      name: "Hj",
+      profile_photo_url: "https://files.sp-mod.com/profile-photos/R7T9Uom9mp9FnxyIGz44xarnoLa15G4Bvi68xk82_256w.webp"
+    },
+    versions: [
+      {
+        id: 14203,
+        version: "1.0.0",
+        description: "<p>1:1 Task item indicator ring from modern EFT branch.</p>",
+        link: "https://files.sp-mod.com/mods/hjs-task-item-indicator-1.0.0.zip",
+        content_length: 120000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 188,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-29T22:16:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3081,
+    hub_id: null,
+    guid: "com.hj.advancedmoddinglights",
+    name: "Advanced Modding Lights",
+    slug: "advanced-modding-lights",
+    teaser: "Enhance the lighting in weapon modding and build screens for better visibility and aesthetics",
+    thumbnail: "https://files.sp-mod.com/mods/LT32yx2pZ84ndn1ZTbsOl01enfXNVtmXYZ5j1qOD.jpg",
+    downloads: 205,
+    favourites_count: 4,
+    endorsements_count: 7,
+    detail_url: "https://sp-mod.com/mod/3081/advanced-modding-lights",
+    fika_compatibility: true,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 10,
+    published_at: "2026-09-29T18:26:00.000000Z",
+    owner: {
+      id: 2059,
+      name: "Hj",
+      profile_photo_url: "https://files.sp-mod.com/profile-photos/R7T9Uom9mp9FnxyIGz44xarnoLa15G4Bvi68xk82_256w.webp"
+    },
+    versions: [
+      {
+        id: 14204,
+        version: "2.0.0",
+        description: "<p>Weapon workbench lighting enhancements.</p>",
+        link: "https://files.sp-mod.com/mods/aml-2.0.0.zip",
+        content_length: 340000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 205,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-29T18:26:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3080,
+    hub_id: null,
+    guid: "com.vektys.raidrecovery",
+    name: "Raid Recovery",
+    slug: "raid-recovery",
+    teaser: "Resume your raid after a crash. Gear, health, position, loot, bots and quests are restored, with the live reconnect screen.",
+    thumbnail: "https://files.sp-mod.com/mods/W8YSrL60WMYqoGV3UIc4Gifo4dn6InkMESSgXV6V.png",
+    downloads: 239,
+    favourites_count: 11,
+    endorsements_count: 7,
+    detail_url: "https://sp-mod.com/mod/3080/raid-recovery",
+    fika_compatibility: true,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 17,
+    published_at: "2026-09-29T11:53:00.000000Z",
+    owner: { id: 3120, name: "vektys", profile_photo_url: null },
+    versions: [
+      {
+        id: 14205,
+        version: "1.2.2",
+        description: "<p>State persistence recovery for interrupted raids.</p>",
+        link: "https://files.sp-mod.com/mods/raid-recovery-1.2.2.zip",
+        content_length: 420000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 239,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-29T11:53:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3079,
+    hub_id: null,
+    guid: "com.falconpilot.tagovername",
+    name: "Tag Over Name",
+    slug: "tag-over-name",
+    teaser: "Hide an item's name when it has a tag. Finally organize your stash properly!",
+    thumbnail: "https://files.sp-mod.com/mods/asMuZOkqnvjQEHG027KaUKxmbmrdo9LgzYX33Xe5.jpg",
+    downloads: 169,
+    favourites_count: 2,
+    endorsements_count: 4,
+    detail_url: "https://sp-mod.com/mod/3079/tag-over-name",
+    fika_compatibility: false,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 4,
+    published_at: "2026-09-29T05:15:00.000000Z",
+    owner: { id: 4410, name: "FalconPilot", profile_photo_url: null },
+    versions: [
+      {
+        id: 14206,
+        version: "1.0.2",
+        description: "<p>Stash item tag visual priority.</p>",
+        link: "https://files.sp-mod.com/mods/tag-over-name-1.0.2.zip",
+        content_length: 65000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 169,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-29T05:15:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3078,
+    hub_id: null,
+    guid: "com.evgencheg.iconchanger",
+    name: "Icon Changer",
+    slug: "icon-changer",
+    teaser: "Adds the ability to give your account icons: Sherpa, Emissary or Developer.",
+    thumbnail: "https://files.sp-mod.com/mods/Pxvf6o1n0lOdA4wbb0jAjpJh9lgTsYz84p4Ig56r.jpg",
+    downloads: 90,
+    favourites_count: 5,
+    endorsements_count: 3,
+    detail_url: "https://sp-mod.com/mod/3078/icon-changer",
+    fika_compatibility: true,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 1,
+    published_at: "2026-09-28T20:42:00.000000Z",
+    owner: { id: 5512, name: "Evgencheg", profile_photo_url: null },
+    versions: [
+      {
+        id: 14207,
+        version: "1.0.1",
+        description: "<p>Sherpa and Dev role badges.</p>",
+        link: "https://files.sp-mod.com/mods/icon-changer-1.0.1.zip",
+        content_length: 95000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 90,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-28T20:42:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3077,
+    hub_id: null,
+    guid: "com.eliteonetube.pityloot",
+    name: "PityLoot",
+    slug: "pityloot",
+    teaser: "Can't find that one quest item? Every raid without it makes it more likely to spawn. Pity loot for quests, hideout upgrades, quest keys and Gunsmith parts.",
+    thumbnail: "https://files.sp-mod.com/mods/3a45QiB4qfDluC9UsK8ffR9yIgN9ngLXsNk7seYE.png",
+    downloads: 263,
+    favourites_count: 7,
+    endorsements_count: 6,
+    detail_url: "https://sp-mod.com/mod/3077/pityloot",
+    fika_compatibility: false,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 7,
+    published_at: "2026-09-28T20:07:00.000000Z",
+    owner: { id: 6120, name: "EliteOneTube", profile_photo_url: null },
+    versions: [
+      {
+        id: 14208,
+        version: "1.0.0",
+        description: "<p>Dynamic pity spawn scaling.</p>",
+        link: "https://files.sp-mod.com/mods/pityloot-1.0.0.zip",
+        content_length: 180000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 263,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-28T20:07:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3076,
+    hub_id: null,
+    guid: "com.pj568.performancescope",
+    name: "Performance Scope",
+    slug: "performance-scope",
+    teaser: "Adjust in scope resolution, make PiP sharper or increase FPS.",
+    thumbnail: "https://files.sp-mod.com/mods/x5ul7gz8Iqa7A3KKhy6RCJrRIQ8q3ev2njmu2WOr.png",
+    downloads: 458,
+    favourites_count: 11,
+    endorsements_count: 7,
+    detail_url: "https://sp-mod.com/mod/3076/performance-scope",
+    fika_compatibility: true,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 10,
+    published_at: "2026-09-28T19:25:00.000000Z",
+    owner: { id: 8701, name: "PJ568", profile_photo_url: null },
+    versions: [
+      {
+        id: 14209,
+        version: "0.2.0",
+        description: "<p>PiP scope rendering optimizations.</p>",
+        link: "https://files.sp-mod.com/mods/performance-scope-0.2.0.zip",
+        content_length: 250000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 458,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-28T19:25:00.000000Z"
+      }
+    ]
+  },
+  {
+    id: 3075,
+    hub_id: null,
+    guid: "bodycamera",
+    name: "BodyCamera",
+    slug: "bodycamera",
+    teaser: "A more immersive camera experience with natural movement, realistic inertia and dynamic camera shake.",
+    thumbnail: "https://files.sp-mod.com/mods/kkjKpzIm96i342pLUGgtkaLGZvDnwtf4IyZnuszy.png",
+    downloads: 347,
+    favourites_count: 11,
+    endorsements_count: 13,
+    detail_url: "https://sp-mod.com/mod/3075/bodycamera",
+    fika_compatibility: false,
+    featured: false,
+    contains_ads: false,
+    cheat_notice: false,
+    category_id: 3,
+    published_at: "2026-09-28T18:00:00.000000Z",
+    owner: {
+      id: 124874,
+      name: "RedSparrow",
+      profile_photo_url: "https://files.sp-mod.com/profile-photos/ThaYhTkf5IsQ1q1hhvauZBAPeDqVNR1jwGTg0qJD_256w.webp"
+    },
+    versions: [
+      {
+        id: 14210,
+        version: "0.2.9",
+        description: "<p>Inertia, dynamic roll, and camera shake module.</p>",
+        link: "https://files.sp-mod.com/mods/bodycamera-0.2.9.zip",
+        content_length: 580000,
+        spt_version_constraint: ">=4.0.0",
+        downloads: 347,
+        fika_compatibility: "compatible",
+        published_at: "2026-09-28T18:00:00.000000Z"
+      }
+    ]
+  },
+  {
     id: 902,
     hub_id: 1219,
     guid: "xyz.drakia.bigbrain",

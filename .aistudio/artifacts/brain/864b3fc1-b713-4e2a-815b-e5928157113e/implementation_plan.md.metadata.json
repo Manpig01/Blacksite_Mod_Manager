@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for Windows EXE desktop packaging with Electron, electron-builder automated GitHub Actions workflow on git push, and in-app header download button and release modal.",
+  "updatedAt": "2026-09-30T07:50:44.205491065Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

@@ -3,12 +3,14 @@ import { CustomTitleBar } from './components/CustomTitleBar';
 import { Header } from './components/Header';
 import { BrowseModsTab } from './components/BrowseModsTab';
 import { InstalledModsTab } from './components/InstalledModsTab';
+import { AnalyticsTab } from './components/AnalyticsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { InstallQueueModal } from './components/InstallQueueModal';
 import { VersionSelectionModal } from './components/VersionSelectionModal';
 import { ConfigEditorModal } from './components/ConfigEditorModal';
 import { ConflictResolverModal } from './components/ConflictResolverModal';
 import { SptLauncherModal } from './components/SptLauncherModal';
+import { WindowsDownloadModal } from './components/WindowsDownloadModal';
 import { StatusBar } from './components/StatusBar';
 import { ToastContainer } from './components/ToastContainer';
 
@@ -41,7 +43,7 @@ export const App: React.FC = () => {
   const [sptVersions, setSptVersions] = useState<SptVersionInfo[]>([]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'settings'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'analytics' | 'settings'>('browse');
 
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -49,6 +51,7 @@ export const App: React.FC = () => {
   const [selectedModForConfig, setSelectedModForConfig] = useState<InstalledMod | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<ConflictInfo | null>(null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
 
   // Queue & Progress
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -521,6 +524,7 @@ export const App: React.FC = () => {
           showToast('SPT Directory', `Set active SPT directory: ${next}`, 'info');
         }}
         onLaunchSpt={() => setIsLauncherOpen(true)}
+        onOpenDownloadModal={() => setIsDownloadModalOpen(true)}
         profiles={profiles}
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
@@ -556,6 +560,18 @@ export const App: React.FC = () => {
           {conflicts.length > 0 && (
             <span className="w-2 h-2 rounded-full bg-[#F59E0B]" title="Active conflicts detected" />
           )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('analytics')}
+          className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'analytics'
+              ? 'text-[#EA580C] border-[#EA580C]'
+              : 'text-[#9AA3AF] hover:text-[#E8EAEE] border-transparent'
+          }`}
+          type="button"
+        >
+          <span>Analytics</span>
         </button>
 
         <button
@@ -606,6 +622,17 @@ export const App: React.FC = () => {
             onBulkDisable={handleBulkDisableMods}
             onBulkUninstall={handleBulkUninstallMods}
             onShowToast={showToast}
+          />
+        )}
+
+        {activeTab === 'analytics' && (
+          <AnalyticsTab
+            installedMods={installedMods}
+            profiles={profiles}
+            activeProfileId={settings.activeProfileId}
+            onSelectProfile={handleSelectProfile}
+            categories={categories}
+            conflicts={conflicts}
           />
         )}
 
@@ -690,6 +717,12 @@ export const App: React.FC = () => {
         onClose={() => setIsLauncherOpen(false)}
         sptVersion={settings.sptVersion}
         onShowToast={showToast}
+      />
+
+      <WindowsDownloadModal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        appVersion="1.8.0"
       />
 
       {/* Toasts */}

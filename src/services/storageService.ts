@@ -5,6 +5,7 @@ const SETTINGS_KEY = 'blacksite_settings_v1';
 const INSTALLED_MODS_KEY = 'blacksite_installed_mods_v1';
 const PROFILES_KEY = 'blacksite_profiles_v1';
 const CONFLICT_IGNORES_KEY = 'blacksite_conflict_ignores_v1';
+const FAVORITE_MODS_KEY = 'blacksite_favorite_mods_v1';
 
 const DEFAULT_SETTINGS: SettingsState = {
   sptDirectory: 'C:\\Games\\SPT-Tarkov',
@@ -135,6 +136,47 @@ export const storageService = {
     } catch {
       // ignore
     }
+  },
+
+  loadFavoriteModIds(): number[] {
+    try {
+      const saved = localStorage.getItem(FAVORITE_MODS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  },
+
+  saveFavoriteModIds(modIds: number[]): void {
+    try {
+      localStorage.setItem(FAVORITE_MODS_KEY, JSON.stringify(modIds));
+    } catch {
+      // ignore
+    }
+  },
+
+  toggleFavoriteMod(modId: number): boolean {
+    const current = this.loadFavoriteModIds();
+    const set = new Set(current);
+    let isFav = false;
+    if (set.has(modId)) {
+      set.delete(modId);
+      isFav = false;
+    } else {
+      set.add(modId);
+      isFav = true;
+    }
+    this.saveFavoriteModIds(Array.from(set));
+    return isFav;
+  },
+
+  isModFavorite(modId: number): boolean {
+    const set = new Set(this.loadFavoriteModIds());
+    return set.has(modId);
   },
 
   detectConflicts(installedMods: InstalledMod[], ignoredIds: string[]): ConflictInfo[] {

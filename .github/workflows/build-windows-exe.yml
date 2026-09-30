@@ -1,0 +1,78 @@
+name: Build Windows Executable (.exe)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Package Windows Executable (Installer & Portable)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Compile Web Application
+        run: npm run build
+
+      - name: Package Windows Binary with electron-builder
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64
+
+      - name: Upload Windows Binaries Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: blacksite-windows-binaries
+          path: |
+            release/*.exe
+            release/*.blockmap
+
+      - name: Publish or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v1.8.0-latest
+          name: "Blacksite Mod Manager v1.8.0 - Windows Desktop (.exe)"
+          body: |
+            ### 🐉 Blacksite Mod Manager Windows Standalone Release
+
+            Automated build compiled via GitHub Actions for **Windows x64**.
+
+            ---
+
+            #### 📦 Available Downloads:
+            - **Setup Installer (`Blacksite-Mod-Manager-Setup-1.8.0.exe`)**
+              *Standard Windows installer with Start Menu shortcuts and uninstaller support.*
+            - **Portable Executable (`Blacksite-Mod-Manager-Portable-1.8.0.exe`)**
+              *Zero-install standalone binary. Run directly from any folder or USB drive.*
+
+            ---
+
+            #### ⚡ Key Desktop Features:
+            - **Direct Filesystem Access**: Modifies SPT directories without browser download prompts or sandbox limitations.
+            - **Native Server Launcher**: Monitors local SPT server console output and auto-boots game launcher when ready.
+            - **Live Forge Sync**: Direct integration with the sp-mod.com modding repository.
+            - **Safe Mod Updates**: Automatically preserves mod configuration files when updating.
+          draft: false
+          prerelease: false
+          files: |
+            release/*.exe
