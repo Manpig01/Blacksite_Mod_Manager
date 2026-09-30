@@ -27,7 +27,7 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   appVersion = '1.8.0',
 }) => {
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');
-  const [repoSlug, setRepoSlug] = useState('manpig7805/blacksite-mod-manager');
+  const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager-TEST');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   // Close on Escape key

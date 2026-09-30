@@ -1,107 +1,59 @@
-# Windows Executable Packaging & GitHub Actions Automated Release Pipeline
+# Fix GitHub Actions Windows EXE Build Failure
 
-Transform Blacksite Mod Manager into a packaged Windows desktop application (`.exe`) with an automated GitHub Actions CI/CD release workflow on every push to the `main` branch, paired with a tactical top-bar download button and desktop release modal for players.
+Resolve the CI workflow failure identified in the GitHub Actions run (`Dependencies lock file is not found in D:\a\Blacksite_Mod_Manager-TEST\Blacksite_Mod_Manager-TEST`) so that Windows executable packaging succeeds seamlessly on your next push.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following architectural parameters were confirmed through the interactive design review:
+> **Root Cause Identified from GitHub Actions Run**:
+> The step `Setup Node.js 20` failed with:
+> `Dependencies lock file is not found in D:\a\Blacksite_Mod_Manager-TEST\Blacksite_Mod_Manager-TEST. Supported file patterns: package-lock.json,npm-shrinkwrap.json,yarn.lock`
+> This occurred because `actions/setup-node@v4` was configured with `cache: 'npm'`, which strictly requires a committed `package-lock.json` file. Since the repository did not have a `package-lock.json`, GitHub Actions aborted before installing dependencies.
 
-- **Confirmed Engine**: **Electron** packaged with **electron-builder** for native Windows runtime support, direct OS file system access, and standard Windows installer/portable distribution.
-- **Confirmed Automation Trigger**: **On every push to the `main` branch** (with manual `workflow_dispatch` trigger fallback in GitHub Actions) to automatically build Windows binaries and attach them to a GitHub Release.
-- **Confirmed In-App Presence**: A tactical **"Download Windows App (.exe)"** button in the header bar with an interactive release modal containing download options (Installer & Portable EXE), installation guidance, and desktop architecture benefits.
+- **Fix 1: Remove Strict Cache Dependency in CI Workflow**:
+  - Remove `cache: 'npm'` from `.github/workflows/build-windows-exe.yml` so `setup-node` runs unconditionally without failing on missing lock files.
+- **Fix 2: Generate & Include `package-lock.json`**:
+  - Generate a clean `package-lock.json` in the workspace so dependencies are pinned and reproducible across local and CI environments.
+- **Fix 3: Update Default Repository in UI**:
+  - Update `WindowsDownloadModal.tsx` default GitHub target to `Manpig01/Blacksite_Mod_Manager-TEST` (identified from the workflow run in your screenshot) so download buttons link directly to your repository's releases.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Packages the Blacksite React application into a standalone Windows desktop executable (`.exe`). Introduces an automated `.github/workflows/build-windows-exe.yml` GitHub Actions pipeline that triggers on repository pushes, compiles Vite assets, runs `electron-builder`, and publishes downloadable `.exe` releases on GitHub.
-- **Target Persona**: Single Player Tarkov (SPT) players who want native Windows desktop convenience—direct access to their `C:\Games\SPT-Tarkov` folders, automated local mod installation without browser file upload sandboxing, and background server process monitoring.
-- **Key Value**: Players can run Blacksite as a standalone Windows app or web app, with zero-friction automated builds delivered directly via GitHub Releases on every repository update.
+- **What It Does**: Corrects the `.github/workflows/build-windows-exe.yml` workflow configuration to eliminate the lockfile caching blocker, ensures `npm install` runs smoothly on GitHub's Windows runner, and updates in-app release URLs to match your repository.
+- **Outcome**: On your next `git push`, the GitHub Actions runner will proceed past `Setup Node.js`, run `npm install`, compile the Vite build, package both the installer (`.exe`) and portable binary via `electron-builder`, and publish them directly to your repository's Releases.
 
 ---
 
-### 2. User Experience & Visual Design
-
-#### Key User Flows
-1. **Header Action**:
-   - The user spots a sleek, high-intent button in the top bar: **"Windows App (.exe)"** with a Windows/Download icon and subtle amber highlight accent.
-2. **Release Modal Interaction**:
-   - Clicking opens the **Blacksite Desktop Release Modal**.
-   - Highlights the build version (`v1.8.0`), latest release status, and two primary action buttons:
-     - **Setup Installer (`.exe`)**: Recommended standard NSIS installer with desktop shortcut and uninstaller.
-     - **Portable Executable (`.exe`)**: Standalone single-file executable that runs without installation (ideal for thumb drives or drop-in SPT folders).
-   - Features a clean 3-step tactical guide: *Download → Select SPT Folder → 1-Click Mod Loading*.
-   - Includes a direct link to the GitHub Releases page and CI build status badge.
-3. **Automated GitHub Delivery**:
-   - When the user pushes to `main`, GitHub Actions spins up a `windows-latest` runner, builds the web assets, packages the binaries with `electron-builder`, and drafts/publishes a GitHub Release with downloadable artifacts.
-
-#### Visual Identity & Theme
-- **Aesthetic Direction**: Military/tactical utilitarian desktop UI adhering to Blacksite's dark graphite palette (`#121418`, `#181B20`, `#23272E`).
-- **Color Discipline (60-30-10)**:
-  - `60% Neutral Canvas`: `#121418` dark graphite backdrop.
-  - `30% Structural Surfaces`: `#181B20` elevated surface panels, `#23272E` hairline borders.
-  - `10% Accent Budget`: `#EA580C` / `#F97316` tactical orange for primary download actions; `#16A34A` green status dots for ready builds.
-- **Typography & Layout**:
-  - Unboxed metadata with typographic dots (`·`).
-  - Monospace tabular numerals (`font-mono tabular-nums`) for version numbers, hash digests, and release dates.
-  - Single-line controls with truncation guards.
-
----
-
-### 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Dual Distribution Target (NSIS Installer + Portable .exe)**
-  - *Chosen Approach*: Configure `electron-builder` to generate both an NSIS installer (`Blacksite-Mod-Manager-Setup-1.8.0.exe`) and a zero-install portable executable (`Blacksite-Mod-Manager-Portable-1.8.0.exe`).
-  - *Why*: Many Tarkov modders prefer portable executables placed directly adjacent to their SPT folder without registry modifications, while standard users prefer automated shortcuts.
-  - *Alternative Considered*: MSIX / Microsoft Store packaging (rejected: requires expensive code signing certificates and restricts arbitrary filesystem access required for SPT mod injection).
-
-- **Decision 2: Automated GitHub Actions Release Workflow**
-  - *Chosen Approach*: Write a production-grade `.github/workflows/build-windows-exe.yml` running on `windows-latest`. It automatically generates a release tag on `main` push (e.g. `v1.8.0-build.<run_number>` or updating `latest`), packages the binaries, and publishes them using `softprops/action-gh-release` as well as uploading workflow build artifacts.
-  - *Why*: Users get immediate access to compiled Windows binaries on every push without needing local Windows build tooling or cross-compilation on Linux.
-
-- **Decision 3: Non-Breaking Desktop Wrapper Architecture**
-  - *Chosen Approach*: Keep the current Vite + React SPA architecture 100% intact. Add an `electron/` directory containing lightweight main and preload scripts that load the local production bundle, preserving web browser preview functionality in AI Studio while enabling full desktop compilation.
-  - *Why*: Guarantees zero regression to the existing web application and dev server in AI Studio.
-
----
-
-### 4. Technical Architecture & CI/CD Strategy
+### 2. Technical Architecture & CI/CD Adjustments
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Local Development & Web                         │
+│                        Current Failing Step                            │
 │                                                                        │
-│   src/ (React 19 + Tailwind v4 + Vite SPA)                             │
-│   ├── Header.tsx ──> "Windows App (.exe)" Button                       │
-│   └── WindowsDownloadModal.tsx ──> Direct Releases & Setup Guide       │
+│   actions/setup-node@v4 with cache: 'npm'                              │
+│   └── ❌ Searches for package-lock.json -> Not Found -> Aborts job      │
 └───────────────────────────────────┬────────────────────────────────────┘
-                                    │ git push origin main
+                                    │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                     GitHub Actions CI/CD Pipeline                      │
-│                  (.github/workflows/build-windows-exe.yml)             │
+│                          Fixed CI Workflow                             │
 │                                                                        │
-│   1. Checkout repository & setup Node.js 20                            │
-│   2. npm ci / npm install                                              │
-│   3. npm run build (TypeScript compile + Vite production bundle)       │
-│   4. npx electron-builder --win (Packages NSIS & Portable .exe)        │
-│   5. Publish Release with softprops/action-gh-release                  │
-│      ├── Blacksite-Mod-Manager-Setup-1.8.0.exe                         │
-│      └── Blacksite-Mod-Manager-Portable-1.8.0.exe                     │
+│   1. actions/checkout@v4                                               │
+│   2. actions/setup-node@v4 (without strict cache blocker)              │
+│   3. npm install (installs React 19, Electron & electron-builder)       │
+│   4. npm run build (Vite bundle generation)                            │
+│   5. npx electron-builder --win --x64                                  │
+│   6. Publish Release to Manpig01/Blacksite_Mod_Manager-TEST           │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Interactive Component & State Mapping
-- `Header.tsx`: Houses the desktop download trigger button, styled consistently with the tactical interface.
-- `WindowsDownloadModal.tsx`:
-  - `isOpen`: Controls modal presence with smooth backdrop transition.
-  - `activeTab`: Toggle between "Downloads" and "Quick Setup Guide".
-  - `customRepoUrl`: Allows the user to point to their specific GitHub username/repository or view default release assets.
-  - `onClose`: Clean backdrop and escape key dismissal.
-- `package.json`:
-  - Adds `electron`, `electron-builder`, and `concurrently` (as dev dependencies for packaging).
-  - Adds build scripts: `"build:electron"`, `"package:win"`.
-  - Configures `build` metadata (app ID, Windows NSIS/portable targets, file inclusions).
-- `electron/main.cjs`:
-  - Creates the Windows application window with dark background `#121418`, custom menu, native window controls, and loads `dist/index.html`.
+#### Detailed Execution Steps
+1. **`.github/workflows/build-windows-exe.yml`**:
+   - Remove `cache: 'npm'` from `actions/setup-node@v4`.
+   - Update node version to `22` (or keep `20` with clean parameters) to eliminate the deprecation warning seen in the log.
+2. **`package-lock.json`**:
+   - Generate standard npm lockfile to provide deterministic dependency resolution.
+3. **`src/components/WindowsDownloadModal.tsx`**:
+   - Set the default repo state to `Manpig01/Blacksite_Mod_Manager-TEST`.
