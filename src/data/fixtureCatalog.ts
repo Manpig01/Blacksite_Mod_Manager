@@ -817,29 +817,6 @@ export const INITIAL_INSTALLED_MODS: InstalledMod[] = [
         originalContent: `[Lighting]\nEnableHdr = true\nTonemapper = ACES\nIndoorBrightnessBoost = 1.25\nNightVisionTweaks = true\n`
       }
     ]
-  },
-  {
-    id: "me.sol.sain.legacy-patch",
-    name: "SAIN Legacy AI Extension",
-    version: "2.1.0",
-    author: "Fin / Solarint Contrib",
-    kind: "Client",
-    categoryTitle: "Bots",
-    thumbnail: "https://files.sp-mod.com/mods/1062.jpg",
-    teaser: "Legacy override bundle that replaces bot brain decision layers",
-    sptVersion: "4.0.12",
-    fikaCompatibility: true,
-    installDate: "2026-09-20",
-    clientPath: "BepInEx/plugins/DrakiaXYZ-BigBrain.dll",
-    isDisabled: false,
-    hasUpdate: false,
-    latestVersion: "2.1.0",
-    loadOrder: 5,
-    dependencies: ["xyz.drakia.bigbrain", "me.sol.sain", "xyz.drakia.waypoints"],
-    tags: [
-      { id: 'tag-legacy', name: 'Legacy', color: '#6B7280' }
-    ],
-    configFiles: []
   }
 ];
 

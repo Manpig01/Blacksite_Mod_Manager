@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   fetchImageDataUrl: (url) => ipcRenderer.invoke('forge:fetch-image-data-url', url),
   openFolder: (targetPath) => ipcRenderer.invoke('shell:open-folder', targetPath),
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
+  installMod: (params) => ipcRenderer.invoke('mod:install', params),
+  uninstallMod: (params) => ipcRenderer.invoke('mod:uninstall', params),
+  toggleDisableMod: (params) => ipcRenderer.invoke('mod:toggle-disable', params),
+  scanInstalledMods: (params) => ipcRenderer.invoke('mod:scan-installed', params),
   windowControl: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

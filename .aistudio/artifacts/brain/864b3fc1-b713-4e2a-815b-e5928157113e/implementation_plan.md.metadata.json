@@ -1,6 +1,6 @@
 {
-  "summary": "Plan to remove the duplicate OS titlebar, make the custom titlebar draggable and functional with real window controls, enable opening Plugins and Server folders in Windows Explorer, make the Recommended section disablable with filters and settings, and verify mod routing across the manager.",
-  "updatedAt": "2026-09-30T11:41:46.931684790Z",
+  "summary": "Plan for removing the SAIN Legacy AI Extension mock entry and dependency warnings from initial installed mods for clean production release.",
+  "updatedAt": "2026-09-30T12:19:28.957951228Z",
   "requestFeedback": true,
   "userFacing": true
 }

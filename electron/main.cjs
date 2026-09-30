@@ -201,6 +201,46 @@ app.whenReady().then(() => {
     return false;
   });
 
+  // Real SPT Mod Installation & File Management Engine
+  const modInstaller = require('./modInstaller.cjs');
+
+  ipcMain.handle('mod:install', async (event, params) => {
+    try {
+      const result = await modInstaller.installMod(params);
+      return { success: true, ...result };
+    } catch (err) {
+      console.error('mod:install error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mod:uninstall', async (event, params) => {
+    try {
+      return await modInstaller.uninstallMod(params);
+    } catch (err) {
+      console.error('mod:uninstall error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mod:toggle-disable', async (event, params) => {
+    try {
+      return await modInstaller.toggleModDisable(params);
+    } catch (err) {
+      console.error('mod:toggle-disable error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mod:scan-installed', async (event, params) => {
+    try {
+      return await modInstaller.scanInstalledMods(params);
+    } catch (err) {
+      console.error('mod:scan-installed error:', err);
+      return [];
+    }
+  });
+
   createWindow();
 
   app.on('activate', () => {

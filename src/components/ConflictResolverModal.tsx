@@ -72,7 +72,6 @@ export const ConflictResolverModal: React.FC<ConflictResolverModalProps> = ({
         return mod.dependencies.filter((depId) => modMap.has(depId));
       }
       if (modId === 'me.sol.sain') return ['xyz.drakia.bigbrain'];
-      if (modId === 'me.sol.sain.legacy-patch') return ['xyz.drakia.bigbrain', 'me.sol.sain'];
       if (modId === 'xyz.drakia.questingbots') return ['xyz.drakia.bigbrain', 'me.sol.sain'];
       if (modId === 'xyz.drakia.lootingbots') return ['xyz.drakia.bigbrain'];
       if (modId === 'xyz.drakia.waypoints') return ['xyz.drakia.bigbrain'];

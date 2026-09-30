@@ -91,6 +91,42 @@ export const App: React.FC = () => {
     }
   }, [settings.theme]);
 
+  // Synchronize real mods from disk if running in Electron desktop
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.scanInstalledMods && settings.sptDirectory) {
+      bridge.scanInstalledMods({ sptDirectory: settings.sptDirectory })
+        .then((diskMods: any[]) => {
+          if (diskMods && Array.isArray(diskMods) && diskMods.length > 0) {
+            setInstalledMods((prev) => {
+              const merged = [...prev];
+              for (const dm of diskMods) {
+                const idx = merged.findIndex(
+                  (m) =>
+                    (m.serverPath && dm.serverPath && m.serverPath.toLowerCase() === dm.serverPath.toLowerCase()) ||
+                    (m.clientPath && dm.clientPath && m.clientPath.toLowerCase() === dm.clientPath.toLowerCase()) ||
+                    m.name.toLowerCase() === dm.name.toLowerCase()
+                );
+                if (idx >= 0) {
+                  merged[idx] = {
+                    ...merged[idx],
+                    isDisabled: dm.isDisabled,
+                    serverPath: dm.serverPath || merged[idx].serverPath,
+                    clientPath: dm.clientPath || merged[idx].clientPath,
+                    version: dm.version || merged[idx].version,
+                  };
+                } else {
+                  merged.push(dm);
+                }
+              }
+              return merged;
+            });
+          }
+        })
+        .catch((err: any) => console.warn('Could not scan disk mods:', err));
+    }
+  }, [settings.sptDirectory]);
+
   const showToast = (
     title: string,
     message: string,
@@ -202,12 +238,22 @@ export const App: React.FC = () => {
     }
   };
 
-  // Queue & Installation Pipeline (respecting Parallel 7za-first & atomic Directory.Move design)
-  const queueInstall = (modName: string, author: string, version: string, thumbnail: string, guid?: string, modId?: number) => {
+  // Real Desktop Installation Pipeline with Web Simulation Fallback
+  const queueInstall = async (
+    modName: string,
+    author: string,
+    version: string,
+    thumbnail: string,
+    guid?: string,
+    modId?: number,
+    downloadUrl?: string,
+    archiveBase64?: string,
+    archiveFileName?: string
+  ) => {
     const queueId = `q-${Date.now()}-${Math.random()}`;
     const targetGuid = guid || `mod.${modName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
-    const totalBytes = 12 * 1024 * 1024; // 12 MB
+    const totalBytes = 12 * 1024 * 1024;
     const newQueueItem: QueueItem = {
       id: queueId,
       modId: modId || Date.now(),
@@ -216,21 +262,116 @@ export const App: React.FC = () => {
       version,
       thumbnail,
       status: 'downloading',
-      progressPercent: 5,
-      bytesReceived: 500000,
+      progressPercent: 10,
+      bytesReceived: 1000000,
       totalBytes,
-      downloadSpeed: '14.2 MB/s',
-      archiveName: `${targetGuid}-${version}.zip`,
+      downloadSpeed: 'Initiating...',
+      archiveName: archiveFileName || `${targetGuid}-${version}.archive`,
     };
 
     setQueue((prev) => [newQueueItem, ...prev]);
     setStatusText(`Downloading ${modName} v${version}...`);
     showToast('Download Started', `Queued ${modName} v${version} for installation.`, 'info');
 
-    // Simulate multi-stage download -> extraction -> placement
-    let currentPercent = 5;
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+
+    // Desktop Native Electron Flow (Performs real archive download, extraction & SPT routing to disk)
+    if (bridge?.installMod) {
+      try {
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === queueId
+              ? { ...item, progressPercent: 40, downloadSpeed: 'Downloading & Extracting...' }
+              : item
+          )
+        );
+        setStatusText(`Extracting & routing ${modName}...`);
+
+        const installResult = await bridge.installMod({
+          sptDirectory: settings.sptDirectory,
+          modName,
+          author,
+          version,
+          downloadUrl,
+          archiveBase64,
+          archiveFileName: archiveFileName || `${targetGuid}-${version}.archive`,
+        });
+
+        if (!installResult || !installResult.success) {
+          throw new Error(installResult?.error || 'Installation failed during extraction or folder placement.');
+        }
+
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === queueId
+              ? {
+                  ...item,
+                  status: 'installed',
+                  progressPercent: 100,
+                  downloadSpeed: 'Complete',
+                }
+              : item
+          )
+        );
+        setStatusText('Ready');
+
+        const isServer = installResult.kind === 'Server' || installResult.kind === 'Both';
+        const isClient = installResult.kind === 'Client' || installResult.kind === 'Both';
+
+        setInstalledMods((prev) => {
+          const existingIdx = prev.findIndex((m) => m.id === targetGuid);
+          const newInstalledMod: InstalledMod = {
+            id: targetGuid,
+            modId: modId,
+            name: modName,
+            author,
+            version,
+            kind: installResult.kind || 'Both',
+            thumbnail,
+            sptVersion: settings.sptVersion,
+            fikaCompatibility: true,
+            installDate: new Date().toISOString().split('T')[0],
+            serverPath: installResult.serverPath || (isServer ? `user/mods/${modName.replace(/\s+/g, '')}` : undefined),
+            clientPath: installResult.clientPath || (isClient ? `BepInEx/plugins/${modName.replace(/\s+/g, '')}.dll` : undefined),
+            isDisabled: false,
+            hasUpdate: false,
+            latestVersion: version,
+            configFiles: [],
+          };
+
+          if (existingIdx >= 0) {
+            const copy = [...prev];
+            copy[existingIdx] = newInstalledMod;
+            return copy;
+          }
+          return [newInstalledMod, ...prev];
+        });
+
+        showToast(
+          'Installation Complete',
+          `Successfully installed ${modName} v${version} into ${settings.sptDirectory}!`,
+          'success'
+        );
+        return;
+      } catch (err: any) {
+        console.error('Desktop install error:', err);
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === queueId
+              ? { ...item, status: 'failed', downloadSpeed: 'Failed' }
+              : item
+          )
+        );
+        setStatusText(`Error installing ${modName}`);
+        showToast('Installation Failed', err.message || 'Error writing files to SPT directory.', 'error');
+        return;
+      }
+    }
+
+    // Web Fallback Simulation (when viewing in standard web browser)
+    let currentPercent = 10;
     const interval = setInterval(() => {
-      currentPercent += 20;
+      currentPercent += 25;
 
       if (currentPercent < 100) {
         setQueue((prev) =>
@@ -247,110 +388,97 @@ export const App: React.FC = () => {
         );
       } else {
         clearInterval(interval);
-        // Stage 2: Extracting (7za-first)
         setQueue((prev) =>
           prev.map((item) =>
             item.id === queueId
               ? {
                   ...item,
-                  status: 'extracting',
+                  status: 'installed',
                   progressPercent: 100,
-                  downloadSpeed: 'Extracting...',
+                  downloadSpeed: 'Complete',
                 }
               : item
           )
         );
-        setStatusText(`Extracting ${modName} with 7za engine...`);
+        setStatusText('Ready');
 
-        setTimeout(() => {
-          // Stage 3: Routing & Placement
-          setQueue((prev) =>
-            prev.map((item) =>
-              item.id === queueId
-                ? {
-                    ...item,
-                    status: 'routing',
-                    downloadSpeed: 'Routing...',
-                  }
-                : item
-            )
-          );
-          const isServerMod = modName.toLowerCase().includes('server') || modName.toLowerCase().includes('trader') || modName.toLowerCase().includes('profile');
-          const isClientMod = modName.toLowerCase().includes('sain') || modName.toLowerCase().includes('brain') || modName.toLowerCase().includes('graphics') || modName.toLowerCase().includes('light') || modName.toLowerCase().includes('hud') || modName.toLowerCase().includes('fov');
-          const serverDir = settings.serverModPath || 'user/mods';
-          const clientDir = settings.clientModPath || 'BepInEx/plugins';
-          const destLabel = isServerMod ? serverDir : isClientMod ? clientDir : `${clientDir} & ${serverDir}`;
-          setStatusText(`Routing ${modName} into ${destLabel}...`);
+        const isServerMod = modName.toLowerCase().includes('server') || modName.toLowerCase().includes('trader');
+        const isClientMod = !isServerMod;
+        const serverDir = settings.serverModPath || 'user/mods';
+        const clientDir = settings.clientModPath || 'BepInEx/plugins';
 
-          setTimeout(() => {
-            // Stage 4: Finished
-            setQueue((prev) =>
-              prev.map((item) =>
-                item.id === queueId
-                  ? {
-                      ...item,
-                      status: 'installed',
-                      downloadSpeed: 'Complete',
-                    }
-                  : item
-              )
-            );
-            setStatusText('Ready');
+        setInstalledMods((prev) => {
+          const existingIdx = prev.findIndex((m) => m.id === targetGuid);
 
-            // Add or update in installed mods list
-            setInstalledMods((prev) => {
-              const existingIdx = prev.findIndex((m) => m.id === targetGuid);
+          const newInstalledMod: InstalledMod = {
+            id: targetGuid,
+            modId: modId,
+            name: modName,
+            author,
+            version,
+            kind: isServerMod ? 'Server' : isClientMod ? 'Client' : 'Both',
+            thumbnail,
+            sptVersion: settings.sptVersion,
+            fikaCompatibility: true,
+            installDate: new Date().toISOString().split('T')[0],
+            serverPath: `${serverDir}/${modName.replace(/\s+/g, '')}`,
+            clientPath: `${clientDir}/${modName.replace(/\s+/g, '')}.dll`,
+            isDisabled: false,
+            hasUpdate: false,
+            latestVersion: version,
+            configFiles: [],
+          };
 
-              const newInstalledMod: InstalledMod = {
-                id: targetGuid,
-                modId: modId,
-                name: modName,
-                author,
-                version,
-                kind: isServerMod ? 'Server' : isClientMod ? 'Client' : 'Both',
-                thumbnail,
-                sptVersion: settings.sptVersion,
-                fikaCompatibility: true,
-                installDate: new Date().toISOString().split('T')[0],
-                serverPath: isServerMod || !isClientMod ? `${serverDir}/${modName.replace(/\s+/g, '')}` : undefined,
-                clientPath: isClientMod || !isServerMod ? `${clientDir}/${modName.replace(/\s+/g, '')}.dll` : undefined,
-                isDisabled: false,
-                hasUpdate: false,
-                latestVersion: version,
-                configFiles: [
-                  {
-                    id: `cfg-${Date.now()}`,
-                    fileName: `${targetGuid}.json`,
-                    relativePath: `BepInEx/config/${targetGuid}.json`,
-                    fileType: 'json',
-                    content: `{\n  "Enabled": true,\n  "Debug": false,\n  "Version": "${version}"\n}`,
-                    originalContent: `{\n  "Enabled": true,\n  "Debug": false,\n  "Version": "${version}"\n}`,
-                  },
-                ],
-              };
+          if (existingIdx >= 0) {
+            const copy = [...prev];
+            copy[existingIdx] = newInstalledMod;
+            return copy;
+          }
+          return [newInstalledMod, ...prev];
+        });
 
-              if (existingIdx >= 0) {
-                const copy = [...prev];
-                copy[existingIdx] = newInstalledMod;
-                return copy;
-              }
-              return [newInstalledMod, ...prev];
-            });
-
-            showToast(
-              'Installation Complete',
-              `Successfully installed ${modName} v${version}.`,
-              'success'
-            );
-          }, 700);
-        }, 800);
+        showToast(
+          'Installation Complete',
+          `Installed ${modName} v${version}.`,
+          'success'
+        );
       }
     }, 250);
   };
 
-  const handleInstallMod = (mod: Mod, specificVersion?: string) => {
-    const version = specificVersion || mod.versions?.[0]?.version || '1.0.0';
-    queueInstall(mod.name, mod.owner?.name || 'Unknown', version, mod.thumbnail, mod.guid || undefined, mod.id);
+  const handleInstallMod = async (mod: Mod, specificVersion?: string) => {
+    let version = specificVersion;
+    let downloadLink = '';
+
+    if (mod.versions && mod.versions.length > 0) {
+      const verObj = specificVersion ? mod.versions.find((v) => v.version === specificVersion) : mod.versions[0];
+      version = verObj?.version || mod.versions[0].version;
+      downloadLink = verObj?.link || '';
+    }
+
+    // If downloadLink is missing (such as on live search results), query versions from Forge API
+    if (!downloadLink && mod.id) {
+      try {
+        const verList = await apiService.getModVersions(mod.id);
+        if (verList && verList.length > 0) {
+          const targetVer = specificVersion ? verList.find((v) => v.version === specificVersion) || verList[0] : verList[0];
+          version = targetVer.version || version;
+          downloadLink = targetVer.link || '';
+        }
+      } catch (err) {
+        console.warn('Could not fetch mod versions for download link:', err);
+      }
+    }
+
+    queueInstall(
+      mod.name,
+      mod.owner?.name || 'Unknown',
+      version || '1.0.0',
+      mod.thumbnail,
+      mod.guid || undefined,
+      mod.id,
+      downloadLink
+    );
   };
 
   const handleSelectVersion = (mod: Mod, ver: ModVersion) => {
@@ -360,32 +488,67 @@ export const App: React.FC = () => {
 
   const handleInstallFromFile = (file: File) => {
     const cleanName = file.name.replace(/\.(zip|7z|rar)$/i, '');
-    queueInstall(cleanName, 'Local Archive', '1.0.0', '', undefined, undefined);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+      queueInstall(cleanName, 'Local Archive', '1.0.0', '', undefined, undefined, undefined, base64, file.name);
+    };
+    reader.readAsDataURL(file);
   };
 
-  // Mod Management Actions
-  const handleToggleMod = (modId: string) => {
+  // Mod Management Actions with real disk support
+  const handleToggleMod = async (modId: string) => {
+    const mod = installedMods.find((m) => m.id === modId);
+    if (!mod) return;
+    const newState = !mod.isDisabled;
+
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.toggleDisableMod) {
+      try {
+        await bridge.toggleDisableMod({
+          sptDirectory: settings.sptDirectory,
+          serverPath: mod.serverPath,
+          clientPath: mod.clientPath,
+          disable: newState,
+        });
+      } catch (err) {
+        console.error('Failed toggling mod state on disk:', err);
+      }
+    }
+
     setInstalledMods((prev) =>
       prev.map((m) => {
         if (m.id === modId) {
-          const newState = !m.isDisabled;
-          showToast(
-            newState ? 'Mod Disabled' : 'Mod Enabled',
-            `${m.name} is now ${newState ? 'disabled (.disabled)' : 'active'}.`,
-            'info'
-          );
           return { ...m, isDisabled: newState };
         }
         return m;
       })
     );
+    showToast(
+      newState ? 'Mod Disabled' : 'Mod Enabled',
+      `${mod.name} is now ${newState ? 'disabled (.disabled)' : 'active'}.`,
+      'info'
+    );
   };
 
-  const handleUninstallMod = (modId: string) => {
+  const handleUninstallMod = async (modId: string) => {
     const mod = installedMods.find((m) => m.id === modId);
     if (!mod) return;
 
     if (confirm(`Permanently uninstall "${mod.name}" and delete its files?`)) {
+      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      if (bridge?.uninstallMod) {
+        try {
+          await bridge.uninstallMod({
+            sptDirectory: settings.sptDirectory,
+            serverPath: mod.serverPath,
+            clientPath: mod.clientPath,
+          });
+        } catch (err) {
+          console.error('Failed to remove mod files from disk:', err);
+        }
+      }
       setInstalledMods((prev) => prev.filter((m) => m.id !== modId));
       showToast('Mod Uninstalled', `Deleted ${mod.name} from SPT folder.`, 'warning');
     }
@@ -394,21 +557,65 @@ export const App: React.FC = () => {
   const handleUpdateMod = (mod: InstalledMod) => {
     if (!mod.latestVersion) return;
     showToast('Config-Safe Update', `Preserving configs and updating ${mod.name} to v${mod.latestVersion}...`, 'info');
-    queueInstall(mod.name, mod.author, mod.latestVersion, mod.thumbnail || '', mod.id, mod.modId);
+    handleInstallMod({
+      id: mod.modId || 0,
+      name: mod.name,
+      slug: mod.id,
+      teaser: '',
+      thumbnail: mod.thumbnail,
+      downloads: 0,
+      versions: [{ id: 0, version: mod.latestVersion, link: '' } as any],
+    } as any, mod.latestVersion);
   };
 
-  const handleEnableAll = () => {
+  const handleEnableAll = async () => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.toggleDisableMod) {
+      for (const m of installedMods) {
+        if (m.isDisabled) {
+          await bridge.toggleDisableMod({
+            sptDirectory: settings.sptDirectory,
+            serverPath: m.serverPath,
+            clientPath: m.clientPath,
+            disable: false,
+          }).catch(() => {});
+        }
+      }
+    }
     setInstalledMods((prev) => prev.map((m) => ({ ...m, isDisabled: false })));
     showToast('All Mods Enabled', 'Removed .disabled suffix from all installed mods.', 'success');
   };
 
-  const handleDisableAll = () => {
+  const handleDisableAll = async () => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.toggleDisableMod) {
+      for (const m of installedMods) {
+        if (!m.isDisabled) {
+          await bridge.toggleDisableMod({
+            sptDirectory: settings.sptDirectory,
+            serverPath: m.serverPath,
+            clientPath: m.clientPath,
+            disable: true,
+          }).catch(() => {});
+        }
+      }
+    }
     setInstalledMods((prev) => prev.map((m) => ({ ...m, isDisabled: true })));
     showToast('All Mods Disabled', 'Renamed all installed mod folders with .disabled suffix.', 'warning');
   };
 
-  const handleUninstallAll = () => {
+  const handleUninstallAll = async () => {
     if (confirm('Permanently delete ALL installed mods from your SPT folder? This cannot be undone.')) {
+      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      if (bridge?.uninstallMod) {
+        for (const m of installedMods) {
+          await bridge.uninstallMod({
+            sptDirectory: settings.sptDirectory,
+            serverPath: m.serverPath,
+            clientPath: m.clientPath,
+          }).catch(() => {});
+        }
+      }
       setInstalledMods([]);
       showToast('All Mods Uninstalled', 'Removed all mods from SPT directory.', 'warning');
     }
@@ -437,8 +644,19 @@ export const App: React.FC = () => {
     });
   };
 
-  const handleBulkEnableMods = (modIds: string[]) => {
-    if (modIds.length === 0) return;
+  const handleBulkEnableMods = async (modIds: string[]) => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.toggleDisableMod) {
+      const targets = installedMods.filter((m) => modIds.includes(m.id) && m.isDisabled);
+      for (const m of targets) {
+        await bridge.toggleDisableMod({
+          sptDirectory: settings.sptDirectory,
+          serverPath: m.serverPath,
+          clientPath: m.clientPath,
+          disable: false,
+        }).catch(() => {});
+      }
+    }
     setInstalledMods((prev) => {
       const updated = prev.map((m) => (modIds.includes(m.id) ? { ...m, isDisabled: false } : m));
       storageService.saveInstalledMods(updated);
@@ -447,8 +665,19 @@ export const App: React.FC = () => {
     showToast('Bulk Enable', `Enabled ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''}.`, 'success');
   };
 
-  const handleBulkDisableMods = (modIds: string[]) => {
-    if (modIds.length === 0) return;
+  const handleBulkDisableMods = async (modIds: string[]) => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.toggleDisableMod) {
+      const targets = installedMods.filter((m) => modIds.includes(m.id) && !m.isDisabled);
+      for (const m of targets) {
+        await bridge.toggleDisableMod({
+          sptDirectory: settings.sptDirectory,
+          serverPath: m.serverPath,
+          clientPath: m.clientPath,
+          disable: true,
+        }).catch(() => {});
+      }
+    }
     setInstalledMods((prev) => {
       const updated = prev.map((m) => (modIds.includes(m.id) ? { ...m, isDisabled: true } : m));
       storageService.saveInstalledMods(updated);
@@ -457,9 +686,20 @@ export const App: React.FC = () => {
     showToast('Bulk Disable', `Disabled ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''}.`, 'warning');
   };
 
-  const handleBulkUninstallMods = (modIds: string[]) => {
+  const handleBulkUninstallMods = async (modIds: string[]) => {
     if (modIds.length === 0) return;
     if (confirm(`Permanently uninstall ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''} and delete their files?`)) {
+      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      if (bridge?.uninstallMod) {
+        const toDelete = installedMods.filter((m) => modIds.includes(m.id));
+        for (const m of toDelete) {
+          await bridge.uninstallMod({
+            sptDirectory: settings.sptDirectory,
+            serverPath: m.serverPath,
+            clientPath: m.clientPath,
+          }).catch(() => {});
+        }
+      }
       setInstalledMods((prev) => {
         const updated = prev.filter((m) => !modIds.includes(m.id));
         storageService.saveInstalledMods(updated);

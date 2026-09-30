@@ -1,52 +1,84 @@
-# Frameless Window Controls, Folder Explorer Integration, Disablable Recommendations, and Mod Routing
+# Clean Release: Removal of SAIN Legacy AI Extension Mock Entry
 
-Address all 4 items requested by the user:
-1. **Remove Duplicate Top Bar & Activate Custom Controls**: Eliminate the native Windows OS title bar (`frame: false`), make the custom tactical title bar draggable (`-webkit-app-region: drag`), and connect minimize, maximize/restore, and close buttons to Electron window IPC.
-2. **Functional Plugins & Server Folders**: Connect the **"Plugins Folder"** (`BepInEx/plugins`) and **"Server Folder"** (`user/mods`) buttons to open the actual directories in Windows File Explorer via Electron `shell.openPath` (auto-creating folders if they don't exist).
-3. **Disablable "Recommended For You" Section**: Provide an immediate dismiss/hide button in the Recommended section header, a quick-toggle checkbox in the Browse Mods filter toolbar (`Show Recommended`), and a persistent toggle in the Settings tab.
-4. **Mod Manager Routing**: Align mod file destination paths with configured SPT paths (`user/mods` and `BepInEx/plugins` instead of outdated paths) and add an "Open Mod Folder" button on installed mod cards.
+This plan outlines the removal of the mock `SAIN Legacy AI Extension` entry (`me.sol.sain.legacy-patch`) from the default installed loadout and dependency graph so that fresh installations start with clean, un-flagged mod configurations.
 
-## User Review & Critical Decisions
+### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> - **Frameless Window**: Electron will run with `frame: false` so Windows does not render the default white/black OS title bar on top of the custom tactical title bar.
-> - **Draggable Titlebar**: `CustomTitleBar` will use `-webkit-app-region: drag`, while its buttons use `-webkit-app-region: no-drag` so the window can be moved smoothly across screens.
-> - **Folder Explorer**: Clicking **Plugins Folder** or **Server Folder** will invoke Windows Explorer directly via Electron `shell.openPath(fullPath)` with fallback notifications in browser mode.
+> The user confirmed the removal of the specific mock entry `SAIN Legacy AI Extension` rather than wiping all default installed mods.
+
+- **Confirmed Decision 1**: Remove the `me.sol.sain.legacy-patch` mock entry from `INITIAL_INSTALLED_MODS`.
+- **Confirmed Decision 2**: Clean up the dependency mapping in `DEFAULT_KNOWN_DEPS` and default profiles in `INITIAL_PROFILES` so no missing dependency warnings (`me.sol.sain` or `xyz.drakia.waypoints`) are triggered on startup.
+- **Recommended Default**: Retain valid foundational mods (e.g. `xyz.drakia.bigbrain`, `fika.ghostfenixx.svm`, `me.sol.sain`, `com.amanda.graphics`) as healthy, working presets for new users, without dummy error states.
 
 ---
 
-### 1. Overview & Core Changes
+### 1. Overview & Core Concept
 
-1. **Electron Main & Preload Window IPC (`electron/main.cjs` & `electron/preload.cjs`)**:
-   - Set `frame: false` on `BrowserWindow`.
-   - Add IPC handlers: `window:minimize`, `window:maximize`, `window:close`, `window:is-maximized`.
-   - Add IPC handler `shell:open-folder` to ensure directories exist and open them in Windows File Explorer using `shell.openPath()`.
-   - Expose `desktopBridge.windowControl` and `desktopBridge.openFolder` to renderer.
-
-2. **Custom Title Bar Activation (`src/components/CustomTitleBar.tsx` & `src/App.tsx`)**:
-   - Add window drag region to the header container and no-drag region to all buttons.
-   - Wire minimize, maximize, and close to `window.desktopBridge.windowControl`.
-   - Dynamically toggle icon between square (maximize) and restore when maximized.
-
-3. **Plugins & Server Folder Explorer (`src/App.tsx` & `src/components/InstalledModsTab.tsx`)**:
-   - `handleOpenFolder` resolves the complete SPT path (`${settings.sptDirectory}\\${settings.clientModPath}` or `serverModPath`).
-   - In Electron, invokes `desktopBridge.openFolder(fullPath)`, launching native Windows Explorer.
-   - Also add an "Open Folder" action button on individual installed mod cards for rapid file inspection.
-
-4. **Disablable Recommended Section (`src/types.ts`, `BrowseModsTab.tsx`, `RecommendedModsSection.tsx`, `SettingsTab.tsx`)**:
-   - Add `showRecommendedMods: boolean` to `SettingsState` (defaults to `true`).
-   - Add a dismiss/hide button (`X` / "Hide") in `RecommendedModsSection`.
-   - Add a `[x] Show Recommended` filter toggle checkbox in the Browse Mods filter bar.
-   - Add a toggle in `SettingsTab` under General / Display Preferences so users can re-enable or disable it at any time.
-
-5. **Mod Installation Routing Verification (`src/App.tsx`)**:
-   - Ensure the installation pipeline routes server mods to `settings.serverModPath` (`user/mods`) and client mods to `settings.clientModPath` (`BepInEx/plugins`).
-   - Ensure relative paths in the mod manager accurately reflect standard SPT folder architecture.
+- **What It Does**: Cleans up the installed mods list by purging the placeholder `SAIN Legacy AI Extension` mod card and its unsatisfied dependencies.
+- **Target Audience**: SPT players downloading the Windows release who want clean, production-grade loadout management without phantom dependency errors.
+- **Key Value**: Delivers an error-free out-of-the-box state where all pre-installed or imported mods are verified and functional.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-- **Seamless Tactical Window**: The application looks like a unified, professional desktop client with no double headers. Dragging the title bar moves the window naturally; clicking minimize or maximize responds instantaneously.
-- **Instant Folder Access**: Clicking "Plugins Folder" pops up Windows Explorer directly at `C:\SPT\BepInEx\plugins`.
-- **Customizable Catalog**: Users who prefer a cleaner mod browser can dismiss the "Recommended For You" carousel with a single click, instantly gaining more vertical screen space for the mod grid.
+- **Key User Flows**:
+  1. User launches Blacksite Mod Manager.
+  2. The "Installed Mods" tab shows verified, healthy mods with 0 warning banners or missing dependency alerts.
+  3. The orange missing dependency badge (`1 Missing Dependencies`) will no longer appear on the toolbar.
+  4. Users can install mods normally from the Browse Mods tab or local archives without encountering residual mock conflicts.
+- **Visual Identity & Theme**:
+  - Tactical military HUD styling (slate-900 `#121418`, card `#181B20`, orange `#EA580C`, green `#16A34A`).
+  - No broken dependency cards or meme thumbnails in the default view.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Targeted Mock Removal vs. Empty State**:
+  - *Chosen Approach*: Specifically remove `me.sol.sain.legacy-patch` from initial data fixtures and storage defaults.
+  - *Why*: Users get a working demo loadout (BigBrain, SVM, SAIN, Amands Graphics) demonstrating mod management, ordering, and config editing without broken dependencies.
+  - *Alternatives Considered*: Wiping all default mods would leave new users with an empty list and require setting up paths before exploring features.
+
+- **Decision 2: Storage Migration for Existing Local Profiles**:
+  - *Chosen Approach*: In `storageService.ts`, filter out `me.sol.sain.legacy-patch` if present in cached installed mods or loadout profiles on startup.
+  - *Why*: Ensures existing dev/test browser cache sessions immediately reflect the clean state without manual localStorage clearing.
+
+---
+
+### 4. Technical Architecture & Data Strategy
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       Data Layer                            │
+│  ┌──────────────────────────┐   ┌────────────────────────┐  │
+│  │ fixtureCatalog.ts        │   │ storageService.ts      │  │
+│  │ - Remove legacy patch    │   │ - Filter out legacy ID │  │
+│  │ - Clean INITIAL_PROFILES │   │ - Clean known deps map │  │
+│  └─────────────┬────────────┘   └───────────┬────────────┘  │
+└────────────────┼────────────────────────────┼───────────────┘
+                 │                            │
+                 ▼                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      State Layer                            │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ App.tsx: installedMods State                          │  │
+│  │ - No missing dependency warning badges                │  │
+│  │ - Clean load order sequencing                         │  │
+│  └──────────────────────────┬────────────────────────────┘  │
+└─────────────────────────────┼───────────────────────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       UI Layer                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ InstalledModsTab.tsx                                  │  │
+│  │ - BigBrain (#1), SVM (#2), SAIN (#3), Graphics (#4)   │  │
+│  │ - Missing Dependencies badge hidden                   │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- **Interactive State Transitions**:
+  - On launch, `loadInstalledMods()` sanitizes installed mods by filtering out any residual `me.sol.sain.legacy-patch` entries.
+  - Missing dependency detection computes `dependencies.filter(dep => !installedIds.has(dep))`. With no unsatisfied dependencies, the `Missing Dependencies` alert count resolves to 0.
