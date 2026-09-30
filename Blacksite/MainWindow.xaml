@@ -10,7 +10,11 @@
         Foreground="{StaticResource TextPrimary}"
         FontFamily="Segoe UI" FontSize="13"
         TextOptions.TextFormattingMode="Display"
-        UseLayoutRounding="True">
+        UseLayoutRounding="True"
+        AllowDrop="True"
+        DragEnter="OnArchiveDragEnter"
+        DragOver="OnArchiveDragOver"
+        Drop="OnArchiveDrop">
     <WindowChrome.WindowChrome>
         <!-- Borderless window with working edge-resize and no native captions. -->
         <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0"

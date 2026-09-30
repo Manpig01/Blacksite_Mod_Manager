@@ -54,6 +54,32 @@ public partial class MainWindow : Window
         }
     }
 
+    private static readonly HashSet<string> SupportedArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".zip", ".7z", ".rar"
+    };
+
+    private void OnArchiveDragEnter(object sender, DragEventArgs e) => SetArchiveDropEffect(e);
+
+    private void OnArchiveDragOver(object sender, DragEventArgs e) => SetArchiveDropEffect(e);
+
+    private static void SetArchiveDropEffect(DragEventArgs e)
+    {
+        bool hasSupportedArchive = e.Data.GetDataPresent(DataFormats.FileDrop) &&
+            e.Data.GetData(DataFormats.FileDrop) is string[] files &&
+            files.Any(file => SupportedArchiveExtensions.Contains(System.IO.Path.GetExtension(file)));
+        e.Effects = hasSupportedArchive ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnArchiveDrop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            _viewModel.QueueLocalArchives(files);
+
+        e.Handled = true;
+    }
+
     private async void OnMainWindowLoaded(object sender, RoutedEventArgs e)
     {
         if (_initialized) return;

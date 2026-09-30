@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -32,37 +33,44 @@ public sealed class ArchiveInspector : IArchiveInspector
 
     public ArchiveKind Detect(string filePath)
     {
-        byte[] head = new byte[512];
-        int read;
+        byte[] head = ArrayPool<byte>.Shared.Rent(512);
         try
         {
-            using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            read = fs.Read(head);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
+            int read;
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                read = fs.Read(head, 0, 512);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return ArchiveKind.Unknown;
+            }
+
+            if (read >= 4 && head[0] == 0x50 && head[1] == 0x4B && (head[2] == 0x03 || head[2] == 0x05 || head[2] == 0x07))
+                return ArchiveKind.Zip;
+            if (read >= 7 && head[0] == (byte)'R' && head[1] == (byte)'a' && head[2] == (byte)'r' && head[3] == (byte)'!' && head[4] == 0x1A)
+                return ArchiveKind.Rar;
+            if (read >= 6 && head[0] == 0x37 && head[1] == 0x7A && head[2] == 0xBC && head[3] == 0xAF && head[4] == 0x27 && head[5] == 0x1C)
+                return ArchiveKind.SevenZip;
+
+            // Dead file links answer with a web page (HTML) or a small JSON error payload —
+            // neither is an archive, and both must be reported clearly instead of exploding in the extractor.
+            string asText = Encoding.UTF8.GetString(head, 0, read).TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
+            if (asText.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
+                asText.StartsWith("<html", StringComparison.OrdinalIgnoreCase) ||
+                asText.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) ||
+                asText.StartsWith("<", StringComparison.Ordinal) ||
+                asText.StartsWith("{\"", StringComparison.Ordinal) ||
+                asText.StartsWith("[{", StringComparison.Ordinal))
+                return ArchiveKind.Html;
+
             return ArchiveKind.Unknown;
         }
-
-        if (read >= 4 && head[0] == 0x50 && head[1] == 0x4B && (head[2] == 0x03 || head[2] == 0x05 || head[2] == 0x07))
-            return ArchiveKind.Zip;
-        if (read >= 7 && head[0] == (byte)'R' && head[1] == (byte)'a' && head[2] == (byte)'r' && head[3] == (byte)'!' && head[4] == 0x1A)
-            return ArchiveKind.Rar;
-        if (read >= 6 && head[0] == 0x37 && head[1] == 0x7A && head[2] == 0xBC && head[3] == 0xAF && head[4] == 0x27 && head[5] == 0x1C)
-            return ArchiveKind.SevenZip;
-
-        // Dead file links answer with a web page (HTML) or a small JSON error payload —
-        // neither is an archive, and both must be reported clearly instead of exploding in the extractor.
-        string asText = Encoding.UTF8.GetString(head, 0, read).TrimStart('\uFEFF', ' ', '\t', '\r', '\n');
-        if (asText.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
-            asText.StartsWith("<html", StringComparison.OrdinalIgnoreCase) ||
-            asText.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) ||
-            asText.StartsWith("<", StringComparison.Ordinal) ||
-            asText.StartsWith("{\"", StringComparison.Ordinal) ||
-            asText.StartsWith("[{", StringComparison.Ordinal))
-            return ArchiveKind.Html;
-
-        return ArchiveKind.Unknown;
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(head);
+        }
     }
 
     /// <summary>
@@ -166,26 +174,34 @@ public sealed class ArchiveInspector : IArchiveInspector
     {
         const long maxScan = 8 * 1024 * 1024;
         stream.Position = 0;
-        var buffer = new byte[64 * 1024];
-        long absoluteBase = 0;
-        int overlap = 0;
-
-        while (absoluteBase <= maxScan)
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            int read = stream.Read(buffer, overlap, buffer.Length - overlap);
-            if (read <= 0) break;
-            int total = overlap + read;
-            int limit = total - 4;
-            for (int i = 0; i <= limit; i++)
+            long absoluteBase = 0;
+            int overlap = 0;
+
+            while (absoluteBase <= maxScan)
             {
-                if (buffer[i] == 0x50 && buffer[i + 1] == 0x4B && buffer[i + 2] == 0x03 && buffer[i + 3] == 0x04)
-                    return absoluteBase + i;
+                int read = stream.Read(buffer, overlap, 64 * 1024 - overlap);
+                if (read <= 0) break;
+                int total = overlap + read;
+                int limit = total - 4;
+                for (int i = 0; i <= limit; i++)
+                {
+                    if (buffer[i] == 0x50 && buffer[i + 1] == 0x4B && buffer[i + 2] == 0x03 && buffer[i + 3] == 0x04)
+                        return absoluteBase + i;
+                }
+                int carry = Math.Min(3, total);
+                Buffer.BlockCopy(buffer, total - carry, buffer, 0, carry);
+                absoluteBase += total - carry;
+                overlap = carry;
             }
-            Buffer.BlockCopy(buffer, total - 3, buffer, 0, 3);
-            absoluteBase += total - 3;
-            overlap = 3;
+            return -1;
         }
-        return -1;
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     /// <summary>Read-only, seekable view of a stream starting <paramref name="offset"/> bytes in.</summary>

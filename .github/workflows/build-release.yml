@@ -1,18 +1,29 @@
-name: Build Blacksite release artifact
+name: Build and release Blacksite Mod Manager
 
 on:
   push:
     branches:
       - main
+      - feature/v1.9.0-optimization
+      - arena/01a0ee8e-blacksite-mod-manager-test
+    tags:
+      - 'v*.*.*'
   pull_request:
     branches:
       - main
+      - feature/v1.9.0-optimization
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: blacksite-build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   publish:
+    name: Publish Windows x64 release assets
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -23,14 +34,82 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Publish self-contained single-file app
+      - name: Publish self-contained WPF single-file application
         shell: pwsh
-        run: dotnet publish Blacksite/Blacksite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:UseWPF=true -o ./releases
+        run: >-
+          dotnet publish Blacksite/Blacksite.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:UseWPF=true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          --output ./releases
 
-      - name: Upload standalone executable
+      - name: Assemble portable ZIP and checksums
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $PWD 'releases'
+          New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+
+          $exePath = Join-Path $releaseDir 'BlacksiteModManager.exe'
+          if (-not (Test-Path $exePath -PathType Leaf)) {
+            $publishedExecutables = @(Get-ChildItem $releaseDir -File -Filter '*.exe')
+            if ($publishedExecutables.Count -ne 1) {
+              throw "Expected BlacksiteModManager.exe (or one executable to rename), found $($publishedExecutables.Count)."
+            }
+            Move-Item $publishedExecutables[0].FullName $exePath
+          }
+
+          Copy-Item (Join-Path $PWD 'LICENSE') (Join-Path $releaseDir 'LICENSE') -Force
+
+          # Build the ZIP before writing the ZIP or checksum file, so neither is nested inside itself.
+          $zipPath = Join-Path $releaseDir 'BlacksiteModManager-win-x64.zip'
+          Compress-Archive -Path (Join-Path $releaseDir '*') `
+            -DestinationPath $zipPath -CompressionLevel Optimal -Force
+
+          $sumLines = foreach ($name in @('BlacksiteModManager.exe', 'BlacksiteModManager-win-x64.zip')) {
+            $file = Join-Path $releaseDir $name
+            if (-not (Test-Path $file -PathType Leaf)) { throw "Required release file missing: $name" }
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $name"
+          }
+          [IO.File]::WriteAllLines((Join-Path $releaseDir 'SHA256SUMS.txt'), $sumLines, [Text.Encoding]::ASCII)
+
+          foreach ($name in @('LICENSE', 'SHA256SUMS.txt', 'BlacksiteModManager-win-x64.zip', 'BlacksiteModManager.exe')) {
+            if (-not (Test-Path (Join-Path $releaseDir $name) -PathType Leaf)) {
+              throw "Required release asset missing: $name"
+            }
+          }
+
+      - name: Upload build outputs
+        id: upload-build-outputs
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
-          name: Blacksite-win-x64-executable
-          path: ./releases/*.exe
+          name: BlacksiteModManager-win-x64
+          path: ./releases/*
           if-no-files-found: error
+          retention-days: 1
           compression-level: 0
+
+      - name: Report artifact storage warning
+        if: steps.upload-build-outputs.outcome == 'failure'
+        shell: pwsh
+        run: Write-Host '::warning::The release files were built, but GitHub Actions artifact storage rejected the upload. Tag-triggered GitHub Release publishing will still proceed.'
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Blacksite Mod Manager ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'BETA') }}
+          generate_release_notes: true
+          files: |
+            releases/LICENSE
+            releases/SHA256SUMS.txt
+            releases/BlacksiteModManager-win-x64.zip
+            releases/BlacksiteModManager.exe

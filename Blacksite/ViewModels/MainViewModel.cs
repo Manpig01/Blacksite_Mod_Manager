@@ -1412,13 +1412,44 @@ public sealed class MainViewModel : ViewModelBase
         };
         if (dialog.ShowDialog() != true || dialog.FileNames is not { Length: > 0 }) return;
 
-        foreach (string file in dialog.FileNames)
+        QueueLocalArchives(dialog.FileNames);
+    }
+
+    /// <summary>Queues supported local archive files through the same install engine used by the file picker.</summary>
+    public void QueueLocalArchives(IEnumerable<string> filePaths)
+    {
+        if (string.IsNullOrWhiteSpace(SptDirectory) || !Directory.Exists(SptDirectory))
+        {
+            MessageDialog.Show("SPT directory not set",
+                "Select your Single Player Tarkov root folder first (button “Set SPT Directory”, top left).",
+                isError: true);
+            return;
+        }
+
+        string[] supplied = filePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] archives = supplied
+            .Where(path => File.Exists(path) && (Path.GetExtension(path).ToLowerInvariant() is ".zip" or ".7z" or ".rar"))
+            .ToArray();
+
+        if (archives.Length == 0)
+        {
+            StatusText = "No supported archive files found — choose or drop .zip, .7z, or .rar files.";
+            return;
+        }
+
+        foreach (string file in archives)
         {
             _installQueue.EnqueueLocal(file, SptDirectory);
             ShowQueuedToast(Path.GetFileNameWithoutExtension(file));
         }
 
-        StatusText = $"Queued {dialog.FileNames.Length} local archive{(dialog.FileNames.Length == 1 ? "" : "s")} — {DescribeQueueCounters()}.";
+        int skipped = supplied.Length - archives.Length;
+        StatusText = $"Queued {archives.Length} local archive{(archives.Length == 1 ? "" : "s")}" +
+                     (skipped > 0 ? $" (skipped {skipped} unsupported or missing file{(skipped == 1 ? "" : "s")})" : string.Empty) +
+                     $" — {DescribeQueueCounters()}.";
         OpenQueueWindowRequested?.Invoke(); // show the live progress immediately
     }
 
