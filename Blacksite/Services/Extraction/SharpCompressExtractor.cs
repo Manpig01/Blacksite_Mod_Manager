@@ -1,5 +1,6 @@
+using System.Buffers;
 using System.IO;
-using System.IO.Compression;
+using System.Threading.Channels;
 using Blacksite.Models;
 
 namespace Blacksite.Services.Extraction;
@@ -8,9 +9,9 @@ namespace Blacksite.Services.Extraction;
 /// Unit 4a of the extraction architecture: PHASE A EXTRACTION in-process via SharpCompress /
 /// System.IO.Compression — the staged parallel engine. Raw-extracts every archive entry
 /// verbatim into a %TEMP%\bs-extract-* staging folder:
-///   tiny files (&lt; 1 MB) run CONCURRENTLY (Parallel.ForEachAsync over ProcessorCount
-///   batches, one independent archive reader per batch — readers are not thread-safe), large
-///   media/bundle files extract sequentially alongside them (bounded RAM). Progress is tracked
+///   tiny files (&lt; 1 MB) run CONCURRENTLY through a bounded Channel with independent archive
+///   readers per worker — readers are not thread-safe; large media/bundle files extract
+///   sequentially alongside them (bounded RAM). Progress is tracked
 ///   in BYTES (Interlocked) and dispatched at most once per 150 ms (in-between updates are
 ///   dropped, never queued); the percent is monotonic and reaches exactly 100.
 /// Cancellation aborts cleanly at any point — the caller's finally-sweep removes the staging
@@ -20,12 +21,17 @@ public sealed class SharpCompressExtractor
 {
     public static SharpCompressExtractor Instance { get; } = new();
 
-    /// <summary>Extraction stream-copy buffer: 1 MB.</summary>
-    private const int CopyBufferSize = 1024 * 1024;
+    /// <summary>A pooled 64 KiB copy buffer stays below the LOH threshold, while retaining
+    /// efficient sequential throughput for both tiny files and large bundles.</summary>
+    private const int CopyBufferSize = 64 * 1024;
 
     /// <summary>Files under this size (1 MB) are "tiny" (database JSONs, configs) and extract
-    /// concurrently; larger media/bundle files extract sequentially to prevent RAM spikes.</summary>
+    /// concurrently; larger media/bundle files extract sequentially to bound memory and disk seeks.</summary>
     private const long SmallFileThresholdBytes = 1024 * 1024;
+
+    /// <summary>Cap simultaneous archive readers/writers. Beyond eight, tiny-file workloads
+    /// usually contend on storage while multiplying archive indexes and open handles.</summary>
+    private static readonly int MaxSmallFileConcurrency = Math.Clamp(Environment.ProcessorCount, 1, 8);
 
     /// <summary>Progress dispatch gate: at most ONE progress update per 150 ms — updates that
     /// arrive between intervals are dropped entirely (not queued), so thousands of tiny files
@@ -38,31 +44,44 @@ public sealed class SharpCompressExtractor
         string archivePath, ArchiveKind kind, string stagingRoot,
         IProgress<double>? progress, CancellationToken cancellationToken)
     {
-        List<(string Path, long Size)> files;
+        List<(int EntryIndex, string Path, long Size)> files;
         List<string> directoryEntries;
         using (ArchiveInspector.UnifiedArchive meta = ArchiveInspector.UnifiedArchive.Open(archivePath, kind))
         {
-            files = meta.Entries
-                .Where(e => !e.IsDirectory && e.Path.Length > 0)
-                .Select(e => (e.Path, e.Size ?? 0))
-                .ToList();
-            directoryEntries = meta.Entries
-                .Where(e => e.IsDirectory && e.Path.Length > 0)
-                .Select(e => e.Path)
-                .ToList();
+            // Store compact entry ordinals instead of copying a path→entry dictionary into every
+            // worker. Each independent reader exposes the same archive ordering, which keeps the
+            // bounded workers thread-safe without multiplying a potentially huge hash table.
+            files = new List<(int EntryIndex, string Path, long Size)>(meta.Entries.Count);
+            directoryEntries = new List<string>();
+            var seenFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < meta.Entries.Count; i++)
+            {
+                ArchiveInspector.UnifiedArchive.Entry entry = meta.Entries[i];
+                if (entry.Path.Length == 0) continue;
+                if (entry.IsDirectory)
+                    directoryEntries.Add(entry.Path);
+                else if (seenFiles.Add(entry.Path))
+                    files.Add((i, entry.Path, entry.Size ?? 0));
+            }
         }
         long totalBytes = files.Sum(f => f.Size);
 
-        // Pre-create every directory up front — one sequential pass, no concurrent-mkdir churn.
+        // Pre-create unique directories up front. Thousands of JSON entries often share only a
+        // handful of folders; deduplicating avoids repeated metadata syscalls and concurrent mkdirs.
+        var createdDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string dir in directoryEntries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string dirPath = Path.GetFullPath(Path.Combine(stagingRoot, dir));
-            if (PlacementEngine.IsPathInside(stagingRoot, dirPath)) Directory.CreateDirectory(dirPath);
+            if (PlacementEngine.IsPathInside(stagingRoot, dirPath) && createdDirectories.Add(dirPath))
+                Directory.CreateDirectory(dirPath);
         }
-        foreach ((string filePath, _) in files)
+        foreach (var file in files)
         {
-            string fileDir = Path.GetDirectoryName(Path.GetFullPath(Path.Combine(stagingRoot, filePath)))!;
-            if (PlacementEngine.IsPathInside(stagingRoot, fileDir)) Directory.CreateDirectory(fileDir);
+            cancellationToken.ThrowIfCancellationRequested();
+            string fileDir = Path.GetDirectoryName(Path.GetFullPath(Path.Combine(stagingRoot, file.Path)))!;
+            if (PlacementEngine.IsPathInside(stagingRoot, fileDir) && createdDirectories.Add(fileDir))
+                Directory.CreateDirectory(fileDir);
         }
 
         // ---- progress: BYTE totals (Interlocked) + 150 ms dispatch gate (in-between updates are dropped)
@@ -89,96 +108,127 @@ public sealed class SharpCompressExtractor
         progress?.Report(0.0);
         cancellationToken.ThrowIfCancellationRequested();
 
-        // ---- split: tiny files extract concurrently; large media/bundle files stay sequential (RAM ceiling)
-        List<string> smallFiles = files.Where(f => f.Size < SmallFileThresholdBytes).Select(f => f.Path).ToList();
-        List<string> largeFiles = files.Where(f => f.Size >= SmallFileThresholdBytes).Select(f => f.Path).ToList();
-        var sizeByPath = files.GroupBy(f => f.Path, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.Size), StringComparer.Ordinal);
+        // ---- bounded producer/consumer split: tiny files run on independent archive readers;
+        // one large-file consumer streams bundles sequentially alongside the small-file workers.
+        // Keep one compact file list rather than materializing separate small/large copies.
+        int smallFileCount = files.Count(f => f.Size < SmallFileThresholdBytes);
+        bool hasLargeFiles = files.Any(f => f.Size >= SmallFileThresholdBytes);
 
-        Task smallWave = smallFiles.Count == 0
-            ? Task.CompletedTask
-            : Parallel.ForEachAsync(
-                PartitionIntoBatches(smallFiles, Environment.ProcessorCount),
-                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken },
-                async (batch, ct) =>
+        async Task ExtractSmallFilesAsync()
+        {
+            if (smallFileCount == 0) return;
+
+            int workerCount = Math.Min(MaxSmallFileConcurrency, smallFileCount);
+            var channel = Channel.CreateBounded<(int EntryIndex, long Size)>(new BoundedChannelOptions(workerCount * 4)
+            {
+                SingleWriter = true,
+                SingleReader = false,
+                FullMode = BoundedChannelFullMode.Wait
+            });
+
+            async Task ProduceAsync()
+            {
+                Exception? completionError = null;
+                try
                 {
-                    // One independent archive reader per batch — archive readers are not thread-safe.
-                    using ArchiveInspector.UnifiedArchive archive = ArchiveInspector.UnifiedArchive.Open(archivePath, kind);
-                    Dictionary<string, ArchiveInspector.UnifiedArchive.Entry> entryIndex = BuildEntryIndex(archive);
-                    foreach (string entryPath in batch)
+                    foreach (var file in files)
                     {
-                        ct.ThrowIfCancellationRequested();
-                        await ExtractEntryToStagingAsync(archive, entryIndex, entryPath, stagingRoot).ConfigureAwait(false);
-                        Interlocked.Add(ref bytesExtracted, sizeByPath[entryPath]);
+                        if (file.Size >= SmallFileThresholdBytes) continue;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        await channel.Writer.WriteAsync((file.EntryIndex, file.Size), cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    completionError = ex;
+                    throw;
+                }
+                finally
+                {
+                    channel.Writer.TryComplete(completionError);
+                }
+            }
+
+            async Task ConsumeAsync()
+            {
+                try
+                {
+                    // SharpCompress archive instances are not thread-safe; each bounded worker owns
+                    // one reader for its entire lifetime and uses the shared entry ordinals.
+                    using ArchiveInspector.UnifiedArchive archive = ArchiveInspector.UnifiedArchive.Open(archivePath, kind);
+
+                    await foreach (var work in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        if ((uint)work.EntryIndex >= (uint)archive.Entries.Count)
+                            throw new IOException($"Archive entry index {work.EntryIndex} is not present in the worker reader.");
+                        await ExtractEntryToStagingAsync(archive, archive.Entries[work.EntryIndex], stagingRoot, cancellationToken)
+                            .ConfigureAwait(false);
+                        Interlocked.Add(ref bytesExtracted, work.Size);
                         MaybeReportProgress();
                     }
-                });
+                }
+                catch (Exception ex)
+                {
+                    // Unblock a producer that is waiting on the bounded channel if a reader or
+                    // destination fails; otherwise a failed worker could strand the extraction.
+                    channel.Writer.TryComplete(ex);
+                    throw;
+                }
+            }
 
-        Task largeWave = largeFiles.Count == 0
+            Task producer = ProduceAsync();
+            Task[] consumers = Enumerable.Range(0, workerCount)
+                .Select(_ => Task.Run(ConsumeAsync, CancellationToken.None))
+                .ToArray();
+            await Task.WhenAll(consumers.Append(producer)).ConfigureAwait(false);
+        }
+
+        Task largeWave = !hasLargeFiles
             ? Task.CompletedTask
             : Task.Run(async () =>
             {
                 using ArchiveInspector.UnifiedArchive archive = ArchiveInspector.UnifiedArchive.Open(archivePath, kind);
-                Dictionary<string, ArchiveInspector.UnifiedArchive.Entry> entryIndex = BuildEntryIndex(archive);
-                foreach (string entryPath in largeFiles) // sequential — one large stream at a time
+                foreach (var file in files) // one massive stream at a time
                 {
+                    if (file.Size < SmallFileThresholdBytes) continue;
                     cancellationToken.ThrowIfCancellationRequested();
-                    await ExtractEntryToStagingAsync(archive, entryIndex, entryPath, stagingRoot).ConfigureAwait(false);
-                    Interlocked.Add(ref bytesExtracted, sizeByPath[entryPath]);
+                    if ((uint)file.EntryIndex >= (uint)archive.Entries.Count)
+                        throw new IOException($"Archive entry index {file.EntryIndex} is not present in the large-file reader.");
+                    await ExtractEntryToStagingAsync(archive, archive.Entries[file.EntryIndex], stagingRoot, cancellationToken)
+                        .ConfigureAwait(false);
+                    Interlocked.Add(ref bytesExtracted, file.Size);
                     MaybeReportProgress();
                 }
-            }, cancellationToken);
+            }, CancellationToken.None);
 
-        await Task.WhenAll(smallWave, largeWave).ConfigureAwait(false);
+        await Task.WhenAll(ExtractSmallFilesAsync(), largeWave).ConfigureAwait(false);
         progress?.Report(100.0);
         return directoryEntries;
     }
 
-    /// <summary>Indexes a worker's archive entries by path (first occurrence wins for archives
-    /// with duplicate names — matching the legacy last-write order semantics per file).</summary>
-    private static Dictionary<string, ArchiveInspector.UnifiedArchive.Entry> BuildEntryIndex(ArchiveInspector.UnifiedArchive archive)
-    {
-        var index = new Dictionary<string, ArchiveInspector.UnifiedArchive.Entry>(StringComparer.Ordinal);
-        foreach (ArchiveInspector.UnifiedArchive.Entry entry in archive.Entries)
-            if (!entry.IsDirectory && entry.Path.Length > 0 && !index.ContainsKey(entry.Path))
-                index[entry.Path] = entry;
-        return index;
-    }
-
-    /// <summary>Splits the list into at most <paramref name="batches"/> contiguous batches.</summary>
-    private static List<List<string>> PartitionIntoBatches(List<string> items, int batches)
-    {
-        var result = new List<List<string>>();
-        if (items.Count == 0) return result;
-        batches = Math.Max(1, Math.Min(batches, items.Count));
-        int size = (int)Math.Ceiling(items.Count / (double)batches);
-        for (int i = 0; i < items.Count; i += size)
-            result.Add(items.GetRange(i, Math.Min(size, items.Count - i)));
-        return result;
-    }
-
     private static async Task ExtractEntryToStagingAsync(
         ArchiveInspector.UnifiedArchive archive,
-        Dictionary<string, ArchiveInspector.UnifiedArchive.Entry> entryIndex, string entryPath, string stagingRoot)
+        ArchiveInspector.UnifiedArchive.Entry entry, string stagingRoot, CancellationToken cancellationToken)
     {
-        if (!entryIndex.TryGetValue(entryPath, out ArchiveInspector.UnifiedArchive.Entry? entry))
-            throw new IOException($"Archive entry disappeared: \u201C{entryPath}\u201D.");
+        if (entry.IsDirectory || entry.Path.Length == 0)
+            throw new IOException($"Archive entry is not a file: \u201C{entry.Path}\u201D.");
         string destPath = Path.GetFullPath(Path.Combine(stagingRoot, entry.Path));
         if (!PlacementEngine.IsPathInside(stagingRoot, destPath))
             throw new IOException($"Blocked unsafe archive entry path: \u201C{entry.Path}\u201D."); // zip-slip
         using Stream source = archive.OpenEntry(entry);
-        await WriteFileHighSpeedAsync(source, destPath).ConfigureAwait(false);
+        await WriteFileHighSpeedAsync(source, destPath, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Streams one entry to disk with maximum-throughput I/O: a 1 MB buffer and
-    /// FileOptions.Asynchronous | FileOptions.SequentialScan (overlapped writes + read-ahead
-    /// hints for the OS cache manager). Existing targets are cleared first (AV-lock resilient)
-    /// so extraction always creates fresh files.
+    /// Streams one entry with a reusable sub-LOH buffer and true async FileStream I/O.
+    /// Small files share pooled buffers over time instead of allocating a 1 MB array per entry;
+    /// the bounded worker count caps simultaneous readers/writers. Cancellation is checked on
+    /// both reads and writes so a multi-gigabyte bundle can be aborted promptly.
     /// </summary>
-    private static async Task WriteFileHighSpeedAsync(Stream source, string destPath)
+    private static async Task WriteFileHighSpeedAsync(Stream source, string destPath, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+        cancellationToken.ThrowIfCancellationRequested();
         if (File.Exists(destPath))
         {
             PlacementEngine.ExecuteWithLockRetry(_ =>
@@ -188,8 +238,22 @@ public sealed class SharpCompressExtractor
             });
         }
 
-        await using var target = new FileStream(destPath, FileMode.Create, FileAccess.Write,
-            FileShare.None, 1048576, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        await source.CopyToAsync(target, CopyBufferSize).ConfigureAwait(false);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+        try
+        {
+            await using var target = new FileStream(destPath, FileMode.Create, FileAccess.Write,
+                FileShare.None, CopyBufferSize, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            int read;
+            while ((read = await source.ReadAsync(buffer.AsMemory(0, CopyBufferSize), cancellationToken)
+                       .ConfigureAwait(false)) != 0)
+            {
+                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            }
+            await target.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 }

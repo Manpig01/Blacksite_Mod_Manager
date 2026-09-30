@@ -1,0 +1,123 @@
+# MANDATORY RULE: Every release draft, script, or GitHub Actions workflow MUST upload the standalone EXE file as a primary asset.
+# Asset List required for EVERY release:
+# 1. Blacksite.exe (Standalone single-file executable)
+# 2. Blacksite-win-x64.zip
+# 3. SHA256SUMS.txt
+# 4. Source code (zip)
+# 5. Source code (tar.gz)
+
+name: Blacksite release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to package (for example v1.9.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: blacksite-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish-and-draft:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish standalone Windows x64 app
+        shell: pwsh
+        run: |
+          dotnet publish Blacksite/Blacksite.csproj `
+            --configuration Release `
+            --runtime win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            --output artifacts/publish
+          if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+
+          $publishedExe = Join-Path $PWD "artifacts/publish/BlacksiteModManager.exe"
+          if (-not (Test-Path $publishedExe -PathType Leaf)) {
+            throw "Expected single-file app was not published: $publishedExe"
+          }
+
+      - name: Assemble mandatory release assets
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $PWD "artifacts/release"
+          $packageDir = Join-Path $releaseDir "package"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+
+          # Keep the project's assembly name unchanged, but publish the required stable asset name.
+          Copy-Item "artifacts/publish/BlacksiteModManager.exe" (Join-Path $releaseDir "Blacksite.exe") -Force
+          Copy-Item (Join-Path $releaseDir "Blacksite.exe") (Join-Path $packageDir "Blacksite.exe") -Force
+
+          # Include optional loose 7-Zip tools in the portable ZIP when they are present.
+          $sevenZipSource = Join-Path $PWD "Blacksite/tools/7zip/win"
+          if (Test-Path $sevenZipSource -PathType Container) {
+            $sevenZipPackage = Join-Path $packageDir "tools/7zip/win"
+            New-Item -ItemType Directory -Force -Path $sevenZipPackage | Out-Null
+            Copy-Item (Join-Path $sevenZipSource "*") $sevenZipPackage -Recurse -Force
+          }
+          Compress-Archive -Path (Join-Path $packageDir "*") `
+            -DestinationPath (Join-Path $releaseDir "Blacksite-win-x64.zip") -CompressionLevel Optimal
+
+          $sourceZip = Join-Path $releaseDir "Blacksite-source.zip"
+          git archive --format=zip "--output=$sourceZip" $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "Creating source ZIP failed" }
+
+          $sourceTarGz = Join-Path $releaseDir "Blacksite-source.tar.gz"
+          $python = @'
+          import gzip, os, subprocess
+          target = os.path.abspath(os.path.join("artifacts", "release", "Blacksite-source.tar.gz"))
+          with open(target, "wb") as raw:
+              with gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as compressed:
+                  subprocess.run(["git", "archive", "--format=tar", os.environ["GITHUB_SHA"]], stdout=compressed, check=True)
+          '@
+          python -c $python
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $sourceTarGz -PathType Leaf)) {
+            throw "Creating source tar.gz failed"
+          }
+
+          $assets = Get-ChildItem $releaseDir -File | Where-Object Name -ne "SHA256SUMS.txt"
+          $sumLines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($asset.Name)"
+          }
+          [IO.File]::WriteAllLines((Join-Path $releaseDir "SHA256SUMS.txt"), $sumLines, [Text.Encoding]::ASCII)
+
+          # Fail closed: every draft must contain all five required user-facing assets.
+          $required = @("Blacksite.exe", "Blacksite-win-x64.zip", "SHA256SUMS.txt", "Blacksite-source.zip", "Blacksite-source.tar.gz")
+          foreach ($name in $required) {
+            if (-not (Test-Path (Join-Path $releaseDir $name) -PathType Leaf)) { throw "Required release asset missing: $name" }
+          }
+
+      - name: Create or update GitHub release draft with all required assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: Blacksite ${{ inputs.tag || github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/release/Blacksite.exe
+            artifacts/release/Blacksite-win-x64.zip
+            artifacts/release/SHA256SUMS.txt
+            artifacts/release/Blacksite-source.zip
+            artifacts/release/Blacksite-source.tar.gz

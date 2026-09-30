@@ -247,7 +247,9 @@ public sealed class ArchiveInspector : IArchiveInspector
 
         public static UnifiedArchive Open(string filePath, ArchiveKind kind)
         {
-            var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
             try
             {
                 var entries = new List<Entry>();

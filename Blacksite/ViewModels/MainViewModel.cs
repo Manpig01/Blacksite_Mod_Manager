@@ -45,9 +45,9 @@ public sealed class MainViewModel : ViewModelBase
     private CatalogFilter? _lastStartedFilter;         // dedupes debounce ticks vs. already-loaded filters
     private int _activeRefreshes;
 
-    public ObservableCollection<ModCardViewModel> Items { get; } = new();
+    public ObservableRangeCollection<ModCardViewModel> Items { get; } = new();
     public ObservableCollection<ToastViewModel> Toasts { get; } = new();
-    public ObservableCollection<InstalledModViewModel> InstalledItems { get; } = new();
+    public ObservableRangeCollection<InstalledModViewModel> InstalledItems { get; } = new();
 
     // ------------------------------------------------------------------ commands
 
@@ -893,9 +893,7 @@ public sealed class MainViewModel : ViewModelBase
         TotalPages = Math.Max(1, (int)Math.Ceiling(_visibleCards.Count / (double)PerPage));
         if (CurrentPage > TotalPages) CurrentPage = TotalPages;
 
-        Items.Clear();
-        foreach (ModCardViewModel card in _visibleCards.Skip((CurrentPage - 1) * PerPage).Take(PerPage))
-            Items.Add(card);
+        Items.ReplaceRange(_visibleCards.Skip((CurrentPage - 1) * PerPage).Take(PerPage));
 
         ResultCount = _visibleCards.Count;
         OnPropertyChanged(nameof(IsCatalogFilterActive));
@@ -1600,10 +1598,11 @@ public sealed class MainViewModel : ViewModelBase
                 .ToList();
 
         var byKey = _installedAll.ToDictionary(r => r.IdentityKey);
-        InstalledItems.Clear();
+        var visibleMods = new List<InstalledModViewModel>(matched.Count);
         foreach (InstalledRowData row in matched)
             if (byKey.TryGetValue(row.Info.IdentityKey, out InstalledModViewModel? vm))
-                InstalledItems.Add(vm);
+                visibleMods.Add(vm);
+        InstalledItems.ReplaceRange(visibleMods);
 
         HasInstalledResults = InstalledItems.Count > 0;
         InstalledEmptyText = _installedAll.Count == 0

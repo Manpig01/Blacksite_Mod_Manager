@@ -1,0 +1,36 @@
+name: Build Blacksite release artifact
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish self-contained single-file app
+        shell: pwsh
+        run: dotnet publish Blacksite/Blacksite.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:UseWPF=true -o ./releases
+
+      - name: Upload standalone executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blacksite-win-x64-executable
+          path: ./releases/*.exe
+          if-no-files-found: error
+          compression-level: 0

@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using Blacksite.Models;
 
@@ -251,29 +253,55 @@ public sealed class LocalModScanner
         => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
     private static IEnumerable<string> SafeEnumerateDirectories(string dir)
-    {
-        try { return Directory.EnumerateDirectories(dir); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Array.Empty<string>(); }
-    }
+        => SafeEnumerate(dir, "*", directories: true, maxDepth: 0);
 
     private static IEnumerable<string> SafeEnumerateFiles(string dir, string pattern, int maxDepth)
+        => SafeEnumerate(dir, pattern, directories: false, maxDepth);
+
+    /// <summary>Lazy enumeration avoids allocating complete path arrays and tolerates folders
+    /// becoming inaccessible while a large SPT tree is being scanned.</summary>
+    private static IEnumerable<string> SafeEnumerate(string dir, string pattern, bool directories, int maxDepth)
     {
+        IEnumerator<string>? enumerator = null;
         try
         {
-            if (maxDepth <= 0)
-                return Directory.EnumerateFiles(dir, pattern);
-
             var options = new EnumerationOptions
             {
-                RecurseSubdirectories = true,
+                RecurseSubdirectories = maxDepth > 0,
                 IgnoreInaccessible = true,
-                MaxRecursionDepth = maxDepth
+                ReturnSpecialDirectories = false,
+                MaxRecursionDepth = maxDepth > 0 ? maxDepth : 0
             };
-            return Directory.EnumerateFiles(dir, pattern, options);
+            IEnumerable<string> paths = directories
+                ? Directory.EnumerateDirectories(dir, pattern, options)
+                : Directory.EnumerateFiles(dir, pattern, options);
+            enumerator = paths.GetEnumerator();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { }
+
+        if (enumerator is null) yield break;
+        try
         {
-            return Array.Empty<string>();
+            while (true)
+            {
+                bool hasNext = false;
+                string? current = null;
+                try
+                {
+                    hasNext = enumerator.MoveNext();
+                    if (hasNext) current = enumerator.Current;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    // A directory can disappear or become locked mid-scan; keep the rows already found.
+                }
+                if (!hasNext) yield break;
+                yield return current!;
+            }
+        }
+        finally
+        {
+            enumerator.Dispose();
         }
     }
 
@@ -284,53 +312,77 @@ public sealed class LocalModScanner
         public string? Name, Id, Guid, Version, AuthorText, Main, SptVersion, AkiVersion;
     }
 
-    /// <summary>Tolerant package.json reader — field types vary between mod authors, so every
-    /// value is extracted defensively instead of via strict deserialization.</summary>
+    /// <summary>
+    /// Tolerant, selective UTF-8 reader for the handful of package.json fields the scanner uses.
+    /// It avoids File.ReadAllText's UTF-16 copy and JsonDocument's full DOM allocation for every
+    /// installed mod; the temporary input buffer is pooled and capped to reject pathological files.
+    /// </summary>
     private static PackageJsonData? TryParsePackageJson(string path)
     {
+        byte[]? utf8 = null;
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            JsonElement root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return null;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.SequentialScan);
+            int length = GetMetadataLength(stream);
+            if (length <= 0) return null;
+            utf8 = ArrayPool<byte>.Shared.Rent(length);
+            stream.ReadExactly(utf8.AsSpan(0, length));
 
-            var data = new PackageJsonData
+            int offset = length >= 3 && utf8[0] == 0xEF && utf8[1] == 0xBB && utf8[2] == 0xBF ? 3 : 0;
+            var reader = new Utf8JsonReader(utf8.AsSpan(offset, length - offset), new JsonReaderOptions
             {
-                Name = GetString(root, "name"),
-                Id = GetString(root, "id"),
-                Guid = GetString(root, "guid"),
-                Version = GetString(root, "version"),
-                Main = GetString(root, "main"),
-                SptVersion = GetString(root, "sptVersion"),
-                AkiVersion = GetString(root, "akiVersion")
-            };
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true
+            });
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
 
-            string? author = GetString(root, "author");
-            if (author is null && root.TryGetProperty("authors", out JsonElement authors))
+            var data = new PackageJsonData();
+            string? author = null;
+            string? authorsText = null;
+            while (reader.Read())
             {
-                if (authors.ValueKind == JsonValueKind.String)
-                    author = authors.GetString();
-                else if (authors.ValueKind == JsonValueKind.Array)
+                if (reader.TokenType == JsonTokenType.EndObject && reader.CurrentDepth == 0) break;
+                if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1) continue;
+                bool isName = reader.ValueTextEquals("name");
+                bool isId = reader.ValueTextEquals("id");
+                bool isGuid = reader.ValueTextEquals("guid");
+                bool isVersion = reader.ValueTextEquals("version");
+                bool isAuthor = reader.ValueTextEquals("author");
+                bool isAuthors = reader.ValueTextEquals("authors");
+                bool isMain = reader.ValueTextEquals("main");
+                bool isSpt = reader.ValueTextEquals("sptVersion");
+                bool isAki = reader.ValueTextEquals("akiVersion");
+                if (!reader.Read()) break;
+
+                if (isAuthors)
                 {
-                    var names = new List<string>();
-                    foreach (JsonElement item in authors.EnumerateArray())
-                    {
-                        if (item.ValueKind == JsonValueKind.String) { var s = item.GetString(); if (s is not null) names.Add(s); }
-                        else if (item.ValueKind == JsonValueKind.Object)
-                        {
-                            string? n = GetString(item, "name") ?? GetString(item, "username");
-                            if (n is not null) names.Add(n);
-                        }
-                    }
-                    if (names.Count > 0) author = string.Join(", ", names);
+                    authorsText = ReadAuthors(ref reader);
+                    continue;
                 }
+
+                if (isName) data.Name = ReadJsonScalar(ref reader);
+                else if (isId) data.Id = ReadJsonScalar(ref reader);
+                else if (isGuid) data.Guid = ReadJsonScalar(ref reader);
+                else if (isVersion) data.Version = ReadJsonScalar(ref reader);
+                else if (isAuthor) author = ReadJsonScalar(ref reader);
+                else if (isMain) data.Main = ReadJsonScalar(ref reader);
+                else if (isSpt) data.SptVersion = ReadJsonScalar(ref reader);
+                else if (isAki) data.AkiVersion = ReadJsonScalar(ref reader);
+                else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                    reader.Skip();
             }
-            data.AuthorText = author;
+
+            data.AuthorText = !string.IsNullOrWhiteSpace(author) ? author : authorsText;
             return data;
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or ArgumentException)
         {
             return null;
+        }
+        finally
+        {
+            if (utf8 is not null) ArrayPool<byte>.Shared.Return(utf8);
         }
     }
 
@@ -339,39 +391,120 @@ public sealed class LocalModScanner
         public string? Name, FullName, VersionNumber;
     }
 
-    /// <summary>Thunderstore/r2modman-style manifest.json reader.</summary>
+    /// <summary>Thunderstore/r2modman-style manifest.json reader; only three root tokens are needed.</summary>
     private static ManifestData? TryParseManifestJson(string path)
     {
+        byte[]? utf8 = null;
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            JsonElement root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return null;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.SequentialScan);
+            int length = GetMetadataLength(stream);
+            if (length <= 0) return null;
+            utf8 = ArrayPool<byte>.Shared.Rent(length);
+            stream.ReadExactly(utf8.AsSpan(0, length));
 
-            string? ns = GetString(root, "namespace");
-            string? name = GetString(root, "name");
+            int offset = length >= 3 && utf8[0] == 0xEF && utf8[1] == 0xBB && utf8[2] == 0xBF ? 3 : 0;
+            var reader = new Utf8JsonReader(utf8.AsSpan(offset, length - offset), new JsonReaderOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true
+            });
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return null;
+
+            string? ns = null, name = null, version = null;
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndObject && reader.CurrentDepth == 0) break;
+                if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1) continue;
+                bool isNamespace = reader.ValueTextEquals("namespace");
+                bool isName = reader.ValueTextEquals("name");
+                bool isVersion = reader.ValueTextEquals("version_number");
+                if (!reader.Read()) break;
+
+                if (isNamespace) ns = ReadJsonScalar(ref reader);
+                else if (isName) name = ReadJsonScalar(ref reader);
+                else if (isVersion) version = ReadJsonScalar(ref reader);
+                else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                    reader.Skip();
+            }
+
             return new ManifestData
             {
                 Name = name,
                 FullName = ns is not null && name is not null ? $"{ns}.{name}" : name,
-                VersionNumber = GetString(root, "version_number")
+                VersionNumber = version
             };
         }
-        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or ArgumentException)
         {
             return null;
         }
+        finally
+        {
+            if (utf8 is not null) ArrayPool<byte>.Shared.Return(utf8);
+        }
     }
 
-    private static string? GetString(JsonElement element, string property)
+    private const long MaximumMetadataJsonBytes = 4 * 1024 * 1024;
+
+    private static int GetMetadataLength(FileStream stream)
     {
-        if (element.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String)
+        long length = stream.Length;
+        return length is > 0 and <= MaximumMetadataJsonBytes ? (int)length : 0;
+    }
+
+    private static string? ReadJsonScalar(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType == JsonTokenType.String)
         {
-            string? s = value.GetString();
-            return string.IsNullOrWhiteSpace(s) ? null : s;
+            string? value = reader.GetString();
+            return string.IsNullOrWhiteSpace(value) ? null : value;
         }
-        // numbers (e.g. version: 1.2) are accepted too
-        if (value.ValueKind == JsonValueKind.Number) return value.GetRawText();
+        // Some legacy packages encode a version as a number rather than a JSON string.
+        if (reader.TokenType == JsonTokenType.Number)
+            return Encoding.UTF8.GetString(reader.ValueSpan);
         return null;
+    }
+
+    private static string? ReadAuthors(ref Utf8JsonReader reader)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+            return reader.GetString();
+        if (reader.TokenType != JsonTokenType.StartArray) return null;
+
+        var names = new List<string>();
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndArray && reader.CurrentDepth == 1) break;
+            if (reader.TokenType == JsonTokenType.String && reader.CurrentDepth == 2)
+            {
+                string? value = reader.GetString();
+                if (!string.IsNullOrWhiteSpace(value)) names.Add(value);
+            }
+            else if (reader.TokenType == JsonTokenType.StartObject && reader.CurrentDepth == 2)
+            {
+                string? name = null, username = null;
+                while (reader.Read())
+                {
+                    if (reader.TokenType == JsonTokenType.EndObject && reader.CurrentDepth == 2) break;
+                    if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 3) continue;
+                    bool isName = reader.ValueTextEquals("name");
+                    bool isUsername = reader.ValueTextEquals("username");
+                    if (!reader.Read()) break;
+                    if (isName) name = ReadJsonScalar(ref reader);
+                    else if (isUsername) username = ReadJsonScalar(ref reader);
+                    else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+                        reader.Skip();
+                }
+                string? display = !string.IsNullOrWhiteSpace(name) ? name : username;
+                if (!string.IsNullOrWhiteSpace(display)) names.Add(display);
+            }
+            else if (reader.TokenType is JsonTokenType.StartObject or JsonTokenType.StartArray)
+            {
+                reader.Skip();
+            }
+        }
+        return names.Count == 0 ? null : string.Join(", ", names);
     }
 }
