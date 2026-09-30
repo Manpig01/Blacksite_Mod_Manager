@@ -9,6 +9,11 @@ export function getProxiedForgeImageUrl(url?: string | null): string | null {
   if (trimmed.startsWith('/api/forge-image') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
     return trimmed;
   }
+  // In Electron desktop environment, return direct HTTPS URL because main process
+  // webRequest.onBeforeSendHeaders automatically attaches Referer: https://sp-mod.com/
+  if (typeof window !== 'undefined' && (window as any).desktopBridge?.isElectron) {
+    return trimmed;
+  }
   if (trimmed.includes('sp-mod.com') || trimmed.includes('files.sp-mod.com')) {
     return `/api/forge-image?url=${encodeURIComponent(trimmed)}`;
   }
@@ -24,17 +29,25 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
   // Build prioritized list of candidate URLs
   const candidateImages = React.useMemo(() => {
     const urls: string[] = [];
+    const isDesktop = typeof window !== 'undefined' && Boolean((window as any).desktopBridge?.isElectron);
 
     const addCandidate = (rawUrl?: string | null) => {
       if (!rawUrl) return;
       const trimmed = rawUrl.trim();
       if (!trimmed) return;
-      const proxied = getProxiedForgeImageUrl(trimmed);
-      if (proxied && !urls.includes(proxied)) {
-        urls.push(proxied);
-      }
-      if (!urls.includes(trimmed) && trimmed !== proxied) {
-        urls.push(trimmed);
+      if (isDesktop) {
+        // In desktop mode, direct URLs work natively with Electron header injection
+        if (!urls.includes(trimmed)) {
+          urls.push(trimmed);
+        }
+      } else {
+        const proxied = getProxiedForgeImageUrl(trimmed);
+        if (proxied && !urls.includes(proxied)) {
+          urls.push(proxied);
+        }
+        if (!urls.includes(trimmed) && trimmed !== proxied) {
+          urls.push(trimmed);
+        }
       }
     };
 
@@ -55,16 +68,35 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
   }, [mod.thumbnail, mod.hub_id, mod.owner?.profile_photo_url]);
 
   const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState<boolean>(false);
   const [hasAllFailed, setHasAllFailed] = useState<boolean>(candidateImages.length === 0);
 
   React.useEffect(() => {
     setCurrentIndex(0);
+    setDataUrl(null);
     setIsLoaded(false);
     setHasAllFailed(candidateImages.length === 0);
   }, [candidateImages]);
 
-  const handleImageError = () => {
+  const handleImageError = async () => {
+    // If running in desktop app, try fetching via IPC data URL before giving up on current candidate
+    const currentUrl = candidateImages[currentIndex];
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.fetchImageDataUrl && currentUrl && !currentUrl.startsWith('data:') && !dataUrl) {
+      try {
+        const base64 = await bridge.fetchImageDataUrl(currentUrl);
+        if (base64) {
+          setDataUrl(base64);
+          setIsLoaded(false);
+          return;
+        }
+      } catch (e) {
+        console.error('IPC image fetch failed:', e);
+      }
+    }
+
+    setDataUrl(null);
     if (currentIndex < candidateImages.length - 1) {
       setCurrentIndex((prev) => prev + 1);
       setIsLoaded(false);
@@ -77,7 +109,7 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
     setIsLoaded(true);
   };
 
-  const currentImageUrl = !hasAllFailed ? candidateImages[currentIndex] : null;
+  const currentImageUrl = !hasAllFailed ? (dataUrl || candidateImages[currentIndex]) : null;
 
   // Thematic Category Graphic Fallback Renderer
   const renderCategoryArtwork = () => {
@@ -237,7 +269,6 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
           alt={mod.name}
           loading="lazy"
           decoding="async"
-          referrerPolicy="no-referrer"
           onError={handleImageError}
           onLoad={handleImageLoad}
           className={`w-full h-full object-cover transition-all duration-300 group-hover:scale-105 ${

@@ -1,6 +1,6 @@
 {
-  "summary": "Plan to fix the electron-builder artifactName macro error. In electron-builder, ${target} is not a valid macro; replace it with target-specific artifactName definitions for nsis (Setup) and portable binaries, and add missing author and description fields to package.json.",
-  "updatedAt": "2026-09-30T09:50:11.078701813Z",
+  "summary": "Plan to fix image loading from the API in the Windows .exe and connect the 'Set SPT Directory' button to the native Windows folder selection dialog via Electron IPC.",
+  "updatedAt": "2026-09-30T10:32:37.814280183Z",
   "requestFeedback": true,
   "userFacing": true
 }

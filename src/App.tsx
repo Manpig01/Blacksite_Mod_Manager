@@ -113,6 +113,48 @@ export const App: React.FC = () => {
     storageService.saveSettings(updated);
   };
 
+  const handlePickDirectory = async () => {
+    // 1. Electron Desktop Native OS Folder Picker
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.selectDirectory) {
+      try {
+        const selected = await bridge.selectDirectory(settings.sptDirectory);
+        if (selected && typeof selected === 'string') {
+          handleUpdateSettings({ sptDirectory: selected });
+          showToast('SPT Directory Set', `Connected: ${selected}`, 'success');
+        }
+        return;
+      } catch (err: any) {
+        console.error('Native folder picker error:', err);
+      }
+    }
+
+    // 2. Modern Browser File System Access API
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
+        if (dirHandle?.name) {
+          const formatted = `C:\\Games\\${dirHandle.name}`;
+          handleUpdateSettings({ sptDirectory: formatted });
+          showToast('SPT Directory Set', `Folder: ${dirHandle.name}`, 'success');
+          return;
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    // 3. Fallback prompt
+    const manual = prompt(
+      'Enter your Single Player Tarkov (SPT) root folder path (e.g. D:\\Games\\SPT-4.0):',
+      settings.sptDirectory
+    );
+    if (manual?.trim()) {
+      handleUpdateSettings({ sptDirectory: manual.trim() });
+      showToast('SPT Directory Set', `Set to: ${manual.trim()}`, 'success');
+    }
+  };
+
   // Profile Switching (task 2.5)
   const handleSelectProfile = (profileId: string) => {
     const profile = profiles.find((p) => p.id === profileId);
@@ -517,12 +559,7 @@ export const App: React.FC = () => {
       <Header
         settings={settings}
         onUpdateSettings={handleUpdateSettings}
-        onPickDirectory={() => {
-          const samplePaths = ['C:\\Games\\SPT-Tarkov', 'D:\\Games\\SPT-4.0', 'E:\\SPT'];
-          const next = samplePaths[(samplePaths.indexOf(settings.sptDirectory) + 1) % samplePaths.length] || samplePaths[0];
-          handleUpdateSettings({ sptDirectory: next });
-          showToast('SPT Directory', `Set active SPT directory: ${next}`, 'info');
-        }}
+        onPickDirectory={handlePickDirectory}
         onLaunchSpt={() => setIsLauncherOpen(true)}
         onOpenDownloadModal={() => setIsDownloadModalOpen(true)}
         profiles={profiles}
@@ -640,6 +677,7 @@ export const App: React.FC = () => {
           <SettingsTab
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
+            onPickDirectory={handlePickDirectory}
             onSaveSettings={() => {
               storageService.saveSettings(settings);
               showToast('Settings Saved', 'Paths and preferences saved to disk.', 'success');

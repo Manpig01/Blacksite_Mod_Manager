@@ -15,12 +15,14 @@ interface SettingsTabProps {
   onClearTempFiles: () => void;
   onExportDiagnostics: () => void;
   onShowToast: (title: string, message: string, type: 'success' | 'info' | 'warning' | 'error') => void;
+  onPickDirectory?: () => void;
 }
 
 export const SettingsTab: React.FC<SettingsTabProps> = ({
   settings,
   onUpdateSettings,
   onSaveSettings,
+  onPickDirectory,
   profiles,
   installedMods,
   onCreateProfile,
@@ -154,15 +156,29 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               className="flex-1 bg-[#0E1013] border border-[#23272E] rounded-md px-3 py-2 text-sm text-[#E8EAEE] font-mono focus:outline-none focus:border-[#EA580C]"
             />
             <button
-              onClick={() => {
-                const samplePaths = [
-                  'C:\\Games\\SPT-Tarkov-4.0',
-                  'D:\\SPT-4.1.6',
-                  'E:\\Games\\EscapeFromTarkov-SPT',
-                ];
-                const next = samplePaths[(samplePaths.indexOf(settings.sptDirectory) + 1) % samplePaths.length] || samplePaths[0];
-                onUpdateSettings({ sptDirectory: next });
-                onShowToast('Directory Selected', `Updated SPT root folder to: ${next}`, 'info');
+              onClick={async () => {
+                if (onPickDirectory) {
+                  onPickDirectory();
+                  return;
+                }
+                const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+                if (bridge?.selectDirectory) {
+                  try {
+                    const selected = await bridge.selectDirectory(settings.sptDirectory);
+                    if (selected && typeof selected === 'string') {
+                      onUpdateSettings({ sptDirectory: selected });
+                      onShowToast('Directory Selected', `Updated SPT root folder to: ${selected}`, 'success');
+                    }
+                    return;
+                  } catch (err: any) {
+                    console.error('Folder picker error:', err);
+                  }
+                }
+                const manual = prompt('Enter Single Player Tarkov (SPT) folder path:', settings.sptDirectory);
+                if (manual?.trim()) {
+                  onUpdateSettings({ sptDirectory: manual.trim() });
+                  onShowToast('Directory Selected', `Updated SPT root folder to: ${manual.trim()}`, 'success');
+                }
               }}
               className="bg-[#EA580C] hover:bg-[#F97316] text-white text-xs font-semibold px-4 py-2 rounded-md transition-colors cursor-pointer shrink-0"
               type="button"
