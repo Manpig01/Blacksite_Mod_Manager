@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 @layer base {
-  :root {
+  :root,
+  [data-theme='dark'],
+  .dark {
     --bg-window: #121418;
     --bg-panel: #181B20;
     --bg-card: #181B20;
@@ -18,12 +20,150 @@
     --green-hover: #22C55E;
     --danger: #DC2626;
     --warn: #F59E0B;
+    --scrollbar-track: #121418;
+    --scrollbar-thumb: #2A2F38;
+    color-scheme: dark;
+  }
+
+  [data-theme='light'],
+  .light {
+    --bg-window: #F1F4F8;
+    --bg-panel: #FFFFFF;
+    --bg-card: #FFFFFF;
+    --bg-input: #F8FAFC;
+    --bg-surface: #E2E8F0;
+    --border-soft: #CBD5E1;
+    --border-strong: #94A3B8;
+    --text-primary: #0F172A;
+    --text-secondary: #334155;
+    --text-muted: #64748B;
+    --accent: #EA580C;
+    --accent-hover: #C2410C;
+    --green: #15803D;
+    --green-hover: #16A34A;
+    --danger: #DC2626;
+    --warn: #B45309;
+    --scrollbar-track: #F1F4F8;
+    --scrollbar-thumb: #CBD5E1;
+    color-scheme: light;
   }
 
   body {
     background-color: var(--bg-window);
     color: var(--text-primary);
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+}
+
+/* Light Theme overrides for complete application */
+.light,
+[data-theme='light'] {
+  /* Panels and Containers */
+  .bg-\[\#121418\] {
+    background-color: var(--bg-window) !important;
+  }
+
+  .bg-\[\#181B20\] {
+    background-color: var(--bg-panel) !important;
+  }
+
+  .bg-\[\#0E1013\] {
+    background-color: var(--bg-input) !important;
+  }
+
+  .bg-\[\#20252D\] {
+    background-color: var(--bg-surface) !important;
+  }
+
+  .bg-\[\#14161A\] {
+    background-color: #F8FAFC !important;
+  }
+
+  /* Hover states */
+  .hover\:bg-\[\#20252D\]:hover {
+    background-color: var(--bg-surface) !important;
+  }
+
+  .hover\:bg-\[\#2A2F38\]:hover {
+    background-color: #CBD5E1 !important;
+  }
+
+  /* Borders */
+  .border-\[\#23272E\],
+  .border-\[\#20252D\] {
+    border-color: var(--border-soft) !important;
+  }
+
+  .border-\[\#2A2F38\] {
+    border-color: var(--border-strong) !important;
+  }
+
+  .border-\[\#3A4150\] {
+    border-color: #64748B !important;
+  }
+
+  /* Typography */
+  .text-\[\#E8EAEE\] {
+    color: var(--text-primary) !important;
+  }
+
+  .text-\[\#9AA3AF\] {
+    color: var(--text-secondary) !important;
+  }
+
+  .text-\[\#6B7480\] {
+    color: var(--text-muted) !important;
+  }
+
+  .text-\[\#3A4150\] {
+    color: #94A3B8 !important;
+  }
+
+  /* Pills & Badges */
+  .bg-\[\#3A2415\] {
+    background-color: #FFEDD5 !important; /* soft orange background */
+  }
+
+  .text-\[\#F97316\] {
+    color: #C2410C !important; /* deep high-contrast orange text */
+  }
+
+  .bg-\[\#0E2A18\] {
+    background-color: #DCFCE7 !important; /* soft green badge background */
+  }
+
+  .text-\[\#22C55E\] {
+    color: #15803D !important; /* deep high-contrast green text */
+  }
+
+  .bg-\[\#3A2A10\] {
+    background-color: #FEF3C7 !important; /* soft amber conflict badge */
+  }
+
+  .text-\[\#F59E0B\] {
+    color: #B45309 !important; /* deep high-contrast amber */
+  }
+
+  .border-\[\#F59E0B\] {
+    border-color: #D97706 !important;
+  }
+
+  .bg-\[\#2A0E0E\] {
+    background-color: #FEE2E2 !important;
+  }
+
+  .text-\[\#DC2626\] {
+    color: #B91C1C !important;
+  }
+
+  /* SptLauncher modal console stays dark high-contrast terminal for readability */
+  .bg-\[\#0A0C0E\] {
+    background-color: #0F172A !important;
+  }
+
+  .bg-\[\#221B10\] {
+    background-color: #FEF3C7 !important;
   }
 }
 
@@ -34,16 +174,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #121418;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2f38;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3e4653;
+  background: var(--text-muted);
 }
 
 /* Animations */

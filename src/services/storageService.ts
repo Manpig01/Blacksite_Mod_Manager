@@ -15,7 +15,33 @@ const DEFAULT_SETTINGS: SettingsState = {
   isSpt4xLayout: true,
   activeProfileId: 'prof-1',
   autoCheckUpdates: true,
-  downloadStallTimeoutSeconds: 60
+  downloadStallTimeoutSeconds: 60,
+  theme: 'dark',
+};
+
+const DEFAULT_KNOWN_DEPS: Record<string, string[]> = {
+  'me.sol.sain': ['xyz.drakia.bigbrain'],
+  'me.sol.sain.legacy-patch': ['xyz.drakia.bigbrain', 'me.sol.sain', 'xyz.drakia.waypoints'],
+  'xyz.drakia.questingbots': ['xyz.drakia.bigbrain', 'me.sol.sain', 'xyz.drakia.waypoints'],
+  'xyz.drakia.lootingbots': ['xyz.drakia.bigbrain'],
+  'xyz.drakia.waypoints': ['xyz.drakia.bigbrain'],
+};
+
+const DEFAULT_INITIAL_TAGS: Record<string, { id: string; name: string; color: string }[]> = {
+  'xyz.drakia.bigbrain': [
+    { id: 'tag-core', name: 'Core AI', color: '#8B5CF6' },
+    { id: 'tag-essential', name: 'Essential', color: '#10B981' },
+  ],
+  'fika.ghostfenixx.svm': [
+    { id: 'tag-server', name: 'Server', color: '#F59E0B' },
+    { id: 'tag-overhaul', name: 'Overhaul', color: '#EC4899' },
+  ],
+  'me.sol.sain': [
+    { id: 'tag-core', name: 'Core AI', color: '#8B5CF6' },
+    { id: 'tag-combat', name: 'Combat', color: '#EF4444' },
+  ],
+  'com.amanda.graphics': [{ id: 'tag-visuals', name: 'Visuals', color: '#06B6D4' }],
+  'me.sol.sain.legacy-patch': [{ id: 'tag-legacy', name: 'Legacy', color: '#6B7280' }],
 };
 
 export const storageService = {
@@ -40,11 +66,31 @@ export const storageService = {
   loadInstalledMods(): InstalledMod[] {
     try {
       const saved = localStorage.getItem(INSTALLED_MODS_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        let parsed: InstalledMod[] = JSON.parse(saved);
+        if (!parsed.some((m) => m.id === 'me.sol.sain.legacy-patch')) {
+          const sample = INITIAL_INSTALLED_MODS.find((m) => m.id === 'me.sol.sain.legacy-patch');
+          if (sample) parsed.push(sample);
+        }
+        return parsed.map((m, idx) => ({
+          ...m,
+          loadOrder: typeof m.loadOrder === 'number' ? m.loadOrder : idx + 1,
+          dependencies:
+            m.id === 'me.sol.sain.legacy-patch' && (!m.dependencies || !m.dependencies.includes('xyz.drakia.waypoints'))
+              ? DEFAULT_KNOWN_DEPS['me.sol.sain.legacy-patch']
+              : m.dependencies ?? DEFAULT_KNOWN_DEPS[m.id] ?? [],
+          tags: m.tags ?? DEFAULT_INITIAL_TAGS[m.id] ?? [],
+        }));
+      }
     } catch {
       // ignore
     }
-    return INITIAL_INSTALLED_MODS;
+    return INITIAL_INSTALLED_MODS.map((m, idx) => ({
+      ...m,
+      loadOrder: typeof m.loadOrder === 'number' ? m.loadOrder : idx + 1,
+      dependencies: m.dependencies ?? DEFAULT_KNOWN_DEPS[m.id] ?? [],
+      tags: m.tags ?? DEFAULT_INITIAL_TAGS[m.id] ?? [],
+    }));
   },
 
   saveInstalledMods(mods: InstalledMod[]): void {

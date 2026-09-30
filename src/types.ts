@@ -67,6 +67,7 @@ export interface Mod {
   additional_authors?: ModOwner[];
   category?: ModCategory | null;
   versions?: ModVersion[];
+  dependencies?: string[];
 }
 
 export type ModKind = 'Server' | 'Client' | 'Both';
@@ -91,6 +92,15 @@ export interface InstalledMod {
   latestVersion?: string;
   conflictId?: string;
   configFiles: ConfigFile[];
+  loadOrder?: number;
+  dependencies?: string[];
+  tags?: ModTag[];
+}
+
+export interface ModTag {
+  id: string;
+  name: string;
+  color: string;
 }
 
 export interface ConfigFile {
@@ -150,6 +160,7 @@ export interface SettingsState {
   activeProfileId: string;
   autoCheckUpdates: boolean;
   downloadStallTimeoutSeconds: number;
+  theme: 'dark' | 'light';
 }
 
 export interface ToastMessage {

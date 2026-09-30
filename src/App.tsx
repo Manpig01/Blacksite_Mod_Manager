@@ -23,6 +23,7 @@ import {
   ConflictInfo,
   ToastMessage,
   ModVersion,
+  ModTag,
 } from './types';
 import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
@@ -72,6 +73,20 @@ export const App: React.FC = () => {
     setConflicts(foundConflicts);
     storageService.saveInstalledMods(installedMods);
   }, [installedMods, ignoredConflicts]);
+
+  // Dynamically update document theme class and data-theme attribute
+  useEffect(() => {
+    const root = document.documentElement;
+    if (settings.theme === 'light') {
+      root.classList.remove('dark');
+      root.classList.add('light');
+      root.setAttribute('data-theme', 'light');
+    } else {
+      root.classList.remove('light');
+      root.classList.add('dark');
+      root.setAttribute('data-theme', 'dark');
+    }
+  }, [settings.theme]);
 
   const showToast = (
     title: string,
@@ -361,6 +376,51 @@ export const App: React.FC = () => {
     }, 1000);
   };
 
+  const handleReorderMods = (reorderedMods: InstalledMod[]) => {
+    setInstalledMods(reorderedMods);
+    storageService.saveInstalledMods(reorderedMods);
+  };
+
+  const handleUpdateModTags = (modId: string, tags: ModTag[]) => {
+    setInstalledMods((prev) => {
+      const updated = prev.map((m) => (m.id === modId ? { ...m, tags } : m));
+      storageService.saveInstalledMods(updated);
+      return updated;
+    });
+  };
+
+  const handleBulkEnableMods = (modIds: string[]) => {
+    if (modIds.length === 0) return;
+    setInstalledMods((prev) => {
+      const updated = prev.map((m) => (modIds.includes(m.id) ? { ...m, isDisabled: false } : m));
+      storageService.saveInstalledMods(updated);
+      return updated;
+    });
+    showToast('Bulk Enable', `Enabled ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''}.`, 'success');
+  };
+
+  const handleBulkDisableMods = (modIds: string[]) => {
+    if (modIds.length === 0) return;
+    setInstalledMods((prev) => {
+      const updated = prev.map((m) => (modIds.includes(m.id) ? { ...m, isDisabled: true } : m));
+      storageService.saveInstalledMods(updated);
+      return updated;
+    });
+    showToast('Bulk Disable', `Disabled ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''}.`, 'warning');
+  };
+
+  const handleBulkUninstallMods = (modIds: string[]) => {
+    if (modIds.length === 0) return;
+    if (confirm(`Permanently uninstall ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''} and delete their files?`)) {
+      setInstalledMods((prev) => {
+        const updated = prev.filter((m) => !modIds.includes(m.id));
+        storageService.saveInstalledMods(updated);
+        return updated;
+      });
+      showToast('Bulk Uninstall', `Removed ${modIds.length} selected mod${modIds.length > 1 ? 's' : ''} from SPT directory.`, 'warning');
+    }
+  };
+
   const handleOpenFolder = (folderType: 'client' | 'server') => {
     const path = folderType === 'client' ? settings.clientModPath : settings.serverModPath;
     showToast(
@@ -441,6 +501,10 @@ export const App: React.FC = () => {
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#121418] text-[#E8EAEE]">
       {/* Titlebar */}
       <CustomTitleBar
+        theme={settings.theme}
+        onToggleTheme={() =>
+          handleUpdateSettings({ theme: settings.theme === 'light' ? 'dark' : 'light' })
+        }
         onMinimize={() => showToast('Minimize', 'Minimized to taskbar.', 'info')}
         onMaximize={() => showToast('Maximize', 'Window maximized.', 'info')}
         onClose={() => showToast('Close', 'Closing Blacksite Mod Manager.', 'info')}
@@ -536,6 +600,11 @@ export const App: React.FC = () => {
             onUninstallAll={handleUninstallAll}
             onCheckUpdates={handleCheckUpdates}
             onOpenFolder={handleOpenFolder}
+            onReorderMods={handleReorderMods}
+            onUpdateModTags={handleUpdateModTags}
+            onBulkEnable={handleBulkEnableMods}
+            onBulkDisable={handleBulkDisableMods}
+            onBulkUninstall={handleBulkUninstallMods}
             onShowToast={showToast}
           />
         )}

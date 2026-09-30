@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Trash, RefreshCw, FileText, CheckCircle2, ShieldCheck, Plus, Trash2, FolderSync } from 'lucide-react';
+import { Save, Trash, RefreshCw, FileText, CheckCircle2, ShieldCheck, Plus, Trash2, FolderSync, Sun, Moon } from 'lucide-react';
 import { SettingsState, ModProfile, InstalledMod } from '../types';
 
 interface SettingsTabProps {
@@ -48,6 +48,96 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto p-4 max-w-4xl space-y-6">
+      {/* Appearance & Theme (High-Contrast Light / Dark) */}
+      <div>
+        <h2 className="text-[15px] font-bold text-[#E8EAEE] mb-2 flex items-center gap-2">
+          <span>Appearance & Theme</span>
+        </h2>
+        <div className="bg-[#181B20] border border-[#23272E] rounded-xl p-4 shadow-sm space-y-4">
+          <p className="text-xs text-[#9AA3AF]">
+            Choose between the classic dark desktop theme and the high-contrast light theme for enhanced visibility and contrast across all windows, modals, cards, and status bar.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            {/* Dark Theme Card */}
+            <div
+              onClick={() => {
+                onUpdateSettings({ theme: 'dark' });
+                onShowToast('Theme Changed', 'Switched to classic Dark theme.', 'info');
+              }}
+              className={`border-2 rounded-xl p-4 cursor-pointer transition-all flex flex-col justify-between ${
+                settings.theme !== 'light'
+                  ? 'bg-[#20252D] border-[#EA580C] shadow-md ring-1 ring-[#EA580C]/30'
+                  : 'bg-[#121418] border-[#23272E] hover:border-[#3A4150]'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-[#121418] border border-[#2A2F38] flex items-center justify-center text-[#9AA3AF]">
+                    <Moon className="w-4 h-4 text-[#F97316]" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#E8EAEE]">Dark Theme</h3>
+                    <span className="text-[11px] text-[#6B7480]">WPF Dark.xaml (Default)</span>
+                  </div>
+                </div>
+                {settings.theme !== 'light' && (
+                  <span className="text-[10px] bg-[#EA580C] text-white px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+
+              {/* Theme Preview Swatch */}
+              <div className="bg-[#121418] border border-[#2A2F38] rounded-lg p-2.5 flex items-center gap-2">
+                <div className="w-5 h-5 rounded-md bg-[#181B20] border border-[#23272E]" title="Card background" />
+                <div className="w-5 h-5 rounded-md bg-[#EA580C]" title="Accent orange" />
+                <div className="w-5 h-5 rounded-md bg-[#16A34A]" title="Green status" />
+                <span className="text-[11px] text-[#9AA3AF] ml-auto font-mono">#121418</span>
+              </div>
+            </div>
+
+            {/* High-Contrast Light Theme Card */}
+            <div
+              onClick={() => {
+                onUpdateSettings({ theme: 'light' });
+                onShowToast('Theme Changed', 'Switched to High-Contrast Light theme.', 'info');
+              }}
+              className={`border-2 rounded-xl p-4 cursor-pointer transition-all flex flex-col justify-between ${
+                settings.theme === 'light'
+                  ? 'bg-[#E2E8F0] border-[#EA580C] shadow-md ring-1 ring-[#EA580C]/30'
+                  : 'bg-[#121418] border-[#23272E] hover:border-[#3A4150]'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-[#FFFFFF] border border-[#CBD5E1] flex items-center justify-center text-[#EA580C] shadow-xs">
+                    <Sun className="w-4 h-4 text-[#EA580C]" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-[#E8EAEE]">High-Contrast Light</h3>
+                    <span className="text-[11px] text-[#6B7480]">Daylight & High Readability</span>
+                  </div>
+                </div>
+                {settings.theme === 'light' && (
+                  <span className="text-[10px] bg-[#EA580C] text-white px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+
+              {/* Theme Preview Swatch */}
+              <div className="bg-[#FFFFFF] border border-[#CBD5E1] rounded-lg p-2.5 flex items-center gap-2 shadow-xs">
+                <div className="w-5 h-5 rounded-md bg-[#F1F4F8] border border-[#CBD5E1]" title="Window background" />
+                <div className="w-5 h-5 rounded-md bg-[#EA580C]" title="Accent orange" />
+                <div className="w-5 h-5 rounded-md bg-[#15803D]" title="Green status" />
+                <span className="text-[11px] text-[#6B7480] ml-auto font-mono">#FFFFFF</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* SPT Folder Configuration */}
       <div>
         <h2 className="text-[15px] font-bold text-[#E8EAEE] mb-2">SPT Folder Configuration</h2>
