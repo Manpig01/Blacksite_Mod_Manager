@@ -1,82 +1,77 @@
-# Fix Tailwind Oxide Windows Native Binding in GitHub Actions CI
+# Fix electron-builder Artifact Naming Macro in Windows CI
 
-Resolve the `@tailwindcss/oxide` compilation failure on Windows GitHub Actions runner (`Error: Cannot find native binding. npm has a bug related to optional dependencies #4828`).
+Resolve the packaging failure in GitHub Actions:
+`cannot expand pattern "Blacksite-Mod-Manager-${target}-${version}.${ext}": macro target is not defined`
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The build error is caused by npm's known cross-platform lockfile issue: when `package-lock.json` is checked in from a Linux environment, Windows CI runners fail to download platform-specific optional native packages (`@tailwindcss/oxide-win32-x64-msvc`).
->
-> We will resolve this comprehensively on both the CI workflow level and in `package.json`.
+> In `electron-builder`, `${target}` is not a supported macro in the top-level or `win` configuration.
+> 
+> To generate clearly named installers and portable executables without errors, artifact naming must be specified under each target's own block (`nsis` and `portable`), using valid macros (`${version}`, `${ext}`, `${arch}`).
 
-- **Confirmed Decision**: Remove `package-lock.json` dynamically on the Windows runner prior to installation, and force-install all four native Windows binaries required by Vite, Tailwind v4, Esbuild, and Rollup.
+- **Confirmed Decision**: Move artifact naming to target-specific blocks:
+  - `nsis.artifactName`: `Blacksite-Mod-Manager-Setup-${version}.${ext}`
+  - `portable.artifactName`: `Blacksite-Mod-Manager-Portable-${version}.${ext}`
+  - Also provide missing `description` and `author` fields in `package.json` to eliminate electron-builder packaging warnings.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **Problem**: When running `tsc -b && vite build` on Windows in GitHub Actions, Vite loads `vite.config.ts`, which imports `@tailwindcss/vite`. `@tailwindcss/vite` imports `@tailwindcss/oxide`, which fails with:
-  `Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828).`
-- **Solution**:
-  1. Update `.github/workflows/build.yml` on the Windows runner to delete the Linux-generated `package-lock.json` before `npm install`, allowing npm on Windows to compute a clean native dependency tree.
-  2. Add `@tailwindcss/oxide-win32-x64-msvc` alongside `@rollup/rollup-win32-x64-msvc`, `lightningcss-win32-x64-msvc`, and `@esbuild/win32-x64` in explicit installation commands and `package.json`'s `optionalDependencies`.
+- **The Error**: During `npx electron-builder --win --x64`, after successfully building and packaging the unpacked application, electron-builder attempted to format the output filenames using:
+  `"artifactName": "Blacksite-Mod-Manager-${target}-${version}.${ext}"`
+  Because `target` is not a recognized macro variable in electron-builder, execution stopped with exit code 1.
+- **The Solution**: Configure target-specific output filenames under `build.nsis` and `build.portable`.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-- This is a continuous integration pipeline fix. All application frontend UI, dark cyberpunk aesthetics, mod manager tools, and local server integration remain pristine and unaffected.
+- **Installer Name**: `Blacksite-Mod-Manager-Setup-1.8.0.exe` (clean, recognizable for standard Windows installation).
+- **Portable Name**: `Blacksite-Mod-Manager-Portable-1.8.0.exe` (clean, recognizable for running directly without installation).
+- Aligns perfectly with the download links documented in the automated GitHub Releases.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Dynamically removing `package-lock.json` in Windows CI runner**
-  - *Chosen Approach*: `if (Test-Path package-lock.json) { Remove-Item package-lock.json }` before `npm install` on the runner.
-  - *Why*: As documented in npm issue #4828, removing the cross-platform lockfile on a fresh CI runner forces npm on Windows to evaluate native dependencies natively for `win32-x64`, ensuring all required binary bindings are downloaded.
-  - *Alternatives Considered*: Manually listing every transitive dependency's native module. By removing the lockfile AND explicitly installing the known binaries, we guarantee complete immunity against npm optional dependency failures.
+- **Decision 1: Target-Specific `artifactName` Configuration**
+  - *Chosen Approach*:
+    ```json
+    "nsis": {
+      "artifactName": "Blacksite-Mod-Manager-Setup-${version}.${ext}",
+      ...
+    },
+    "portable": {
+      "artifactName": "Blacksite-Mod-Manager-Portable-${version}.${ext}"
+    }
+    ```
+  - *Why*: Supported natively by electron-builder across all versions without macro interpolation errors.
+  - *Alternatives Considered*: Using generic `${productName}-${version}.${ext}` on `win` block. This would cause naming collisions between the NSIS installer and the portable binary. Setting explicit names per target gives distinct files.
 
-- **Decision 2: Comprehensive `optionalDependencies` in `package.json`**
-  - *Chosen Approach*: Explicitly declare all four Windows packages:
-    - `@tailwindcss/oxide-win32-x64-msvc`
-    - `lightningcss-win32-x64-msvc`
-    - `@rollup/rollup-win32-x64-msvc`
-    - `@esbuild/win32-x64`
-  - *Why*: Guarantees that any Windows development machine running `npm install` directly will recognize and fetch all four required binaries.
+- **Decision 2: Add `description` and `author` to `package.json`**
+  - *Chosen Approach*: Add `description: "Next-generation mod manager and server orchestrator for Single Player Tarkov"` and `author: "Blacksite Development Team"`.
+  - *Why*: Electron-builder logs warnings when these standard metadata fields are absent from `package.json`.
 
 ---
 
-### 4. Technical Architecture & CI Pipeline Flow
+### 4. Technical Architecture & File Changes
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   GitHub Actions Runner                     │
-│                      (windows-latest)                       │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 Step: Install Dependencies                  │
-│  1. Remove Linux package-lock.json                          │
-│  2. npm install --include=optional                          │
-│  3. npm install --no-save:                                  │
-│     - @tailwindcss/oxide-win32-x64-msvc                     │
-│     - lightningcss-win32-x64-msvc                           │
-│     - @rollup/rollup-win32-x64-msvc                         │
-│     - @esbuild/win32-x64                                    │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Step: Compile Web Application                 │
-│                 tsc -b && vite build                        │
-│   (Vite loads config, Tailwind Oxide & LightningCSS OK)     │
-└──────────────────────────────┬──────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Step: Package with Electron-Builder            │
-│               npx electron-builder --win --x64              │
-│       -> Produces Setup .exe and Portable .exe              │
-└─────────────────────────────────────────────────────────────┘
+package.json
+├── "description": "Next-generation mod manager..."
+├── "author": "Blacksite Development Team"
+└── "build": {
+      "win": {
+        "target": ["nsis", "portable"]
+        // (Removed invalid top-level artifactName macro)
+      },
+      "nsis": {
+        "artifactName": "Blacksite-Mod-Manager-Setup-${version}.${ext}"
+      },
+      "portable": {
+        "artifactName": "Blacksite-Mod-Manager-Portable-${version}.${ext}"
+      }
+    }
 ```

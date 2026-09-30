@@ -1,5 +1,7 @@
 {
   "name": "blacksite-mod-manager",
+  "description": "Next-generation mod manager and server orchestrator for Single Player Tarkov",
+  "author": "Blacksite Development Team",
   "private": true,
   "version": "1.8.0",
   "type": "module",
@@ -61,16 +63,19 @@
             "x64"
           ]
         }
-      ],
-      "artifactName": "Blacksite-Mod-Manager-${target}-${version}.${ext}"
+      ]
     },
     "nsis": {
+      "artifactName": "Blacksite-Mod-Manager-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Blacksite Mod Manager"
+    },
+    "portable": {
+      "artifactName": "Blacksite-Mod-Manager-Portable-${version}.${ext}"
     }
   }
 }
