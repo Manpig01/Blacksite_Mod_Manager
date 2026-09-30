@@ -28,8 +28,8 @@ public static partial class VersionUtils
     ///   1. strip leading v/V/ver-/version markers and whitespace;
     ///   2. take the leading numeric dotted core (suffixes like "-beta", "-release",
     ///      "+build", " RC2" are dropped — formatting, not semantics);
-    ///   3. parse with <see cref="Version.TryParse"/> (single integers are padded to
-    ///      major.minor so "2" compares cleanly against "2.0").
+    ///   3. pad omitted numeric components with zero and parse with <see cref="Version.TryParse"/>,
+    ///      so "1.2.3" and "1.2.3.0" compare equally.
     /// Returns null when nothing numeric can be extracted.
     /// </summary>
     public static Version? ParseVersion(string? rawVersion)
@@ -41,7 +41,10 @@ public static partial class VersionUtils
         if (!match.Success) return null;
 
         string core = match.Groups["core"].Value;
-        if (!core.Contains('.')) core += ".0"; // integer fallback: "2" → "2.0"
+        // .NET Version treats a missing build component as -1, which would incorrectly
+        // order 1.2.3 below 1.2.3.0. Normalize every accepted core to four numeric parts.
+        int parts = core.Split('.').Length;
+        while (parts++ < 4) core += ".0";
 
         return Version.TryParse(core, out Version? parsed) ? parsed : null;
     }

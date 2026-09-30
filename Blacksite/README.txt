@@ -81,21 +81,24 @@ PARALLEL STAGED EXTRACTION ENGINE (performance overhaul)
 The extraction engine is aggressively optimized for SPT archives with
 thousands of tiny files (database JSONs):
 • Phase A — every archive is extracted into a unique
-  %TEMP%\\bs-extract-* staging folder: tiny files (< 1 MB) are
-  extracted CONCURRENTLY on ProcessorCount workers (Parallel.ForEachAsync
-  over batches, one independent archive reader per worker), while large
-  media/bundle files extract sequentially alongside them so RAM stays
-  bounded. Destination streams use a 1 MB buffer with
-  FileOptions.Asynchronous | FileOptions.SequentialScan.
+  %TEMP%\\bs-extract-* staging folder: tiny files (< 1 MB) are fed through
+  a bounded System.Threading.Channels producer/consumer queue to at most
+  8 independent archive readers. Large media/bundle files stream one at
+  a time alongside the small-file workers, bounding simultaneous buffers.
+  A pooled 64 KiB copy buffer stays below the LOH threshold; destination
+  FileStreams use asynchronous sequential I/O. Duplicate archive paths are
+  deduplicated and directory creation is batched by unique parent folder.
 • Phase B — once all streams are closed, the staged tree moves into the
   SPT root at directory granularity: brand-new mod folders land via a
   single atomic Directory.Move (a rename — no per-file writes through
   the live game directory, which is what real-time antivirus scans hit
-  file-by-file). Merging into existing trees recurses per child;
-  cross-volume moves fall back to high-speed per-child moves.
+  file-by-file). Cross-volume files copy to a sibling temporary file,
+  verify their size, then atomically replace the live destination; the
+  source remains intact until that commit succeeds.
 • Progress is BYTE-based (Interlocked totals) and dispatch-gated: at
   most one UI update per 150 ms — updates in between are dropped, so
-  thousands of tiny files can never flood the WPF dispatcher.
+  thousands of tiny files can never flood the WPF dispatcher. 7-Zip progress
+  is parsed from its output rather than repeatedly walking the staged tree.
 • Crashed runs leave no litter: bs-extract-* staging folders are swept
   at startup and by "Clear Temp Files".
 
@@ -309,13 +312,10 @@ SETTINGS TAB & HIGH-SPEED EXTRACTION ENGINE (new in v1.6.0)
           extraction artifacts from the Windows temp folder
         · "Clear Log Files" — erases local app log files (crash.log)
 • High-speed extraction engine:
-    - Progress dispatches are throttled to at most one per 100 ms or per full
-      1% increment — archives with hundreds of entries no longer flood the
-      WPF rendering loop (400-file archive: ~100 updates instead of 402).
-    - All extraction copies run through 1 MB buffers with
-      FileOptions.Asynchronous | FileOptions.SequentialScan for maximum disk
-      write throughput; the whole pipeline runs asynchronously off the UI
-      thread (Task.Run offload + async streams end-to-end).
+    - Progress is byte-based, monotonic, and throttled to at most one update
+      per 150 ms; the WPF dispatcher is never queued per archive entry.
+    - Extraction copies reuse pooled 64 KiB buffers and buffered asynchronous
+      FileStreams. Tiny files use bounded workers; large files remain sequential.
     - Temp archives are closed and deleted immediately after extraction
       completes (success or failure), on the background thread.
 
@@ -423,7 +423,10 @@ of only the outer wrapper.
 
 INSTALLED MODS TAB (v1.1.0)
 ---------------------------
-The "Installed Mods" tab is backed by a real scan of your disk:
+The "Installed Mods" tab is backed by a real scan of your disk. Directory and
+file walks are lazy (Directory.Enumerate*) so large SPT trees do not allocate
+full path arrays. package.json and manifest.json metadata use a bounded pooled
+UTF-8 buffer and selective Utf8JsonReader token reads rather than a full JSON DOM.
 
   • user\mods\*        → server mods. package.json is parsed when present
                          (name/id, version, author(s), main entry, sptVersion);

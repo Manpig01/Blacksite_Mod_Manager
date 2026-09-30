@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
@@ -18,6 +20,26 @@ public abstract class ViewModelBase : INotifyPropertyChanged
         field = value;
         OnPropertyChanged(propertyName);
         return true;
+    }
+}
+
+/// <summary>
+/// Observable collection optimized for replacing a filtered/catalog result set. It mutates the
+/// backing collection without per-item notifications, then raises one Reset event so WPF performs
+/// a single layout/binding refresh instead of thousands of incremental redraws.
+/// </summary>
+public sealed class ObservableRangeCollection<T> : ObservableCollection<T>
+{
+    public void ReplaceRange(IEnumerable<T> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        List<T> replacement = items.ToList();
+        CheckReentrancy();
+        Items.Clear();
+        foreach (T item in replacement) Items.Add(item);
+        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 }
 

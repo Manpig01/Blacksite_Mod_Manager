@@ -194,26 +194,31 @@ public sealed class PlacementEngine : IPlacementEngine
         if (File.Exists(source))
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(destination))!);
-            if (File.Exists(destination)) DeleteFileRobust(destination);
             if (SameVolume(source, destination))
             {
-                ExecuteWithLockRetry(attempt =>
+                try
                 {
-                    if (File.Exists(destination)) DeleteFileRobust(destination);
-                    File.Move(source, destination, overwrite: true);
-                    return true;
-                });
+                    ExecuteWithLockRetry(_ =>
+                    {
+                        if (File.Exists(destination)) File.SetAttributes(destination, FileAttributes.Normal);
+                        File.Move(source, destination, overwrite: true);
+                        return true;
+                    });
+                }
+                catch (IOException) when (File.Exists(source))
+                {
+                    // Path roots can match even when a Unix mount point (or a Windows mounted
+                    // volume) sits beneath them. If the atomic rename reports EXDEV, use the
+                    // same safe sibling-copy commit path as an explicitly different drive.
+                    CopyFileAcrossVolumesAtomically(source, destination);
+                }
             }
             else
             {
-                // Cross-volume: rename cannot work — copy+delete (AV-lock resilient).
-                ExecuteWithLockRetry(attempt =>
-                {
-                    if (File.Exists(destination)) DeleteFileRobust(destination);
-                    File.Copy(source, destination, overwrite: true);
-                    DeleteFileRobust(source);
-                    return true;
-                });
+                // Cross-volume: copy to a sibling temporary file on the destination volume,
+                // then atomically replace the live file. The original remains intact until the
+                // commit succeeds, so an interrupted/failed copy cannot truncate a mod or bundle.
+                CopyFileAcrossVolumesAtomically(source, destination);
             }
             return;
         }
@@ -245,6 +250,42 @@ public sealed class PlacementEngine : IPlacementEngine
 
         foreach (string child in Directory.EnumerateFileSystemEntries(source).ToList())
             MoveTreeMerge(child, Path.Combine(destination, Path.GetFileName(child)));
+    }
+
+    private static void CopyFileAcrossVolumesAtomically(string source, string destination)
+    {
+        string destinationDirectory = Path.GetDirectoryName(Path.GetFullPath(destination))!;
+        string temporary = Path.Combine(destinationDirectory,
+            $".{Path.GetFileName(destination)}.bs-copy-{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            ExecuteWithLockRetry(_ =>
+            {
+                if (File.Exists(temporary)) DeleteFileRobust(temporary);
+                File.Copy(source, temporary, overwrite: false);
+
+                long sourceLength = new FileInfo(source).Length;
+                long copiedLength = new FileInfo(temporary).Length;
+                if (sourceLength != copiedLength)
+                    throw new IOException($"Cross-volume copy verification failed for “{source}”: expected {sourceLength} bytes, got {copiedLength}.");
+
+                // temporary and destination are siblings, so this final move is on one volume.
+                if (File.Exists(destination)) File.SetAttributes(destination, FileAttributes.Normal);
+                File.Move(temporary, destination, overwrite: true);
+                return true;
+            });
+
+            // Do not remove the staged source until the destination commit is complete. A locked
+            // source can remain in staging temporarily; the extraction's final sweep owns cleanup.
+            try { DeleteFileRobust(source); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) DeleteFileRobust(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private static void EnsureDirectoryInside(string baseFull, string dirPath)

@@ -45,9 +45,9 @@ public sealed class MainViewModel : ViewModelBase
     private CatalogFilter? _lastStartedFilter;         // dedupes debounce ticks vs. already-loaded filters
     private int _activeRefreshes;
 
-    public ObservableCollection<ModCardViewModel> Items { get; } = new();
+    public ObservableRangeCollection<ModCardViewModel> Items { get; } = new();
     public ObservableCollection<ToastViewModel> Toasts { get; } = new();
-    public ObservableCollection<InstalledModViewModel> InstalledItems { get; } = new();
+    public ObservableRangeCollection<InstalledModViewModel> InstalledItems { get; } = new();
 
     // ------------------------------------------------------------------ commands
 
@@ -893,9 +893,7 @@ public sealed class MainViewModel : ViewModelBase
         TotalPages = Math.Max(1, (int)Math.Ceiling(_visibleCards.Count / (double)PerPage));
         if (CurrentPage > TotalPages) CurrentPage = TotalPages;
 
-        Items.Clear();
-        foreach (ModCardViewModel card in _visibleCards.Skip((CurrentPage - 1) * PerPage).Take(PerPage))
-            Items.Add(card);
+        Items.ReplaceRange(_visibleCards.Skip((CurrentPage - 1) * PerPage).Take(PerPage));
 
         ResultCount = _visibleCards.Count;
         OnPropertyChanged(nameof(IsCatalogFilterActive));
@@ -1414,13 +1412,44 @@ public sealed class MainViewModel : ViewModelBase
         };
         if (dialog.ShowDialog() != true || dialog.FileNames is not { Length: > 0 }) return;
 
-        foreach (string file in dialog.FileNames)
+        QueueLocalArchives(dialog.FileNames);
+    }
+
+    /// <summary>Queues supported local archive files through the same install engine used by the file picker.</summary>
+    public void QueueLocalArchives(IEnumerable<string> filePaths)
+    {
+        if (string.IsNullOrWhiteSpace(SptDirectory) || !Directory.Exists(SptDirectory))
+        {
+            MessageDialog.Show("SPT directory not set",
+                "Select your Single Player Tarkov root folder first (button “Set SPT Directory”, top left).",
+                isError: true);
+            return;
+        }
+
+        string[] supplied = filePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] archives = supplied
+            .Where(path => File.Exists(path) && (Path.GetExtension(path).ToLowerInvariant() is ".zip" or ".7z" or ".rar"))
+            .ToArray();
+
+        if (archives.Length == 0)
+        {
+            StatusText = "No supported archive files found — choose or drop .zip, .7z, or .rar files.";
+            return;
+        }
+
+        foreach (string file in archives)
         {
             _installQueue.EnqueueLocal(file, SptDirectory);
             ShowQueuedToast(Path.GetFileNameWithoutExtension(file));
         }
 
-        StatusText = $"Queued {dialog.FileNames.Length} local archive{(dialog.FileNames.Length == 1 ? "" : "s")} — {DescribeQueueCounters()}.";
+        int skipped = supplied.Length - archives.Length;
+        StatusText = $"Queued {archives.Length} local archive{(archives.Length == 1 ? "" : "s")}" +
+                     (skipped > 0 ? $" (skipped {skipped} unsupported or missing file{(skipped == 1 ? "" : "s")})" : string.Empty) +
+                     $" — {DescribeQueueCounters()}.";
         OpenQueueWindowRequested?.Invoke(); // show the live progress immediately
     }
 
@@ -1600,10 +1629,11 @@ public sealed class MainViewModel : ViewModelBase
                 .ToList();
 
         var byKey = _installedAll.ToDictionary(r => r.IdentityKey);
-        InstalledItems.Clear();
+        var visibleMods = new List<InstalledModViewModel>(matched.Count);
         foreach (InstalledRowData row in matched)
             if (byKey.TryGetValue(row.Info.IdentityKey, out InstalledModViewModel? vm))
-                InstalledItems.Add(vm);
+                visibleMods.Add(vm);
+        InstalledItems.ReplaceRange(visibleMods);
 
         HasInstalledResults = InstalledItems.Count > 0;
         InstalledEmptyText = _installedAll.Count == 0

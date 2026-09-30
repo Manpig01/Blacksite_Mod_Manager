@@ -1,6 +1,8 @@
+using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 
 namespace Blacksite.Services;
 
@@ -79,7 +81,14 @@ public sealed class SevenZipService
     /// <summary>Cancellable variant used by the extraction pipeline: cancelling the token KILLS
     /// the 7-Zip process tree immediately (the caller's staging sweep removes the partial
     /// output), then surfaces the cancellation.</summary>
-    public async Task<bool> ExtractArchiveAsync(string archivePath, string destinationDirectory, CancellationToken cancellationToken)
+    public Task<bool> ExtractArchiveAsync(string archivePath, string destinationDirectory, CancellationToken cancellationToken)
+        => ExtractArchiveAsync(archivePath, destinationDirectory, cancellationToken, progressPercent: null);
+
+    /// <summary>Progress-aware variant. 7-Zip's own stderr progress stream is parsed incrementally,
+    /// avoiding repeated recursive staging-tree scans (which become quadratic for thousands of files).</summary>
+    public async Task<bool> ExtractArchiveAsync(
+        string archivePath, string destinationDirectory, CancellationToken cancellationToken,
+        Action<int>? progressPercent)
     {
         string? binary = ResolveBinary();
         if (binary is null)
@@ -98,9 +107,9 @@ public sealed class SevenZipService
         // x     = extract files with full directory tree structure
         // -o"…" = target directory (attached to -o, no trailing space or backslash before the quote)
         // -y    = auto-overwrite conflicting files during extraction
-        // -bso0 = suppress standard-output clutter
+        // -bso0 = suppress standard-output clutter; -bsp1 directs parseable progress to stderr.
         string cleanDestination = destinationDirectory.TrimEnd(' ', '\t', '\\', '/');
-        string arguments = $"x \"{archivePath}\" -o\"{cleanDestination}\" -y -bso0";
+        string arguments = $"x \"{archivePath}\" -o\"{cleanDestination}\" -y -bso0 -bsp1";
 
         var startInfo = new ProcessStartInfo
         {
@@ -123,11 +132,27 @@ public sealed class SevenZipService
             catch (Win32Exception) { }
         });
 
-        // Drain stderr while the process runs (avoids a full-pipe deadlock), then wait without blocking.
-        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        // If cancellation and process-exit raced, the exit code may belong to a KILLED run —
-        // a cancelled caller must never see a result from it.
+        // Drain stderr while the process runs (avoids a full-pipe deadlock) and parse progress
+        // directly from 7-Zip's output instead of rescanning every staged file repeatedly.
+        Task<string> stderrTask = DrainStandardErrorAsync(process.StandardError, progressPercent);
+        try
+        {
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation registration above kills the process tree. Reap it and drain the pipe
+            // before disposing Process so neither a child nor an unobserved reader task is leaked.
+            try { await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); }
+            catch (InvalidOperationException) { }
+            try { _ = await stderrTask.ConfigureAwait(false); }
+            catch (IOException) { }
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
+
+        string stderr = await stderrTask.ConfigureAwait(false);
+        // If cancellation and process-exit raced, a cancelled caller must never see its result.
         cancellationToken.ThrowIfCancellationRequested();
 
         switch (process.ExitCode)
@@ -140,6 +165,57 @@ public sealed class SevenZipService
             default:
                 Debug.WriteLine($"[blacksite] 7-Zip failed (exit {process.ExitCode}) while extracting \"{archivePath}\": {stderr.Trim()}");
                 return false; // 2 = fatal error / corrupted archive (7: CLI error, 8: OOM, 255: break)
+        }
+    }
+
+    /// <summary>Incrementally drains 7-Zip's stderr, retaining a bounded diagnostic prefix while
+    /// reporting numeric progress tokens without allocating a string for every output line.</summary>
+    private static async Task<string> DrainStandardErrorAsync(StreamReader reader, Action<int>? progressPercent)
+    {
+        const int maxDiagnosticChars = 16 * 1024;
+        char[] buffer = ArrayPool<char>.Shared.Rent(4096);
+        var diagnostic = new StringBuilder(1024);
+        int number = 0;
+        int digits = 0;
+
+        try
+        {
+            int read;
+            while ((read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length)).ConfigureAwait(false)) > 0)
+            {
+                for (int i = 0; i < read; i++)
+                {
+                    char ch = buffer[i];
+                    if (char.IsAsciiDigit(ch))
+                    {
+                        if (digits < 4) number = number * 10 + (ch - '0');
+                        digits++;
+                    }
+                    else if (ch == '%')
+                    {
+                        if (digits is > 0 and <= 3 && number is >= 0 and <= 100)
+                        {
+                            try { progressPercent?.Invoke(number); }
+                            catch (InvalidOperationException) { }
+                        }
+                        number = 0;
+                        digits = 0;
+                    }
+                    else
+                    {
+                        number = 0;
+                        digits = 0;
+                    }
+
+                    if (diagnostic.Length < maxDiagnosticChars)
+                        diagnostic.Append(ch);
+                }
+            }
+            return diagnostic.ToString();
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(buffer);
         }
     }
 }

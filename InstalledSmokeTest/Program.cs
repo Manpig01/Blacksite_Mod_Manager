@@ -35,6 +35,18 @@ if (Directory.Exists(sandbox)) { ArchiveExtractor.DeleteDirectoryRobust(sandbox)
 Directory.CreateDirectory(sandbox);
 string R(string name) { string p = Path.Combine(sandbox, name); Directory.CreateDirectory(p); return p; }
 
+Console.WriteLine("== A. Batched WPF collection updates ==");
+try
+{
+    var range = new ObservableRangeCollection<int>();
+    int notifications = 0;
+    range.CollectionChanged += (_, _) => notifications++;
+    range.ReplaceRange(Enumerable.Range(0, 1000));
+    Check(range.Count == 1000 && notifications == 1,
+        "replacing 1,000 bound items raises one collection Reset", $"count={range.Count}, notifications={notifications}");
+}
+catch (Exception ex) { Check(false, "batched collection section crashed", ex.GetType().Name + ": " + ex.Message); }
+
 Console.WriteLine("== A. Archive format detection (real downloaded files) ==");
 try
 {
@@ -141,6 +153,13 @@ try
     """);
     File.WriteAllText(Path.Combine(pkgDir, "TestPkgMod.dll"), "not-a-real-dll");
 
+    // Exercise the selective UTF-8 scanner path for authors supplied as strings and objects.
+    string authorsDir = Path.Combine(root, "user", "mods", "AuthorsArrayMod");
+    Directory.CreateDirectory(authorsDir);
+    File.WriteAllText(Path.Combine(authorsDir, "package.json"), """
+    { "name": "com.test.authors", "version": 2.5, "authors": ["Alice", {"name":"Bob"}, {"username":"Cy"}] }
+    """);
+
     // disabled server mod + loose legacy script + fake SPT core folder
     string disDir = Path.Combine(root, "user", "mods", "DisabledExample.disabled");
     Directory.CreateDirectory(disDir);
@@ -164,6 +183,8 @@ try
     Check(scanned.Any(m => m.PackageId == "com.test.pkgmod" && m.Version == "1.2.3" && m.Authors == "Tester"
         && m.MainEntry == "TestPkgMod.dll" && m.SptVersionHint == "4.0.12" && !m.IsDisabled && m.InfoSource == "package.json"),
         "package.json parsed (id/version/author/main/sptVersion)");
+    Check(scanned.Any(m => m.PackageId == "com.test.authors" && m.Version == "2.5" && m.Authors == "Alice, Bob, Cy"),
+        "Utf8JsonReader handles numeric versions and string/object authors arrays");
     Check(scanned.Any(m => m.DisplayName == "DisabledExample" && m.IsDisabled && m.Kind == InstalledModKind.Server),
         "disabled server mod detected (.disabled suffix)");
     Check(scanned.Any(m => m.DisplayName == "legacy-script" && !m.IsDirectory), "loose legacy .js script detected");
@@ -684,6 +705,16 @@ try
     Version? Parsed(string? raw) => VersionUtils.ParseVersion(raw);
     Check(Parsed("v4.1.0") is { } v1 && v1.Major == 4 && v1.Minor == 1 && v1.PatchOrZero() == 0,
         "VersionUtils: 'v4.1.0' → 4.1.0");
+    Check(Parsed("v1.2.3") is { } v10 && v10.Major == 1 && v10.Minor == 2 && v10.Build == 0,
+        "VersionUtils: 'v1.2.3' parses the numeric core");
+    Check(Parsed("1.2.3-beta") is { } v11 && v11.Major == 1 && v11.Minor == 2 && v11.Build == 0,
+        "VersionUtils: prerelease suffix ignored");
+    Check(Parsed("ver 1.2.3") is { } v12 && v12.Major == 1 && v12.Minor == 2 && v12.Build == 0,
+        "VersionUtils: 'ver 1.2.3' prefix accepted");
+    Check(Parsed("1.2.3_rc1") is { } v13 && v13.Major == 1 && v13.Minor == 2 && v13.Build == 0,
+        "VersionUtils: underscore annotation ignored");
+    Check(Parsed("1.2.3") is { } compact && compact.Equals(Parsed("1.2.3.0")),
+        "VersionUtils: absent fourth component is normalized to zero");
     Check(Parsed("V 2.5") is { } v2 && v2.Major == 2 && v2.Minor == 5, "VersionUtils: 'V 2.5' → 2.5");
     Check(Parsed("ver-2.5") is { } v3 && v3.Major == 2 && v3.Minor == 5, "VersionUtils: 'ver-2.5' → 2.5");
     Check(Parsed("version 3.0") is { } v4 && v4.Major == 3, "VersionUtils: 'version 3.0' → 3.0");
@@ -699,6 +730,8 @@ try
     Check(VersionUtils.IsNewer("v4.1.1", "4.1.0"), "IsNewer: strictly greater remote → true");
     Check(!VersionUtils.IsNewer("4.1.0", "v4.1.0"), "IsNewer: equal (differing formatting) → false");
     Check(!VersionUtils.IsNewer("4.1.0", "4.1.0.0"), "IsNewer: equal modulo build precision → false");
+    Check(!VersionUtils.IsNewer("4.1.0.0", "4.1.0"), "IsNewer: equal versions with omitted build → false");
+    Check(!VersionUtils.IsNewer("1.2.3-beta", "v1.2.3"), "IsNewer: prerelease annotation alone → false");
     Check(!VersionUtils.IsNewer("4.1.0 RC2", "4.1.0"), "IsNewer: annotation-only difference → false");
     Check(!VersionUtils.IsNewer("4.0.9", "4.1"), "IsNewer: older remote → false");
     Check(!VersionUtils.IsNewer(null, "1.0"), "IsNewer: missing remote → false");
