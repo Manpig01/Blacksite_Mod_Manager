@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-window: #121418;
+    --bg-panel: #181B20;
+    --bg-card: #181B20;
+    --bg-input: #0E1013;
+    --bg-surface: #20252D;
+    --border-soft: #23272E;
+    --border-strong: #2A2F38;
+    --text-primary: #E8EAEE;
+    --text-secondary: #9AA3AF;
+    --text-muted: #6B7480;
+    --accent: #EA580C;
+    --accent-hover: #F97316;
+    --green: #16A34A;
+    --green-hover: #22C55E;
+    --danger: #DC2626;
+    --warn: #F59E0B;
+  }
+
+  body {
+    background-color: var(--bg-window);
+    color: var(--text-primary);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #121418;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2f38;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3e4653;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes toastSlideIn {
+  from { opacity: 0; transform: translateX(12px) scale(0.96); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.animate-toast {
+  animation: toastSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

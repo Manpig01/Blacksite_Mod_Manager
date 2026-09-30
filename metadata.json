@@ -1,0 +1,8 @@
+{
+  "name": "Blacksite Mod Manager",
+  "description": "Modern web-based mod manager for Single Player Tarkov (SPT) and Fika. Browse, install, update, and manage mods from sp-mod.com with conflict detection, config editing, and SPT launcher controls.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

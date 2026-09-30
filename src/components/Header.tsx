@@ -1,0 +1,117 @@
+import React from 'react';
+import { Folder, Play, Layers } from 'lucide-react';
+import { SettingsState, ModProfile } from '../types';
+
+interface HeaderProps {
+  settings: SettingsState;
+  onUpdateSettings: (newSettings: Partial<SettingsState>) => void;
+  onPickDirectory: () => void;
+  onLaunchSpt: () => void;
+  profiles: ModProfile[];
+  onSelectProfile: (profileId: string) => void;
+  onCreateProfile: () => void;
+  isLaunching?: boolean;
+}
+
+export const Header: React.FC<HeaderProps> = ({
+  settings,
+  onUpdateSettings,
+  onPickDirectory,
+  onLaunchSpt,
+  profiles,
+  onSelectProfile,
+  onCreateProfile,
+  isLaunching = false,
+}) => {
+  return (
+    <div className="bg-[#181B20] border-b border-[#23272E] px-4.5 pt-3 pb-3 shrink-0">
+      {/* Title row */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-2xl leading-none select-none">🐉</span>
+          <span className="text-[20px] font-bold text-[#E8EAEE] tracking-tight">Blacksite</span>
+          <span className="text-[15px] text-[#9AA3AF] mt-0.5">Mod Manager</span>
+          <div className="bg-[#20252D] rounded px-2 py-0.5 ml-2.5">
+            <span className="text-[11px] text-[#6B7480] font-medium tracking-wide">
+              SPT · sp-mod.com
+            </span>
+          </div>
+        </div>
+
+        {/* Profile Selector (task 2.5) */}
+        <div className="flex items-center gap-2">
+          <Layers className="w-3.5 h-3.5 text-[#9AA3AF]" />
+          <span className="text-xs text-[#9AA3AF]">Profile:</span>
+          <select
+            value={settings.activeProfileId}
+            onChange={(e) => {
+              if (e.target.value === '__new__') {
+                onCreateProfile();
+              } else {
+                onSelectProfile(e.target.value);
+              }
+            }}
+            className="bg-[#0E1013] border border-[#23272E] rounded text-xs text-[#E8EAEE] px-2.5 py-1 focus:outline-none focus:border-[#EA580C] cursor-pointer"
+          >
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.enabledModIds.length} mods)
+              </option>
+            ))}
+            <option value="__new__">+ New Profile...</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Global controls row */}
+      <div className="flex items-center gap-2.5 flex-wrap">
+        {/* Set SPT Directory button */}
+        <button
+          onClick={onPickDirectory}
+          className="bg-[#EA580C] hover:bg-[#F97316] text-white text-[13px] font-medium px-3 py-1.5 rounded-md flex items-center gap-2 transition-colors shrink-0 shadow-sm cursor-pointer"
+          title="Choose the Single Player Tarkov root folder (contains BepInEx and user)"
+          type="button"
+        >
+          <Folder className="w-4 h-4" />
+          <span>Set SPT Directory</span>
+        </button>
+
+        {/* Directory display box */}
+        <div
+          className="bg-[#0E1013] border border-[#23272E] rounded-md px-3 py-1.5 flex-1 min-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-[#9AA3AF] select-text"
+          title={settings.sptDirectory}
+        >
+          {settings.sptDirectory}
+        </div>
+
+        {/* SPT Version input */}
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className="text-[13px] text-[#9AA3AF] cursor-help"
+            title="Used to resolve compatible versions, dependencies and updates. Auto-detected when possible."
+          >
+            SPT Version
+          </span>
+          <input
+            type="text"
+            value={settings.sptVersion}
+            onChange={(e) => onUpdateSettings({ sptVersion: e.target.value })}
+            className="w-[90px] bg-[#0E1013] border border-[#23272E] rounded-md px-2.5 py-1 text-[13px] text-[#E8EAEE] font-mono focus:outline-none focus:border-[#EA580C]"
+            title="Your installed SPT version, e.g. 4.0.12"
+          />
+        </div>
+
+        {/* Launch SPT button */}
+        <button
+          onClick={onLaunchSpt}
+          className="bg-[#16A34A] hover:bg-[#22C55E] text-white text-[13px] font-semibold px-4 py-1.5 rounded-md flex items-center gap-2 transition-colors shrink-0 shadow-sm ml-auto cursor-pointer"
+          title="Start the SPT server, watch its console until it is ready, then launch the game launcher"
+          type="button"
+        >
+          <Play className={`w-3.5 h-3.5 fill-current ${isLaunching ? 'animate-pulse' : ''}`} />
+          <span>{isLaunching ? 'Launching SPT...' : '🚀 Launch SPT'}</span>
+        </button>
+      </div>
+    </div>
+  );
+};
