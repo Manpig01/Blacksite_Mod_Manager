@@ -275,7 +275,12 @@ export const App: React.FC = () => {
                 : item
             )
           );
-          setStatusText(`Routing ${modName} into SPT_Runtime/user/mods...`);
+          const isServerMod = modName.toLowerCase().includes('server') || modName.toLowerCase().includes('trader') || modName.toLowerCase().includes('profile');
+          const isClientMod = modName.toLowerCase().includes('sain') || modName.toLowerCase().includes('brain') || modName.toLowerCase().includes('graphics') || modName.toLowerCase().includes('light') || modName.toLowerCase().includes('hud') || modName.toLowerCase().includes('fov');
+          const serverDir = settings.serverModPath || 'user/mods';
+          const clientDir = settings.clientModPath || 'BepInEx/plugins';
+          const destLabel = isServerMod ? serverDir : isClientMod ? clientDir : `${clientDir} & ${serverDir}`;
+          setStatusText(`Routing ${modName} into ${destLabel}...`);
 
           setTimeout(() => {
             // Stage 4: Finished
@@ -295,8 +300,6 @@ export const App: React.FC = () => {
             // Add or update in installed mods list
             setInstalledMods((prev) => {
               const existingIdx = prev.findIndex((m) => m.id === targetGuid);
-              const isServerMod = modName.toLowerCase().includes('server') || modName.toLowerCase().includes('trader');
-              const isClientMod = modName.toLowerCase().includes('sain') || modName.toLowerCase().includes('brain') || modName.toLowerCase().includes('graphics');
 
               const newInstalledMod: InstalledMod = {
                 id: targetGuid,
@@ -309,8 +312,8 @@ export const App: React.FC = () => {
                 sptVersion: settings.sptVersion,
                 fikaCompatibility: true,
                 installDate: new Date().toISOString().split('T')[0],
-                serverPath: isServerMod || !isClientMod ? `SPT_Runtime/user/mods/${modName.replace(/\s+/g, '')}` : undefined,
-                clientPath: isClientMod || !isServerMod ? `BepInEx/plugins/${modName.replace(/\s+/g, '')}.dll` : undefined,
+                serverPath: isServerMod || !isClientMod ? `${serverDir}/${modName.replace(/\s+/g, '')}` : undefined,
+                clientPath: isClientMod || !isServerMod ? `${clientDir}/${modName.replace(/\s+/g, '')}.dll` : undefined,
                 isDisabled: false,
                 hasUpdate: false,
                 latestVersion: version,
@@ -466,13 +469,36 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleOpenFolder = (folderType: 'client' | 'server') => {
-    const path = folderType === 'client' ? settings.clientModPath : settings.serverModPath;
-    showToast(
-      'Directory Explorer',
-      `Opening ${settings.sptDirectory}\\${path.replace(/\//g, '\\')}`,
-      'info'
-    );
+  const handleOpenFolder = async (target: 'client' | 'server' | string) => {
+    let relPath = '';
+    let label = '';
+    if (target === 'client') {
+      relPath = settings.clientModPath || 'BepInEx/plugins';
+      label = 'Plugins Folder (BepInEx/plugins)';
+    } else if (target === 'server') {
+      relPath = settings.serverModPath || 'user/mods';
+      label = 'Server Folder (user/mods)';
+    } else {
+      relPath = target;
+      label = `Mod Folder (${target})`;
+    }
+
+    const fullPath = `${settings.sptDirectory}\\${relPath.replace(/\//g, '\\')}`;
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+
+    if (bridge?.openFolder) {
+      try {
+        const opened = await bridge.openFolder(fullPath);
+        if (opened) {
+          showToast('Directory Explorer', `Opened ${label} in File Explorer: ${fullPath}`, 'success');
+          return;
+        }
+      } catch (err: any) {
+        console.error('Failed to open folder:', err);
+      }
+    }
+
+    showToast('Directory Explorer', `Target path: ${fullPath}`, 'info');
   };
 
   // Config Saving
@@ -550,9 +576,30 @@ export const App: React.FC = () => {
         onToggleTheme={() =>
           handleUpdateSettings({ theme: settings.theme === 'light' ? 'dark' : 'light' })
         }
-        onMinimize={() => showToast('Minimize', 'Minimized to taskbar.', 'info')}
-        onMaximize={() => showToast('Maximize', 'Window maximized.', 'info')}
-        onClose={() => showToast('Close', 'Closing Blacksite Mod Manager.', 'info')}
+        onMinimize={() => {
+          const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+          if (bridge?.windowControl?.minimize) {
+            bridge.windowControl.minimize();
+          } else {
+            showToast('Minimize', 'Minimized to taskbar.', 'info');
+          }
+        }}
+        onMaximize={async () => {
+          const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+          if (bridge?.windowControl?.maximize) {
+            await bridge.windowControl.maximize();
+          } else {
+            showToast('Maximize', 'Window maximized.', 'info');
+          }
+        }}
+        onClose={() => {
+          const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+          if (bridge?.windowControl?.close) {
+            bridge.windowControl.close();
+          } else {
+            showToast('Close', 'Closing Blacksite Mod Manager.', 'info');
+          }
+        }}
       />
 
       {/* Header */}
@@ -636,6 +683,8 @@ export const App: React.FC = () => {
             onOpenVersions={setSelectedModForVersions}
             onInstallFromFile={handleInstallFromFile}
             onShowToast={showToast}
+            showRecommendedMods={settings.showRecommendedMods !== false}
+            onToggleShowRecommended={(show) => handleUpdateSettings({ showRecommendedMods: show })}
           />
         )}
 

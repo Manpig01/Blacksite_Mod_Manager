@@ -169,6 +169,7 @@ export interface SettingsState {
   autoCheckUpdates: boolean;
   downloadStallTimeoutSeconds: number;
   theme: 'dark' | 'light';
+  showRecommendedMods?: boolean;
 }
 
 export interface ToastMessage {

@@ -1,5 +1,5 @@
-import React from 'react';
-import { Minus, Square, X, Sun, Moon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Minus, Square, Copy, X, Sun, Moon } from 'lucide-react';
 
 interface CustomTitleBarProps {
   theme?: 'dark' | 'light';
@@ -16,29 +16,84 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   onMaximize,
   onClose,
 }) => {
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.windowControl) {
+      bridge.windowControl.isMaximized().then((max: boolean) => {
+        setIsMaximized(Boolean(max));
+      }).catch(() => {});
+
+      if (bridge.windowControl.onMaximizedChange) {
+        const cleanup = bridge.windowControl.onMaximizedChange((max: boolean) => {
+          setIsMaximized(Boolean(max));
+        });
+        return cleanup;
+      }
+    }
+  }, []);
+
+  const handleMinimize = () => {
+    if (onMinimize) {
+      onMinimize();
+    } else {
+      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      bridge?.windowControl?.minimize();
+    }
+  };
+
+  const handleMaximize = async () => {
+    if (onMaximize) {
+      onMaximize();
+    } else {
+      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      if (bridge?.windowControl?.maximize) {
+        const result = await bridge.windowControl.maximize();
+        setIsMaximized(Boolean(result));
+      }
+    }
+  };
+
+  const handleClose = () => {
+    if (onClose) {
+      onClose();
+    } else {
+      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      bridge?.windowControl?.close();
+    }
+  };
+
   return (
-    <header className="h-[42px] bg-[#181B20] border-b border-[#23272E] px-3.5 flex items-center justify-between select-none shrink-0 z-50">
+    <header
+      className="h-[38px] bg-[#181B20] border-b border-[#23272E] px-3.5 flex items-center justify-between select-none shrink-0 z-50 cursor-default"
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      onDoubleClick={handleMaximize}
+    >
       {/* Left branding */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5 pointer-events-none">
         <img
           src="/emblem.png"
           alt="Blacksite Emblem"
-          className="w-[22px] h-[22px] object-contain drop-shadow"
+          className="w-[20px] h-[20px] object-contain drop-shadow"
           onError={(e) => {
             (e.target as HTMLElement).style.display = 'none';
           }}
         />
-        <span className="text-[13px] font-semibold text-[#E8EAEE] tracking-tight">
+        <span className="text-[12.5px] font-semibold text-[#E8EAEE] tracking-tight">
           Blacksite Mod Manager - ALPHA v1.8.0
         </span>
       </div>
 
       {/* Right window caption controls */}
-      <div className="flex items-center h-full -mr-3">
+      <div
+        className="flex items-center h-full -mr-3"
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
         {onToggleTheme && (
           <button
             onClick={onToggleTheme}
-            className="w-[38px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#EA580C] hover:bg-[#20252D] transition-colors"
+            className="w-[38px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#EA580C] hover:bg-[#20252D] transition-colors cursor-pointer"
             title={`Switch to ${theme === 'light' ? 'Dark' : 'High-Contrast Light'} Theme`}
             type="button"
           >
@@ -51,24 +106,28 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
         )}
 
         <button
-          onClick={onMinimize}
-          className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#E8EAEE] hover:bg-[#20252D] transition-colors"
+          onClick={handleMinimize}
+          className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#E8EAEE] hover:bg-[#20252D] transition-colors cursor-pointer"
           title="Minimize"
           type="button"
         >
           <Minus className="w-3.5 h-3.5" />
         </button>
         <button
-          onClick={onMaximize}
-          className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#E8EAEE] hover:bg-[#20252D] transition-colors"
-          title="Maximize / Restore"
+          onClick={handleMaximize}
+          className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#E8EAEE] hover:bg-[#20252D] transition-colors cursor-pointer"
+          title={isMaximized ? 'Restore' : 'Maximize'}
           type="button"
         >
-          <Square className="w-3 h-3" />
+          {isMaximized ? (
+            <Copy className="w-3 h-3 rotate-180" />
+          ) : (
+            <Square className="w-3 h-3" />
+          )}
         </button>
         <button
-          onClick={onClose}
-          className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-white hover:bg-[#DC2626] transition-colors"
+          onClick={handleClose}
+          className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-white hover:bg-[#DC2626] transition-colors cursor-pointer"
           title="Close"
           type="button"
         >

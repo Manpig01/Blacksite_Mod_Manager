@@ -12,12 +12,13 @@ const DEFAULT_SETTINGS: SettingsState = {
   sptVersion: '4.0.12',
   detectedServerBinary: 'SPT.Server.exe',
   clientModPath: 'BepInEx/plugins',
-  serverModPath: 'SPT_Runtime/user/mods',
+  serverModPath: 'user/mods',
   isSpt4xLayout: true,
   activeProfileId: 'prof-1',
   autoCheckUpdates: true,
   downloadStallTimeoutSeconds: 60,
   theme: 'dark',
+  showRecommendedMods: true,
 };
 
 const DEFAULT_KNOWN_DEPS: Record<string, string[]> = {

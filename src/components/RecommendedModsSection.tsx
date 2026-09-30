@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sparkles, RotateCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Check, ExternalLink, Flame, ShieldAlert } from 'lucide-react';
+import { Sparkles, RotateCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Download, Check, ExternalLink, Flame, ShieldAlert, X } from 'lucide-react';
 import { Mod, ModCategory, InstalledMod, RecommendedModItem } from '../types';
 import { apiService } from '../services/apiService';
 import { ModThumbnail } from './ModThumbnail';
@@ -10,6 +10,7 @@ interface RecommendedModsSectionProps {
   installedGuids: string[];
   onInstallMod: (mod: Mod, version?: string) => void;
   onOpenVersions: (mod: Mod) => void;
+  onHide?: () => void;
 }
 
 export const RecommendedModsSection: React.FC<RecommendedModsSectionProps> = ({
@@ -18,6 +19,7 @@ export const RecommendedModsSection: React.FC<RecommendedModsSectionProps> = ({
   installedGuids,
   onInstallMod,
   onOpenVersions,
+  onHide,
 }) => {
   const [recommendations, setRecommendations] = useState<RecommendedModItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -195,6 +197,19 @@ export const RecommendedModsSection: React.FC<RecommendedModsSectionProps> = ({
           >
             {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
           </button>
+
+          {/* Dismiss / Hide Section */}
+          {onHide && (
+            <button
+              type="button"
+              onClick={onHide}
+              className="w-6 h-6 rounded bg-[#20252D] hover:bg-[#DC2626] text-[#9AA3AF] hover:text-white border border-[#2A2F38] flex items-center justify-center transition-colors cursor-pointer"
+              title="Hide Recommended section (can be re-enabled in filters or Settings)"
+              aria-label="Hide Recommended section"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

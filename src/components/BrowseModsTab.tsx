@@ -42,6 +42,8 @@ interface BrowseModsTabProps {
   onOpenVersions: (mod: Mod) => void;
   onInstallFromFile: (file: File) => void;
   onShowToast: (title: string, message: string, type: 'success' | 'info' | 'warning' | 'error') => void;
+  showRecommendedMods?: boolean;
+  onToggleShowRecommended?: (show: boolean) => void;
 }
 
 export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
@@ -53,6 +55,8 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
   onOpenVersions,
   onInstallFromFile,
   onShowToast,
+  showRecommendedMods = true,
+  onToggleShowRecommended,
 }) => {
   const [searchText, setSearchText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
@@ -413,6 +417,16 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
             </span>
           </label>
 
+          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]" title="Toggle the Recommended For You section above the mod catalog">
+            <input
+              type="checkbox"
+              checked={showRecommendedMods}
+              onChange={(e) => onToggleShowRecommended?.(e.target.checked)}
+              className="accent-[#EA580C]"
+            />
+            <span>Show Recommendations</span>
+          </label>
+
           {/* Pagination controls */}
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -457,13 +471,16 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
       {/* Catalog Mod Grid (Virtualizing 3-column compact 220px cards) */}
       <div className="flex-1 overflow-y-auto pr-1">
         {/* Recommended for You Section based on installed mod categories */}
-        <RecommendedModsSection
-          installedMods={installedMods}
-          categories={categories}
-          installedGuids={installedGuids}
-          onInstallMod={onInstallMod}
-          onOpenVersions={onOpenVersions}
-        />
+        {showRecommendedMods && (
+          <RecommendedModsSection
+            installedMods={installedMods}
+            categories={categories}
+            installedGuids={installedGuids}
+            onInstallMod={onInstallMod}
+            onOpenVersions={onOpenVersions}
+            onHide={() => onToggleShowRecommended?.(false)}
+          />
+        )}
 
         {loading && queryResult.mods.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-[#9AA3AF]">

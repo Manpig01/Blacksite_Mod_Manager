@@ -41,7 +41,7 @@ interface InstalledModsTabProps {
   onDisableAll: () => void;
   onUninstallAll: () => void;
   onCheckUpdates: () => void;
-  onOpenFolder: (folderType: 'client' | 'server') => void;
+  onOpenFolder: (target: 'client' | 'server' | string) => void;
   onReorderMods: (reorderedMods: InstalledMod[]) => void;
   onUpdateModTags: (modId: string, tags: ModTag[]) => void;
   onBulkEnable?: (modIds: string[]) => void;
@@ -1223,6 +1223,20 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
                             <Sliders className="w-3.5 h-3.5" />
                           </button>
                         )}
+
+                        {/* Open Mod Directory in Explorer */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const path = mod.serverPath || (mod.clientPath ? mod.clientPath.replace(/\/[^/]+$/, '') : 'BepInEx/plugins');
+                            onOpenFolder(path);
+                          }}
+                          className="bg-[#20252D] hover:bg-[#2A2F38] text-[#9AA3AF] hover:text-[#E8EAEE] p-1.5 rounded transition-colors cursor-pointer"
+                          title="Open mod files directory in File Explorer"
+                          type="button"
+                        >
+                          <Folder className="w-3.5 h-3.5" />
+                        </button>
 
                         {/* Uninstall */}
                         <button

@@ -140,6 +140,40 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </div>
       </div>
 
+      {/* Catalog & Recommendations Display */}
+      <div>
+        <h2 className="text-[15px] font-bold text-[#E8EAEE] mb-2 flex items-center gap-2">
+          <span>Catalog & Interface Preferences</span>
+        </h2>
+        <div className="bg-[#181B20] border border-[#23272E] rounded-xl p-4 shadow-sm space-y-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.showRecommendedMods !== false}
+              onChange={(e) => {
+                onUpdateSettings({ showRecommendedMods: e.target.checked });
+                onShowToast(
+                  'Preference Updated',
+                  e.target.checked
+                    ? 'Recommended mods section is now enabled in Browse tab.'
+                    : 'Recommended mods section hidden in Browse tab.',
+                  'info'
+                );
+              }}
+              className="mt-1 accent-[#EA580C] w-4 h-4 cursor-pointer"
+            />
+            <div>
+              <span className="text-sm font-semibold text-[#E8EAEE] block">
+                Show "Recommended For You" Section
+              </span>
+              <span className="text-xs text-[#9AA3AF]">
+                Displays dynamic, category-weighted recommendations above the main catalog in the Browse Mods tab based on your installed loadout.
+              </span>
+            </div>
+          </label>
+        </div>
+      </div>
+
       {/* SPT Folder Configuration */}
       <div>
         <h2 className="text-[15px] font-bold text-[#E8EAEE] mb-2">SPT Folder Configuration</h2>

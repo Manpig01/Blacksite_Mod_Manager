@@ -1,5 +1,6 @@
 const { app, BrowserWindow, shell, ipcMain, dialog, session } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 let mainWindow = null;
 
@@ -11,8 +12,8 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#121418',
     title: 'Blacksite Mod Manager',
-    titleBarStyle: 'default',
-    frame: true,
+    frame: false, // Frameless window - removes duplicate OS titlebar
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -49,6 +50,18 @@ function createWindow() {
     return { action: 'allow' };
   });
 
+  mainWindow.on('maximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized-change', true);
+    }
+  });
+
+  mainWindow.on('unmaximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized-change', false);
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -79,6 +92,63 @@ app.whenReady().then(() => {
     );
   }
 
+  // Native Window Titlebar Controls (Minimize, Maximize/Restore, Close)
+  ipcMain.handle('window:minimize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.minimize();
+      return true;
+    }
+    return false;
+  });
+
+  ipcMain.handle('window:maximize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMaximized()) {
+        mainWindow.unmaximize();
+        return false;
+      } else {
+        mainWindow.maximize();
+        return true;
+      }
+    }
+    return false;
+  });
+
+  ipcMain.handle('window:close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.close();
+      return true;
+    }
+    return false;
+  });
+
+  ipcMain.handle('window:is-maximized', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      return mainWindow.isMaximized();
+    }
+    return false;
+  });
+
+  // Open directory in native OS File Explorer (Plugins, Server, Mod Folders)
+  ipcMain.handle('shell:open-folder', async (event, targetPath) => {
+    if (!targetPath || typeof targetPath !== 'string') return false;
+    try {
+      // Ensure the directory exists so Explorer can open it without error
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
+      }
+      const err = await shell.openPath(targetPath);
+      if (err) {
+        console.error('shell.openPath error:', err);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Failed to open directory in file explorer:', err);
+      return false;
+    }
+  });
+
   // Native directory picker dialog for SPT folder
   ipcMain.handle('dialog:select-directory', async (event, defaultPath) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
@@ -103,7 +173,7 @@ app.whenReady().then(() => {
         headers: {
           'Referer': 'https://sp-mod.com/',
           'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
           'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
         },
       });

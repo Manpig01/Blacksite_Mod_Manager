@@ -1,6 +1,6 @@
 {
-  "summary": "Plan to fix image loading from the API in the Windows .exe and connect the 'Set SPT Directory' button to the native Windows folder selection dialog via Electron IPC.",
-  "updatedAt": "2026-09-30T10:32:37.814280183Z",
+  "summary": "Plan to remove the duplicate OS titlebar, make the custom titlebar draggable and functional with real window controls, enable opening Plugins and Server folders in Windows Explorer, make the Recommended section disablable with filters and settings, and verify mod routing across the manager.",
+  "updatedAt": "2026-09-30T11:41:46.931684790Z",
   "requestFeedback": true,
   "userFacing": true
 }
