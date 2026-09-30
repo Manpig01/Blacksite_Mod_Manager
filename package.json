@@ -31,7 +31,9 @@
     "vite": "^6.0.0"
   },
   "optionalDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.63.5"
+    "@esbuild/win32-x64": "^0.25.12",
+    "@rollup/rollup-win32-x64-msvc": "^4.63.5",
+    "lightningcss-win32-x64-msvc": "^1.32.0"
   },
   "build": {
     "appId": "com.blacksite.modmanager",

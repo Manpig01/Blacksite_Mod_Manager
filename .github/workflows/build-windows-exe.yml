@@ -27,7 +27,7 @@ jobs:
       - name: Install Dependencies
         run: |
           npm install --include=optional
-          npm install --no-save @rollup/rollup-win32-x64-msvc
+          npm install --no-save @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc @esbuild/win32-x64
 
       - name: Compile Web Application
         run: npm run build
