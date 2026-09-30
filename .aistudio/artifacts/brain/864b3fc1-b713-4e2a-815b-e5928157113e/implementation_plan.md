@@ -1,59 +1,58 @@
-# Fix GitHub Actions Windows EXE Build Failure
+# Fix Rollup Windows Native Binary Dependency in CI Build
 
-Resolve the CI workflow failure identified in the GitHub Actions run (`Dependencies lock file is not found in D:\a\Blacksite_Mod_Manager-TEST\Blacksite_Mod_Manager-TEST`) so that Windows executable packaging succeeds seamlessly on your next push.
+Resolve the Vite/Rollup build failure (`Cannot find module @rollup/rollup-win32-x64-msvc`) on the GitHub Actions Windows runner by ensuring platform-specific optional binaries are installed during the CI dependency step.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
 > **Root Cause Identified from GitHub Actions Run**:
-> The step `Setup Node.js 20` failed with:
-> `Dependencies lock file is not found in D:\a\Blacksite_Mod_Manager-TEST\Blacksite_Mod_Manager-TEST. Supported file patterns: package-lock.json,npm-shrinkwrap.json,yarn.lock`
-> This occurred because `actions/setup-node@v4` was configured with `cache: 'npm'`, which strictly requires a committed `package-lock.json` file. Since the repository did not have a `package-lock.json`, GitHub Actions aborted before installing dependencies.
+> The `Compile Web Application` step failed during `vite build` with:
+> `Error: Cannot find module @rollup/rollup-win32-x64-msvc. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828).`
+>
+> When npm lockfiles are generated on Linux, npm does not automatically resolve Windows-specific native binary optional dependencies (`@rollup/rollup-win32-x64-msvc`). When GitHub Actions runs on `windows-latest`, standard `npm install` skips this optional binary, causing Vite's Rollup bundler to crash when spawning the native compiler.
 
-- **Fix 1: Remove Strict Cache Dependency in CI Workflow**:
-  - Remove `cache: 'npm'` from `.github/workflows/build-windows-exe.yml` so `setup-node` runs unconditionally without failing on missing lock files.
-- **Fix 2: Generate & Include `package-lock.json`**:
-  - Generate a clean `package-lock.json` in the workspace so dependencies are pinned and reproducible across local and CI environments.
-- **Fix 3: Update Default Repository in UI**:
-  - Update `WindowsDownloadModal.tsx` default GitHub target to `Manpig01/Blacksite_Mod_Manager-TEST` (identified from the workflow run in your screenshot) so download buttons link directly to your repository's releases.
+- **Fix 1: Explicit Optional Dependency in `package.json`**:
+  - Add `@rollup/rollup-win32-x64-msvc` under `optionalDependencies` in `package.json` so package managers recognize it across platforms.
+- **Fix 2: Guaranteed Binary Installation in GitHub Actions Workflow**:
+  - Update the `Install Dependencies` step in `.github/workflows/build-windows-exe.yml` to:
+    ```yaml
+    - name: Install Dependencies
+      run: |
+        npm install --include=optional
+        npm install --no-save @rollup/rollup-win32-x64-msvc@^4.0.0
+    ```
+  - This ensures the exact Windows MSVC native rollup binary required by Vite 6 / Rollup 4 is always present on the Windows runner before `npm run build` executes.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Corrects the `.github/workflows/build-windows-exe.yml` workflow configuration to eliminate the lockfile caching blocker, ensures `npm install` runs smoothly on GitHub's Windows runner, and updates in-app release URLs to match your repository.
-- **Outcome**: On your next `git push`, the GitHub Actions runner will proceed past `Setup Node.js`, run `npm install`, compile the Vite build, package both the installer (`.exe`) and portable binary via `electron-builder`, and publish them directly to your repository's Releases.
+- **What It Does**: Supplies the Windows-native Rollup binary (`@rollup/rollup-win32-x64-msvc`) directly during the GitHub Actions Windows CI pipeline, enabling `tsc -b && vite build` to compile successfully into `dist/`.
+- **Outcome**: `npm run build` will complete cleanly in 3-5 seconds, allowing the subsequent `electron-builder` step to package `Blacksite-Mod-Manager-Setup-1.8.0.exe` and `Blacksite-Mod-Manager-Portable-1.8.0.exe` and attach them to your GitHub Release.
 
 ---
 
-### 2. Technical Architecture & CI/CD Adjustments
+### 2. CI/CD Architecture Adjustments
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Current Failing Step                            │
 │                                                                        │
-│   actions/setup-node@v4 with cache: 'npm'                              │
-│   └── ❌ Searches for package-lock.json -> Not Found -> Aborts job      │
+│   npm run build -> tsc -b && vite build                                │
+│   └── ❌ Error: Cannot find module '@rollup/rollup-win32-x64-msvc'     │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                          Fixed CI Workflow                             │
+│                       Resolved CI Workflow Steps                       │
 │                                                                        │
 │   1. actions/checkout@v4                                               │
-│   2. actions/setup-node@v4 (without strict cache blocker)              │
-│   3. npm install (installs React 19, Electron & electron-builder)       │
-│   4. npm run build (Vite bundle generation)                            │
-│   5. npx electron-builder --win --x64                                  │
-│   6. Publish Release to Manpig01/Blacksite_Mod_Manager-TEST           │
+│   2. actions/setup-node@v4 (Node 22)                                   │
+│   3. Install Dependencies:                                             │
+│      ├── npm install --include=optional                                │
+│      └── npm install --no-save @rollup/rollup-win32-x64-msvc@^4.0.0   │
+│   4. Compile Web Application (tsc -b && vite build) -> Success!        │
+│   5. electron-builder --win --x64 -> Generates NSIS & Portable .exe    │
+│   6. Publish Release to Manpig01/Blacksite_Mod_Manager-TEST            │
 └────────────────────────────────────────────────────────────────────────┘
 ```
-
-#### Detailed Execution Steps
-1. **`.github/workflows/build-windows-exe.yml`**:
-   - Remove `cache: 'npm'` from `actions/setup-node@v4`.
-   - Update node version to `22` (or keep `20` with clean parameters) to eliminate the deprecation warning seen in the log.
-2. **`package-lock.json`**:
-   - Generate standard npm lockfile to provide deterministic dependency resolution.
-3. **`src/components/WindowsDownloadModal.tsx`**:
-   - Set the default repo state to `Manpig01/Blacksite_Mod_Manager-TEST`.

@@ -25,7 +25,9 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          npm install --include=optional
+          npm install --no-save @rollup/rollup-win32-x64-msvc
 
       - name: Compile Web Application
         run: npm run build
