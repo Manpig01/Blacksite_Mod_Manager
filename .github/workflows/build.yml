@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - master
   workflow_dispatch:
 
 permissions:
@@ -25,9 +24,11 @@ jobs:
           node-version: 22
 
       - name: Install Dependencies
+        shell: pwsh
         run: |
+          if (Test-Path package-lock.json) { Remove-Item package-lock.json }
           npm install --include=optional
-          npm install --no-save @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc @esbuild/win32-x64
+          npm install --no-save @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc @esbuild/win32-x64 @tailwindcss/oxide-win32-x64-msvc
 
       - name: Compile Web Application
         run: npm run build

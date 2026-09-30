@@ -1,50 +1,82 @@
-# Fix LightningCSS Windows Native Binary Missing Error in CI
+# Fix Tailwind Oxide Windows Native Binding in GitHub Actions CI
 
-Resolve the second platform-specific native binary failure on Windows (`Cannot find module '../lightningcss.win32-x64-msvc.node'`) caused by Tailwind CSS v4's `lightningcss` engine.
+Resolve the `@tailwindcss/oxide` compilation failure on Windows GitHub Actions runner (`Error: Cannot find native binding. npm has a bug related to optional dependencies #4828`).
 
-### User Review & Critical Decisions
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> **Root Cause Identified from GitHub Actions Run**:
-> During `npm run build`, Vite loads `vite.config.ts`, which imports `@tailwindcss/vite`.
-> Tailwind v4 relies on `lightningcss`, which requires a native C++ node binary (`lightningcss.win32-x64-msvc.node`).
-> Because `package-lock.json` was generated in a Linux environment, npm's optional dependency resolver skipped the Windows binary during CI.
+> The build error is caused by npm's known cross-platform lockfile issue: when `package-lock.json` is checked in from a Linux environment, Windows CI runners fail to download platform-specific optional native packages (`@tailwindcss/oxide-win32-x64-msvc`).
+>
+> We will resolve this comprehensively on both the CI workflow level and in `package.json`.
 
-- **Solution 1: Remove Linux-Generated Lockfile on Windows Runner**:
-  - In `.github/workflows/build-windows-exe.yml`, remove `package-lock.json` on the Windows runner before running `npm install`. This forces npm to natively resolve dependencies for the current OS (Windows x64).
-- **Solution 2: Explicitly Install Both Windows Native Modules**:
-  - Run `npm install --no-save @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc` in the workflow.
-- **Solution 3: Update `package.json`**:
-  - Register `lightningcss-win32-x64-msvc` and `@rollup/rollup-win32-x64-msvc` in `optionalDependencies`.
+- **Confirmed Decision**: Remove `package-lock.json` dynamically on the Windows runner prior to installation, and force-install all four native Windows binaries required by Vite, Tailwind v4, Esbuild, and Rollup.
 
 ---
 
-### Technical Plan
+### 1. Overview & Core Concept
+
+- **Problem**: When running `tsc -b && vite build` on Windows in GitHub Actions, Vite loads `vite.config.ts`, which imports `@tailwindcss/vite`. `@tailwindcss/vite` imports `@tailwindcss/oxide`, which fails with:
+  `Error: Cannot find native binding. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828).`
+- **Solution**:
+  1. Update `.github/workflows/build.yml` on the Windows runner to delete the Linux-generated `package-lock.json` before `npm install`, allowing npm on Windows to compute a clean native dependency tree.
+  2. Add `@tailwindcss/oxide-win32-x64-msvc` alongside `@rollup/rollup-win32-x64-msvc`, `lightningcss-win32-x64-msvc`, and `@esbuild/win32-x64` in explicit installation commands and `package.json`'s `optionalDependencies`.
+
+---
+
+### 2. User Experience & Visual Design
+
+- This is a continuous integration pipeline fix. All application frontend UI, dark cyberpunk aesthetics, mod manager tools, and local server integration remain pristine and unaffected.
+
+---
+
+### 3. Key Product Decisions & Trade-Offs
+
+- **Decision 1: Dynamically removing `package-lock.json` in Windows CI runner**
+  - *Chosen Approach*: `if (Test-Path package-lock.json) { Remove-Item package-lock.json }` before `npm install` on the runner.
+  - *Why*: As documented in npm issue #4828, removing the cross-platform lockfile on a fresh CI runner forces npm on Windows to evaluate native dependencies natively for `win32-x64`, ensuring all required binary bindings are downloaded.
+  - *Alternatives Considered*: Manually listing every transitive dependency's native module. By removing the lockfile AND explicitly installing the known binaries, we guarantee complete immunity against npm optional dependency failures.
+
+- **Decision 2: Comprehensive `optionalDependencies` in `package.json`**
+  - *Chosen Approach*: Explicitly declare all four Windows packages:
+    - `@tailwindcss/oxide-win32-x64-msvc`
+    - `lightningcss-win32-x64-msvc`
+    - `@rollup/rollup-win32-x64-msvc`
+    - `@esbuild/win32-x64`
+  - *Why*: Guarantees that any Windows development machine running `npm install` directly will recognize and fetch all four required binaries.
+
+---
+
+### 4. Technical Architecture & CI Pipeline Flow
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Current Failing Step                            │
-│                                                                        │
-│   vite.config.ts -> @tailwindcss/vite -> lightningcss                  │
-│   └── ❌ Missing '../lightningcss.win32-x64-msvc.node'                 │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                   Permanent Windows Native Fix                         │
-│                                                                        │
-│   1. Remove Linux package-lock.json on runner                         │
-│   2. Fresh npm install for Windows x64                                 │
-│   3. Explicitly install:                                               │
-│      - @rollup/rollup-win32-x64-msvc                                   │
-│      - lightningcss-win32-x64-msvc                                     │
-│   4. Run npm run build (tsc -b && vite build) -> SUCCESS              │
-│   5. Package installer & portable .exe                                 │
-└────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   GitHub Actions Runner                     │
+│                      (windows-latest)                       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Step: Install Dependencies                  │
+│  1. Remove Linux package-lock.json                          │
+│  2. npm install --include=optional                          │
+│  3. npm install --no-save:                                  │
+│     - @tailwindcss/oxide-win32-x64-msvc                     │
+│     - lightningcss-win32-x64-msvc                           │
+│     - @rollup/rollup-win32-x64-msvc                         │
+│     - @esbuild/win32-x64                                    │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│               Step: Compile Web Application                 │
+│                 tsc -b && vite build                        │
+│   (Vite loads config, Tailwind Oxide & LightningCSS OK)     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Step: Package with Electron-Builder            │
+│               npx electron-builder --win --x64              │
+│       -> Produces Setup .exe and Portable .exe              │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-#### Files to Update:
-1. **`.github/workflows/build-windows-exe.yml`**:
-   - Update `Install Dependencies` step to clear the Linux lockfile and install both Windows native binaries.
-2. **`package.json`**:
-   - Add `"lightningcss-win32-x64-msvc": "^1.32.0"` to `optionalDependencies`.
