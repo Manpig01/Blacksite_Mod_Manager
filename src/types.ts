@@ -186,3 +186,35 @@ export type CatalogSortOption =
   | 'name_za'
   | 'endorsements'
   | 'favourites';
+
+export interface ForgeDependencyNode {
+  id: number;
+  guid?: string;
+  name: string;
+  slug?: string;
+  latest_compatible_version?: {
+    id: number;
+    version: string;
+    link: string;
+    content_length?: number | null;
+    fika_compatibility?: string;
+  } | null;
+  conflict: boolean;
+  dependencies?: ForgeDependencyNode[];
+}
+
+export interface ResolvedDependencyItem {
+  id: number;
+  guid: string;
+  name: string;
+  slug: string;
+  version: string;
+  downloadUrl: string;
+  contentLength?: number | null;
+  conflict: boolean;
+  isInstalled: boolean;
+  installedVersion?: string;
+  selected: boolean;
+  depth: number;
+}
+

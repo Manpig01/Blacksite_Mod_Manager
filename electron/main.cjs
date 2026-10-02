@@ -210,7 +210,7 @@ app.whenReady().then(() => {
       return { success: true, ...result };
     } catch (err) {
       console.error('mod:install error:', err);
-      return { success: false, error: err.message };
+      return { success: false, error: err.message, statusCode: err.statusCode || 500 };
     }
   });
 

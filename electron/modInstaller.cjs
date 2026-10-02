@@ -246,7 +246,9 @@ async function installMod({ sptDirectory, modName, author, version, downloadUrl,
       });
 
       if (!response.ok) {
-        throw new Error(`Download failed with HTTP status ${response.status}: ${response.statusText}`);
+        const httpErr = new Error(`Download failed with HTTP status ${response.status}: ${response.statusText || (response.status === 404 ? 'Not Found' : 'Download Error')}`);
+        httpErr.statusCode = response.status;
+        throw httpErr;
       }
 
       const arrayBuffer = await response.arrayBuffer();

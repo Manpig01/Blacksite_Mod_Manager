@@ -1,4 +1,4 @@
-import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod } from '../types';
+import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem } from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
 
 const API_BASE = 'https://sp-mod.com/api/v0';
@@ -74,13 +74,18 @@ export const apiService = {
 
   async getModVersions(modId: number): Promise<ModVersion[]> {
     try {
-      const res = await fetch(`${API_BASE}/mod/${modId}/versions?per_page=50`, {
-        signal: AbortSignal.timeout(4000)
+      const res = await fetch(`${API_BASE}/mod/${modId}/versions?per_page=50&sort=-published_at`, {
+        signal: AbortSignal.timeout(5000)
       });
       if (res.ok) {
         const json = await res.json();
-        if (json.data && Array.isArray(json.data)) {
-          return json.data;
+        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
+          return [...json.data].sort((a, b) => {
+            const dateA = new Date(a.published_at || a.created_at || 0).getTime();
+            const dateB = new Date(b.published_at || b.created_at || 0).getTime();
+            if (dateB !== dateA) return dateB - dateA;
+            return (b.id || 0) - (a.id || 0);
+          });
         }
       }
     } catch {
@@ -100,6 +105,98 @@ export const apiService = {
         published_at: "2026-08-01T12:00:00Z"
       }
     ];
+  },
+
+  async resolveModDependencies(
+    modIdentifier: string | number,
+    version: string,
+    sptVersion: string = '4.1.6',
+    installedMods: InstalledMod[] = []
+  ): Promise<ResolvedDependencyItem[]> {
+    try {
+      const cleanSptVersion = (sptVersion || '4.1.6').replace(/^[~^>=<\s]+/, '');
+      const url = `${API_BASE}/mods/dependencies?mods=${encodeURIComponent(`${modIdentifier}:${version}`)}&spt_version=${encodeURIComponent(cleanSptVersion)}`;
+
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) {
+        console.warn(`[Dependency Resolver] API responded with ${res.status}`);
+        return [];
+      }
+
+      const json = await res.json();
+      if (!json.success || !json.data) return [];
+
+      const key = `${modIdentifier}:${version}`;
+      const rawTree: ForgeDependencyNode[] = json.data[key] || json.data[Object.keys(json.data)[0]] || [];
+
+      const installedMap = new Map<string, InstalledMod>();
+      installedMods.forEach((m) => {
+        if (m.id) installedMap.set(m.id.toLowerCase(), m);
+        if (m.modId) installedMap.set(String(m.modId), m);
+        installedMap.set(m.name.toLowerCase(), m);
+      });
+
+      const flattened: ResolvedDependencyItem[] = [];
+      const seenIds = new Set<string>();
+
+      function traverse(node: ForgeDependencyNode, depth: number) {
+        if (!node) return;
+
+        // Traverse nested dependencies first to ensure prerequisites are installed before dependent mods
+        if (node.dependencies && Array.isArray(node.dependencies)) {
+          for (const child of node.dependencies) {
+            traverse(child, depth + 1);
+          }
+        }
+
+        const nodeId = node.id || (node as any).mod_id;
+        const nodeGuid = node.guid || node.slug || String(nodeId);
+        const nodeKey = `${nodeId}-${nodeGuid}`.toLowerCase();
+
+        if (seenIds.has(nodeKey)) return;
+        seenIds.add(nodeKey);
+
+        const targetVerObj = node.latest_compatible_version;
+        const depVer = targetVerObj?.version || '1.0.0';
+        const downloadUrl =
+          targetVerObj?.link ||
+          `https://sp-mod.com/mod/download/${nodeId}/${node.slug || 'mod'}/${depVer}`;
+
+        const isInstalled =
+          installedMap.has(nodeGuid.toLowerCase()) ||
+          installedMap.has(String(nodeId)) ||
+          installedMap.has(node.name.toLowerCase());
+
+        const existingInstalled =
+          installedMap.get(nodeGuid.toLowerCase()) ||
+          installedMap.get(String(nodeId)) ||
+          installedMap.get(node.name.toLowerCase());
+
+        flattened.push({
+          id: nodeId,
+          guid: nodeGuid,
+          name: node.name,
+          slug: node.slug || nodeGuid,
+          version: depVer,
+          downloadUrl,
+          contentLength: targetVerObj?.content_length || null,
+          conflict: !!node.conflict,
+          isInstalled,
+          installedVersion: existingInstalled?.version,
+          selected: !isInstalled,
+          depth,
+        });
+      }
+
+      for (const rootNode of rawTree) {
+        traverse(rootNode, 1);
+      }
+
+      return flattened;
+    } catch (err) {
+      console.warn('[Dependency Resolver] Failed resolving dependencies:', err);
+      return [];
+    }
   },
 
   async searchMods(filters: CatalogQueryFilters): Promise<CatalogQueryResult> {

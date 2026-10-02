@@ -1,84 +1,62 @@
-# Clean Release: Removal of SAIN Legacy AI Extension Mock Entry
+# Implementation Plan: Forge Dependency Resolution & Installation Recovery
 
-This plan outlines the removal of the mock `SAIN Legacy AI Extension` entry (`me.sol.sain.legacy-patch`) from the default installed loadout and dependency graph so that fresh installations start with clean, un-flagged mod configurations.
+Implement official SPT Forge dependency resolution via the `/mods/dependencies` API, add an interactive Dependency Confirmation Modal letting users choose whether to install with or without dependencies, and provide version health detection with an automatic recovery picker for 404 download errors.
 
-### User Review & Critical Decisions
+## Proposed Changes
 
-> [!IMPORTANT]
-> The user confirmed the removal of the specific mock entry `SAIN Legacy AI Extension` rather than wiping all default installed mods.
+### 1. SPT Forge API Service (`src/services/apiService.ts`)
+- **Implement Dependency Resolution Endpoint**:
+  - Add `resolveModDependencies(modIdentifier: string | number, version: string, sptVersion: string)` calling `GET /api/v0/mods/dependencies?mods=${modIdentifier}:${version}&spt_version=${sptVersion}`.
+  - Recursively parse the returned tree of dependencies (including nested dependencies like SAIN -> Waypoints / BigBrain).
+- **Implement Version Health & Auto-Resolution**:
+  - In `getModVersions(modId)`, sort versions by latest published date and check compatibility against the active SPT version (`settings.sptVersion`).
+  - Provide a fallback check when resolving download links so outdated 404 links (such as early WTT Content Backport hosting) are flagged before download.
 
-- **Confirmed Decision 1**: Remove the `me.sol.sain.legacy-patch` mock entry from `INITIAL_INSTALLED_MODS`.
-- **Confirmed Decision 2**: Clean up the dependency mapping in `DEFAULT_KNOWN_DEPS` and default profiles in `INITIAL_PROFILES` so no missing dependency warnings (`me.sol.sain` or `xyz.drakia.waypoints`) are triggered on startup.
-- **Recommended Default**: Retain valid foundational mods (e.g. `xyz.drakia.bigbrain`, `fika.ghostfenixx.svm`, `me.sol.sain`, `com.amanda.graphics`) as healthy, working presets for new users, without dummy error states.
+### 2. Interactive Dependency Modal (`src/components/DependencyInstallModal.tsx`)
+- Create a dedicated, polished modal that opens when a mod requires other packages:
+  - **Tree View / Checklist**: Lists the primary mod and all required dependencies, their author, latest compatible version, and whether each dependency is already installed locally.
+  - **User Choices**:
+    - **"Install with Dependencies"**: Queues the entire dependency tree in the correct dependency order.
+    - **"Custom Selection"**: Allows unchecking individual dependencies.
+    - **"Install Without Dependencies"**: Installs only the requested target mod.
+  - **Conflict Warnings**: Highlights any incompatible or conflicting mods flagged by the Forge resolver.
 
----
+### 3. Installation Flow & Error Recovery (`src/App.tsx` & `src/components/VersionPickerModal.tsx`)
+- **Pre-Install Dependency Check**:
+  - In `handleInstallMod`, query `apiService.resolveModDependencies` before queuing.
+  - If missing dependencies are found, display `DependencyInstallModal`. If none are required, proceed directly.
+- **404 / Broken Link Recovery**:
+  - When a download fails with a 404 status (or unresolvable external CDN), capture the error and automatically open the `VersionPickerModal` with version health indicators.
+  - Provide direct options in the modal: "Try another version", "Open Forge mod page", or "Upload local archive (.zip/.7z)".
+- **Queue Progress & Sequential Installation**:
+  - When installing with dependencies, sequentially download, extract, and route each dependency so prerequisites (e.g. BigBrain, SAIN) are installed before the dependent mod.
 
-### 1. Overview & Core Concept
-
-- **What It Does**: Cleans up the installed mods list by purging the placeholder `SAIN Legacy AI Extension` mod card and its unsatisfied dependencies.
-- **Target Audience**: SPT players downloading the Windows release who want clean, production-grade loadout management without phantom dependency errors.
-- **Key Value**: Delivers an error-free out-of-the-box state where all pre-installed or imported mods are verified and functional.
-
----
-
-### 2. User Experience & Visual Design
-
-- **Key User Flows**:
-  1. User launches Blacksite Mod Manager.
-  2. The "Installed Mods" tab shows verified, healthy mods with 0 warning banners or missing dependency alerts.
-  3. The orange missing dependency badge (`1 Missing Dependencies`) will no longer appear on the toolbar.
-  4. Users can install mods normally from the Browse Mods tab or local archives without encountering residual mock conflicts.
-- **Visual Identity & Theme**:
-  - Tactical military HUD styling (slate-900 `#121418`, card `#181B20`, orange `#EA580C`, green `#16A34A`).
-  - No broken dependency cards or meme thumbnails in the default view.
-
----
-
-### 3. Key Product Decisions & Trade-Offs
-
-- **Decision 1: Targeted Mock Removal vs. Empty State**:
-  - *Chosen Approach*: Specifically remove `me.sol.sain.legacy-patch` from initial data fixtures and storage defaults.
-  - *Why*: Users get a working demo loadout (BigBrain, SVM, SAIN, Amands Graphics) demonstrating mod management, ordering, and config editing without broken dependencies.
-  - *Alternatives Considered*: Wiping all default mods would leave new users with an empty list and require setting up paths before exploring features.
-
-- **Decision 2: Storage Migration for Existing Local Profiles**:
-  - *Chosen Approach*: In `storageService.ts`, filter out `me.sol.sain.legacy-patch` if present in cached installed mods or loadout profiles on startup.
-  - *Why*: Ensures existing dev/test browser cache sessions immediately reflect the clean state without manual localStorage clearing.
+### 4. Native Desktop Installer Engine (`electron/modInstaller.cjs`)
+- Enhance error classification so HTTP status codes (such as 404 Not Found, 403 Forbidden, 429 Rate Limit) are structured and returned to the renderer.
+- Support automatic retry with follow-redirect headers and fallback to alternate mirror links if provided.
 
 ---
 
-### 4. Technical Architecture & Data Strategy
+## User Review Required
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       Data Layer                            │
-│  ┌──────────────────────────┐   ┌────────────────────────┐  │
-│  │ fixtureCatalog.ts        │   │ storageService.ts      │  │
-│  │ - Remove legacy patch    │   │ - Filter out legacy ID │  │
-│  │ - Clean INITIAL_PROFILES │   │ - Clean known deps map │  │
-│  └─────────────┬────────────┘   └───────────┬────────────┘  │
-└────────────────┼────────────────────────────┼───────────────┘
-                 │                            │
-                 ▼                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      State Layer                            │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ App.tsx: installedMods State                          │  │
-│  │ - No missing dependency warning badges                │  │
-│  │ - Clean load order sequencing                         │  │
-│  └──────────────────────────┬────────────────────────────┘  │
-└─────────────────────────────┼───────────────────────────────┘
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       UI Layer                              │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ InstalledModsTab.tsx                                  │  │
-│  │ - BigBrain (#1), SVM (#2), SAIN (#3), Graphics (#4)   │  │
-│  │ - Missing Dependencies badge hidden                   │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
+> [!NOTE]
+> - Do you want installed dependencies to be automatically activated in your current loadout profile upon download completion? (Recommended: Yes).
+> - All required and optional dependencies returned by the Forge API will have clear visual indicators and checkboxes in the modal.
 
-- **Interactive State Transitions**:
-  - On launch, `loadInstalledMods()` sanitizes installed mods by filtering out any residual `me.sol.sain.legacy-patch` entries.
-  - Missing dependency detection computes `dependencies.filter(dep => !installedIds.has(dep))`. With no unsatisfied dependencies, the `Missing Dependencies` alert count resolves to 0.
+---
+
+## Verification Plan
+
+### Automated Verification
+- **Compilation Check**: Run `npm run build` (`tsc -b && vite build`) to verify all TypeScript types, component interfaces, and bundle generation.
+- **Node Syntax Verification**: Validate `electron/modInstaller.cjs`, `electron/preload.cjs`, and `electron/main.cjs`.
+
+### Manual & Behavioral Verification
+1. **Dependency Modal**:
+   - Browse to a mod with known dependencies (e.g., *WTT - Black Division* or *SAIN*).
+   - Click "Install". Confirm that the **Dependency Modal** appears showing required prerequisites (BigBrain, Waypoints, etc.) with active checkboxes and "Install with Dependencies" / "Install Without Dependencies" buttons.
+2. **404 Download Link Handling**:
+   - Attempt to install an older or broken version (such as *WTT - Content Backport v1.0.0*).
+   - Confirm that Blacksite catches the 404, opens the **Version Picker Modal** showing version health indicators, and allows choosing a working release (e.g., v1.1.3 or latest) without silent failure.
+3. **SPT Directory Verification**:
+   - Verify that extracted files and `.dll` assemblies land in `<SPT>\user\mods` and `<SPT>\BepInEx\plugins` respectively.

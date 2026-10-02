@@ -9,6 +9,7 @@ import { InstallQueueModal } from './components/InstallQueueModal';
 import { VersionSelectionModal } from './components/VersionSelectionModal';
 import { ConfigEditorModal } from './components/ConfigEditorModal';
 import { ConflictResolverModal } from './components/ConflictResolverModal';
+import { DependencyInstallModal } from './components/DependencyInstallModal';
 import { SptLauncherModal } from './components/SptLauncherModal';
 import { WindowsDownloadModal } from './components/WindowsDownloadModal';
 import { StatusBar } from './components/StatusBar';
@@ -26,6 +27,7 @@ import {
   ToastMessage,
   ModVersion,
   ModTag,
+  ResolvedDependencyItem,
 } from './types';
 import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
@@ -48,6 +50,19 @@ export const App: React.FC = () => {
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [selectedModForVersions, setSelectedModForVersions] = useState<Mod | null>(null);
+  const [versionRecoveryNotice, setVersionRecoveryNotice] = useState<string | null>(null);
+  const [dependencyModalState, setDependencyModalState] = useState<{
+    isOpen: boolean;
+    targetMod: Mod | null;
+    targetVersion: string;
+    targetDownloadUrl?: string;
+    dependencies: ResolvedDependencyItem[];
+  }>({
+    isOpen: false,
+    targetMod: null,
+    targetVersion: '',
+    dependencies: [],
+  });
   const [selectedModForConfig, setSelectedModForConfig] = useState<InstalledMod | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<ConflictInfo | null>(null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
@@ -248,7 +263,8 @@ export const App: React.FC = () => {
     modId?: number,
     downloadUrl?: string,
     archiveBase64?: string,
-    archiveFileName?: string
+    archiveFileName?: string,
+    sourceMod?: Mod
   ) => {
     const queueId = `q-${Date.now()}-${Math.random()}`;
     const targetGuid = guid || `mod.${modName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
@@ -298,7 +314,9 @@ export const App: React.FC = () => {
         });
 
         if (!installResult || !installResult.success) {
-          throw new Error(installResult?.error || 'Installation failed during extraction or folder placement.');
+          const errObj: any = new Error(installResult?.error || 'Installation failed during extraction or folder placement.');
+          if (installResult?.statusCode) errObj.statusCode = installResult.statusCode;
+          throw errObj;
         }
 
         setQueue((prev) =>
@@ -358,12 +376,26 @@ export const App: React.FC = () => {
         setQueue((prev) =>
           prev.map((item) =>
             item.id === queueId
-              ? { ...item, status: 'failed', downloadSpeed: 'Failed' }
+              ? { ...item, status: 'failed', downloadSpeed: 'Failed', errorMessage: err.message }
               : item
           )
         );
         setStatusText(`Error installing ${modName}`);
         showToast('Installation Failed', err.message || 'Error writing files to SPT directory.', 'error');
+
+        // Automatic 404 Recovery: Prompt Version Selection Modal with status notice
+        if (
+          err.message?.includes('404') ||
+          err.message?.toLowerCase().includes('not found') ||
+          err.statusCode === 404
+        ) {
+          if (sourceMod) {
+            setVersionRecoveryNotice(
+              `The download link for ${modName} v${version} returned HTTP 404 Not Found. Please select another release below or download directly from Forge.`
+            );
+            setSelectedModForVersions(sourceMod);
+          }
+        }
         return;
       }
     }
@@ -446,42 +478,126 @@ export const App: React.FC = () => {
     }, 250);
   };
 
-  const handleInstallMod = async (mod: Mod, specificVersion?: string) => {
+  const handleInstallMod = async (mod: Mod, specificVersion?: string, skipDepCheck = false) => {
     let version = specificVersion;
     let downloadLink = '';
 
-    if (mod.versions && mod.versions.length > 0) {
-      const verObj = specificVersion ? mod.versions.find((v) => v.version === specificVersion) : mod.versions[0];
-      version = verObj?.version || mod.versions[0].version;
-      downloadLink = verObj?.link || '';
-    }
-
-    // If downloadLink is missing (such as on live search results), query versions from Forge API
+    // If specificVersion or downloadLink not yet determined, fetch sorted versions from Forge API
     if (!downloadLink && mod.id) {
       try {
         const verList = await apiService.getModVersions(mod.id);
         if (verList && verList.length > 0) {
-          const targetVer = specificVersion ? verList.find((v) => v.version === specificVersion) || verList[0] : verList[0];
+          const targetVer = specificVersion
+            ? verList.find((v) => v.version === specificVersion) || verList[0]
+            : verList[0];
           version = targetVer.version || version;
           downloadLink = targetVer.link || '';
         }
       } catch (err) {
         console.warn('Could not fetch mod versions for download link:', err);
       }
+    } else if (mod.versions && mod.versions.length > 0) {
+      const verObj = specificVersion
+        ? mod.versions.find((v) => v.version === specificVersion)
+        : mod.versions[0];
+      version = verObj?.version || mod.versions[0].version;
+      downloadLink = verObj?.link || '';
+    }
+
+    const finalVer = version || '1.0.0';
+
+    // Check Forge dependencies if not explicitly skipped
+    const modIdentifier = mod.id || mod.guid || mod.slug;
+    if (!skipDepCheck && modIdentifier) {
+      setStatusText(`Checking Forge dependencies for ${mod.name}...`);
+      try {
+        const resolvedDeps = await apiService.resolveModDependencies(
+          modIdentifier,
+          finalVer,
+          settings.sptVersion,
+          installedMods
+        );
+
+        if (resolvedDeps && resolvedDeps.length > 0) {
+          setStatusText('Ready');
+          setDependencyModalState({
+            isOpen: true,
+            targetMod: mod,
+            targetVersion: finalVer,
+            targetDownloadUrl: downloadLink,
+            dependencies: resolvedDeps,
+          });
+          return;
+        }
+      } catch (depErr) {
+        console.warn('Failed resolving dependencies:', depErr);
+      }
+      setStatusText('Ready');
     }
 
     queueInstall(
       mod.name,
       mod.owner?.name || 'Unknown',
-      version || '1.0.0',
+      finalVer,
       mod.thumbnail,
       mod.guid || undefined,
       mod.id,
-      downloadLink
+      downloadLink,
+      undefined,
+      undefined,
+      mod
     );
   };
 
+  const handleConfirmDependencies = async (
+    selectedDeps: ResolvedDependencyItem[],
+    installStandalone: boolean
+  ) => {
+    const { targetMod, targetVersion, targetDownloadUrl } = dependencyModalState;
+    setDependencyModalState({
+      isOpen: false,
+      targetMod: null,
+      targetVersion: '',
+      dependencies: [],
+    });
+
+    if (!targetMod) return;
+
+    if (installStandalone || selectedDeps.length === 0) {
+      showToast(
+        'Install Standalone',
+        `Installing ${targetMod.name} v${targetVersion} without dependencies.`,
+        'info'
+      );
+      handleInstallMod(targetMod, targetVersion, true);
+      return;
+    }
+
+    showToast(
+      'Installing Dependencies',
+      `Queued ${selectedDeps.length} prerequisites followed by ${targetMod.name}.`,
+      'info'
+    );
+
+    // Queue prerequisites sequentially in topological order (dependencies first)
+    for (const dep of selectedDeps) {
+      await queueInstall(
+        dep.name,
+        'Forge Dependency',
+        dep.version,
+        '',
+        dep.guid,
+        dep.id,
+        dep.downloadUrl
+      );
+    }
+
+    // Now queue the target mod (skipDepCheck = true so it doesn't prompt again)
+    await handleInstallMod(targetMod, targetVersion, true);
+  };
+
   const handleSelectVersion = (mod: Mod, ver: ModVersion) => {
+    setVersionRecoveryNotice(null);
     setSelectedModForVersions(null);
     handleInstallMod(mod, ver.version);
   };
@@ -1018,9 +1134,33 @@ export const App: React.FC = () => {
 
       <VersionSelectionModal
         mod={selectedModForVersions}
-        onClose={() => setSelectedModForVersions(null)}
+        recoveryNotice={versionRecoveryNotice}
+        onClose={() => {
+          setSelectedModForVersions(null);
+          setVersionRecoveryNotice(null);
+        }}
         onSelectVersion={handleSelectVersion}
+        onInstallFromFile={handleInstallFromFile}
       />
+
+      {dependencyModalState.isOpen && dependencyModalState.targetMod && (
+        <DependencyInstallModal
+          isOpen={dependencyModalState.isOpen}
+          targetMod={dependencyModalState.targetMod}
+          targetVersion={dependencyModalState.targetVersion}
+          targetDownloadUrl={dependencyModalState.targetDownloadUrl}
+          dependencies={dependencyModalState.dependencies}
+          onConfirm={handleConfirmDependencies}
+          onClose={() =>
+            setDependencyModalState({
+              isOpen: false,
+              targetMod: null,
+              targetVersion: '',
+              dependencies: [],
+            })
+          }
+        />
+      )}
 
       <ConfigEditorModal
         mod={selectedModForConfig}
