@@ -85,6 +85,46 @@ export const App: React.FC = () => {
     showToast('Blacksite Ready', 'Blacksite Mod Manager v1.8.0 initialized.', 'info');
   }, []);
 
+  // Listen for live install progress events from Electron native backend
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.onInstallProgress) {
+      const unsubscribe = bridge.onInstallProgress((data: any) => {
+        if (!data?.queueId) return;
+        setQueue((prev) =>
+          prev.map((item) => {
+            if (item.id === data.queueId) {
+              const newStatus =
+                data.stage === 'installed'
+                  ? 'installed'
+                  : data.stage === 'extracting'
+                  ? 'extracting'
+                  : data.stage === 'routing'
+                  ? 'routing'
+                  : 'downloading';
+
+              return {
+                ...item,
+                status: newStatus,
+                progressPercent: data.percent ?? item.progressPercent,
+                bytesReceived: data.bytesReceived ?? item.bytesReceived,
+                totalBytes: data.totalBytes ?? item.totalBytes,
+                downloadSpeed: data.speed ?? item.downloadSpeed,
+              };
+            }
+            return item;
+          })
+        );
+        if (data.detail) {
+          setStatusText(data.detail);
+        }
+      });
+      return () => {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      };
+    }
+  }, []);
+
   // Update conflict state when installed mods change
   useEffect(() => {
     const foundConflicts = storageService.detectConflicts(installedMods, ignoredConflicts);
@@ -304,6 +344,7 @@ export const App: React.FC = () => {
         setStatusText(`Extracting & routing ${modName}...`);
 
         const installResult = await bridge.installMod({
+          queueId,
           sptDirectory: settings.sptDirectory,
           modName,
           author,
@@ -344,7 +385,7 @@ export const App: React.FC = () => {
             name: modName,
             author,
             version,
-            kind: installResult.kind || 'Both',
+            kind: installResult.kind || (isServer && isClient ? 'Both' : isServer ? 'Server' : 'Client'),
             thumbnail,
             sptVersion: settings.sptVersion,
             fikaCompatibility: true,

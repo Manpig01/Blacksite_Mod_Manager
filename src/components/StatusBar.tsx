@@ -47,24 +47,37 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         ) : null}
       </button>
 
-      {/* Right: Transfer speed + Progress bar */}
+      {/* Right: Transfer speed + Progress bar + Live Percentage */}
       <div className="flex items-center gap-3 shrink-0">
         {activeItem && (
-          <span className="font-mono text-[#F97316] text-[11.5px]">
-            {activeItem.downloadSpeed || 'Active'}
-          </span>
+          <div className="flex items-center gap-2">
+            {activeItem.bytesReceived > 0 && activeItem.totalBytes > 0 && (
+              <span className="font-mono text-[#9AA3AF] text-[11px] hidden md:inline">
+                {(activeItem.bytesReceived / (1024 * 1024)).toFixed(1)} MB / {(activeItem.totalBytes / (1024 * 1024)).toFixed(1)} MB
+              </span>
+            )}
+            <span className="font-mono text-[#F97316] text-[11.5px] font-semibold">
+              {activeItem.downloadSpeed || 'Active'}
+            </span>
+          </div>
         )}
 
-        <div className="w-48 bg-[#0E1013] border border-[#23272E] h-2.5 rounded-full overflow-hidden">
+        <div className="w-36 sm:w-44 bg-[#0E1013] border border-[#23272E] h-2.5 rounded-full overflow-hidden">
           {activeItem ? (
             <div
-              className="bg-[#EA580C] h-full transition-all duration-300 rounded-full"
-              style={{ width: `${activeItem.progressPercent}%` }}
+              className="bg-[#EA580C] h-full transition-all duration-200 rounded-full"
+              style={{ width: `${Math.max(3, activeItem.progressPercent)}%` }}
             />
           ) : (
             <div className="bg-[#16A34A] h-full w-full opacity-30" />
           )}
         </div>
+
+        {activeItem && (
+          <span className="font-mono text-[#4ADE80] text-[11.5px] font-bold w-10 text-right">
+            {activeItem.progressPercent}%
+          </span>
+        )}
       </div>
     </footer>
   );

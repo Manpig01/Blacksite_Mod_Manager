@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for integrating SPT Forge dependency resolution, interactive dependency confirmation modal, and version health handling to resolve installation 404 errors.",
-  "updatedAt":  "2026-10-02T04:51:31.273902885Z",
+  "summary":  "Plan to resolve archive routing for SPT_Runtime/complex structures (fixing empty folders like WTT-CommonLib), eliminate 1GB+ download lag with direct-to-disk streaming, and provide real-time percentage and speed tracking over Electron IPC.",
+  "updatedAt":  "2026-10-02T06:07:11.067055472Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

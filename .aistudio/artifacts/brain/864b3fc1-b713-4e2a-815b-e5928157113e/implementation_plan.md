@@ -1,62 +1,56 @@
-# Implementation Plan: Forge Dependency Resolution & Installation Recovery
+# Implementation Plan: Streaming Downloads & SPT_Runtime Archive Routing
 
-Implement official SPT Forge dependency resolution via the `/mods/dependencies` API, add an interactive Dependency Confirmation Modal letting users choose whether to install with or without dependencies, and provide version health detection with an automatic recovery picker for 404 download errors.
+Resolve large mod installation lag, provide live percentage progress, and fix archive extraction for `SPT_Runtime` structures (resolving empty folders such as `WTT-CommonLib`).
 
 ## Proposed Changes
 
-### 1. SPT Forge API Service (`src/services/apiService.ts`)
-- **Implement Dependency Resolution Endpoint**:
-  - Add `resolveModDependencies(modIdentifier: string | number, version: string, sptVersion: string)` calling `GET /api/v0/mods/dependencies?mods=${modIdentifier}:${version}&spt_version=${sptVersion}`.
-  - Recursively parse the returned tree of dependencies (including nested dependencies like SAIN -> Waypoints / BigBrain).
-- **Implement Version Health & Auto-Resolution**:
-  - In `getModVersions(modId)`, sort versions by latest published date and check compatibility against the active SPT version (`settings.sptVersion`).
-  - Provide a fallback check when resolving download links so outdated 404 links (such as early WTT Content Backport hosting) are flagged before download.
+### 1. Zero-Lag Direct-to-Disk Streaming Engine (`electron/modInstaller.cjs`)
+- **Direct-to-Disk Stream Pipeline**:
+  - Replace memory-heavy `response.arrayBuffer()` and synchronous `fs.writeFileSync()` with chunked disk streaming using `fs.createWriteStream()` and Node.js stream pipeline.
+  - Keeps V8 RAM usage below 30 MB regardless of archive size (whether 20 MB or 4 GB), preventing garbage collection pauses and eliminating UI freezing.
+- **Real-Time Progress & Speed Calculation**:
+  - Track `receivedBytes`, `totalBytes` (from `content-length` header), elapsed time, and download speed in MB/s.
+  - Emit throttled progress events (every 150ms) to the Electron renderer via progress callbacks:
+    - Stages: `'downloading'`, `'extracting'`, `'routing'`, `'installed'`.
+    - Data: `{ queueId, stage, percent, receivedBytes, totalBytes, speed, detail }`.
 
-### 2. Interactive Dependency Modal (`src/components/DependencyInstallModal.tsx`)
-- Create a dedicated, polished modal that opens when a mod requires other packages:
-  - **Tree View / Checklist**: Lists the primary mod and all required dependencies, their author, latest compatible version, and whether each dependency is already installed locally.
-  - **User Choices**:
-    - **"Install with Dependencies"**: Queues the entire dependency tree in the correct dependency order.
-    - **"Custom Selection"**: Allows unchecking individual dependencies.
-    - **"Install Without Dependencies"**: Installs only the requested target mod.
-  - **Conflict Warnings**: Highlights any incompatible or conflicting mods flagged by the Forge resolver.
+### 2. Comprehensive SPT Archive Routing (`electron/modInstaller.cjs`)
+- **Support for `SPT_Runtime` & Deeply Nested Folders**:
+  - Detect and copy `SPT_Runtime/user` and `SPT_Runtime/BepInEx` (the format used by WTT - CommonLib, SAIN, and SPT 4.x mods).
+  - Also support `BepInEx/patchers` (e.g. `FixPluginTypesSerialization.dll` needed by WTT CommonLib).
+  - Recursively search for any `user/mods/<folder>` or `BepInEx/plugins/<folder>` regardless of how many nested directory wrappers the author included in the zip/7z.
+- **Accurate Folder Registration & Cleanup**:
+  - Detect the exact name of the extracted server mod folder (e.g. `WTT-ServerCommonLib`) rather than defaulting to an arbitrary name.
+  - Never generate empty placeholder folders; only register paths that actually contain installed files.
 
-### 3. Installation Flow & Error Recovery (`src/App.tsx` & `src/components/VersionPickerModal.tsx`)
-- **Pre-Install Dependency Check**:
-  - In `handleInstallMod`, query `apiService.resolveModDependencies` before queuing.
-  - If missing dependencies are found, display `DependencyInstallModal`. If none are required, proceed directly.
-- **404 / Broken Link Recovery**:
-  - When a download fails with a 404 status (or unresolvable external CDN), capture the error and automatically open the `VersionPickerModal` with version health indicators.
-  - Provide direct options in the modal: "Try another version", "Open Forge mod page", or "Upload local archive (.zip/.7z)".
-- **Queue Progress & Sequential Installation**:
-  - When installing with dependencies, sequentially download, extract, and route each dependency so prerequisites (e.g. BigBrain, SAIN) are installed before the dependent mod.
-
-### 4. Native Desktop Installer Engine (`electron/modInstaller.cjs`)
-- Enhance error classification so HTTP status codes (such as 404 Not Found, 403 Forbidden, 429 Rate Limit) are structured and returned to the renderer.
-- Support automatic retry with follow-redirect headers and fallback to alternate mirror links if provided.
+### 3. Real-Time Progress IPC Bridge & Renderer UI (`electron/preload.cjs` & `src/App.tsx`)
+- **Preload Bridge**:
+  - Expose `onInstallProgress(callback)` in `window.desktopBridge` to listen for IPC progress events from the main process.
+- **Live Percentage Display in UI**:
+  - Update `QueueItem` state in `App.tsx` on each progress tick so the user sees live download percentages (e.g., `45% (585 MB / 1.3 GB) • 16.2 MB/s`), followed by decompression and routing status.
+  - Display progress in the Queue modal, floating indicator, and status bar.
 
 ---
 
 ## User Review Required
 
-> [!NOTE]
-> - Do you want installed dependencies to be automatically activated in your current loadout profile upon download completion? (Recommended: Yes).
-> - All required and optional dependencies returned by the Forge API will have clear visual indicators and checkboxes in the modal.
+> [!IMPORTANT]
+> - All future installations of large mods (like 1.3 GB weapons/content packs) will stream directly to disk without freezing the application.
+> - Mods with `SPT_Runtime`, `BepInEx/patchers`, or non-standard root folders (such as `WTT - CommonLib`) will have all server DLLs, client DLLs, and patchers placed in their respective locations automatically.
 
 ---
 
 ## Verification Plan
 
 ### Automated Verification
-- **Compilation Check**: Run `npm run build` (`tsc -b && vite build`) to verify all TypeScript types, component interfaces, and bundle generation.
-- **Node Syntax Verification**: Validate `electron/modInstaller.cjs`, `electron/preload.cjs`, and `electron/main.cjs`.
+- **Compilation Check**: Run `npm run build` (`tsc -b && vite build`) to ensure frontend compilation.
+- **Electron Script Syntax**: Verify `electron/main.cjs`, `electron/preload.cjs`, and `electron/modInstaller.cjs` using `node -c`.
 
 ### Manual & Behavioral Verification
-1. **Dependency Modal**:
-   - Browse to a mod with known dependencies (e.g., *WTT - Black Division* or *SAIN*).
-   - Click "Install". Confirm that the **Dependency Modal** appears showing required prerequisites (BigBrain, Waypoints, etc.) with active checkboxes and "Install with Dependencies" / "Install Without Dependencies" buttons.
-2. **404 Download Link Handling**:
-   - Attempt to install an older or broken version (such as *WTT - Content Backport v1.0.0*).
-   - Confirm that Blacksite catches the 404, opens the **Version Picker Modal** showing version health indicators, and allows choosing a working release (e.g., v1.1.3 or latest) without silent failure.
-3. **SPT Directory Verification**:
-   - Verify that extracted files and `.dll` assemblies land in `<SPT>\user\mods` and `<SPT>\BepInEx\plugins` respectively.
+1. **SPT_Runtime Extraction Test**:
+   - Reinstall `WTT - CommonLib` via Blacksite.
+   - Verify that `user/mods/WTT-ServerCommonLib` contains `config.jsonc`, `db/`, and `WTT-ServerCommonLib.dll`.
+   - Verify that `BepInEx/plugins/WTT-ClientCommonLib` contains the client DLLs and `BepInEx/patchers` contains `FixPluginTypesSerialization.dll`.
+2. **Large Mod Streaming & Progress Test**:
+   - Install a large mod (e.g. Content Backport or 1GB+ pack).
+   - Observe real-time percentage (`0%` to `100%`) and download speed without any UI stutter or window lag.
