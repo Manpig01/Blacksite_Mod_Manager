@@ -50,16 +50,19 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       {/* Right: Transfer speed + Progress bar */}
       <div className="flex items-center gap-3 shrink-0">
         {activeItem && (
-          <span className="font-mono text-[#F97316] text-[11.5px]">
-            {activeItem.downloadSpeed || 'Active'}
-          </span>
+          <div className="flex items-center gap-2 font-mono text-[11.5px]">
+            <span className="text-white font-bold">{activeItem.progressPercent}%</span>
+            {activeItem.downloadSpeed && (
+              <span className="text-[#F97316] text-[11px]">{activeItem.downloadSpeed}</span>
+            )}
+          </div>
         )}
 
         <div className="w-48 bg-[#0E1013] border border-[#23272E] h-2.5 rounded-full overflow-hidden">
           {activeItem ? (
             <div
               className="bg-[#EA580C] h-full transition-all duration-300 rounded-full"
-              style={{ width: `${activeItem.progressPercent}%` }}
+              style={{ width: `${Math.max(2, activeItem.progressPercent)}%` }}
             />
           ) : (
             <div className="bg-[#16A34A] h-full w-full opacity-30" />

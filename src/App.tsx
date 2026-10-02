@@ -21,6 +21,7 @@ import {
   SptVersionInfo,
   InstalledMod,
   QueueItem,
+  QueueItemStatus,
   SettingsState,
   ModProfile,
   ConflictInfo,
@@ -141,6 +142,49 @@ export const App: React.FC = () => {
         .catch((err: any) => console.warn('Could not scan disk mods:', err));
     }
   }, [settings.sptDirectory]);
+
+  // Real-time IPC download and extraction progress subscription from Electron
+  useEffect(() => {
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.onInstallProgress) {
+      const unsubscribe = bridge.onInstallProgress((data: any) => {
+        if (!data?.queueId) return;
+        setQueue((prev) =>
+          prev.map((item) => {
+            if (item.id === data.queueId) {
+              const status: QueueItemStatus =
+                data.stage === 'installed'
+                  ? 'installed'
+                  : data.stage === 'extracting'
+                  ? 'extracting'
+                  : data.stage === 'routing'
+                  ? 'routing'
+                  : 'downloading';
+              return {
+                ...item,
+                status,
+                progressPercent: typeof data.percent === 'number' ? data.percent : item.progressPercent,
+                bytesReceived: typeof data.bytesReceived === 'number' ? data.bytesReceived : item.bytesReceived,
+                totalBytes:
+                  typeof data.totalBytes === 'number' && data.totalBytes > 0
+                    ? data.totalBytes
+                    : item.totalBytes,
+                downloadSpeed: data.downloadSpeed || item.downloadSpeed,
+              };
+            }
+            return item;
+          })
+        );
+        if (data.downloadSpeed) {
+          const pct = typeof data.percent === 'number' && data.stage === 'downloading' ? ` (${data.percent}%)` : '';
+          setStatusText(`${data.modName || 'Mod'}: ${data.downloadSpeed}${pct}`);
+        }
+      });
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
+    }
+  }, []);
 
   const showToast = (
     title: string,
@@ -294,17 +338,10 @@ export const App: React.FC = () => {
     // Desktop Native Electron Flow (Performs real archive download, extraction & SPT routing to disk)
     if (bridge?.installMod) {
       try {
-        setQueue((prev) =>
-          prev.map((item) =>
-            item.id === queueId
-              ? { ...item, progressPercent: 40, downloadSpeed: 'Downloading & Extracting...' }
-              : item
-          )
-        );
-        setStatusText(`Extracting & routing ${modName}...`);
-
         const installResult = await bridge.installMod({
+          queueId,
           sptDirectory: settings.sptDirectory,
+          sptVersion: settings.sptVersion,
           modName,
           author,
           version,
@@ -349,7 +386,7 @@ export const App: React.FC = () => {
             sptVersion: settings.sptVersion,
             fikaCompatibility: true,
             installDate: new Date().toISOString().split('T')[0],
-            serverPath: installResult.serverPath || (isServer ? `user/mods/${modName.replace(/\s+/g, '')}` : undefined),
+            serverPath: installResult.serverPath || (isServer ? `${settings.serverModPath}/${modName.replace(/\s+/g, '')}` : undefined),
             clientPath: installResult.clientPath || (isClient ? `BepInEx/plugins/${modName.replace(/\s+/g, '')}.dll` : undefined),
             isDisabled: false,
             hasUpdate: false,
@@ -828,12 +865,13 @@ export const App: React.FC = () => {
   const handleOpenFolder = async (target: 'client' | 'server' | string) => {
     let relPath = '';
     let label = '';
+    const isSpt4 = settings.sptVersion.startsWith('4');
     if (target === 'client') {
       relPath = settings.clientModPath || 'BepInEx/plugins';
       label = 'Plugins Folder (BepInEx/plugins)';
     } else if (target === 'server') {
-      relPath = settings.serverModPath || 'user/mods';
-      label = 'Server Folder (user/mods)';
+      relPath = settings.serverModPath || (isSpt4 ? 'SPT_Runtime/user/mods' : 'user/mods');
+      label = `Server Folder (${relPath})`;
     } else {
       relPath = target;
       label = `Mod Folder (${target})`;
@@ -847,6 +885,9 @@ export const App: React.FC = () => {
         const opened = await bridge.openFolder(fullPath);
         if (opened) {
           showToast('Directory Explorer', `Opened ${label} in File Explorer: ${fullPath}`, 'success');
+          return;
+        } else {
+          showToast('Folder Notice', `Target path does not exist on disk: ${fullPath}`, 'warning');
           return;
         }
       } catch (err: any) {

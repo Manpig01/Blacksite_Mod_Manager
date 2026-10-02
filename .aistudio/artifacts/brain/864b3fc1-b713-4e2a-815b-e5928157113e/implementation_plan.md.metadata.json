@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan to resolve archive routing for SPT_Runtime/complex structures (fixing empty folders like WTT-CommonLib), eliminate 1GB+ download lag with direct-to-disk streaming, and provide real-time percentage and speed tracking over Electron IPC.",
-  "updatedAt":  "2026-10-02T06:07:11.067055472Z",
+  "summary":  "Implementation plan to route server mods to SPT_Runtime\\user\\mods while keeping BepInEx strictly at root SPT\\BepInEx, fix the Show in Folder action to open populated mod directories, implement direct-to-disk streaming for 1.3GB+ downloads to eliminate UI lag, and display real-time download and extraction percentages.",
+  "updatedAt":  "2026-10-02T06:57:05.699864827Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

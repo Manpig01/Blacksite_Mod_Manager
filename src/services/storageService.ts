@@ -8,11 +8,11 @@ const CONFLICT_IGNORES_KEY = 'blacksite_conflict_ignores_v1';
 const FAVORITE_MODS_KEY = 'blacksite_favorite_mods_v1';
 
 const DEFAULT_SETTINGS: SettingsState = {
-  sptDirectory: 'C:\\Games\\SPT-Tarkov',
-  sptVersion: '4.0.12',
+  sptDirectory: 'C:\\SPT',
+  sptVersion: '4.1.6',
   detectedServerBinary: 'SPT.Server.exe',
   clientModPath: 'BepInEx/plugins',
-  serverModPath: 'user/mods',
+  serverModPath: 'SPT_Runtime/user/mods',
   isSpt4xLayout: true,
   activeProfileId: 'prof-1',
   autoCheckUpdates: true,
@@ -48,7 +48,15 @@ export const storageService = {
   loadSettings(): SettingsState {
     try {
       const saved = localStorage.getItem(SETTINGS_KEY);
-      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const merged: SettingsState = { ...DEFAULT_SETTINGS, ...parsed };
+        // Migrate SPT 4.x setups from legacy user/mods to modern SPT_Runtime/user/mods
+        if (merged.sptVersion?.startsWith('4') && merged.serverModPath === 'user/mods') {
+          merged.serverModPath = 'SPT_Runtime/user/mods';
+        }
+        return merged;
+      }
     } catch {
       // ignore
     }

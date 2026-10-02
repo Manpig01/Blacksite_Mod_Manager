@@ -133,11 +133,19 @@ app.whenReady().then(() => {
   ipcMain.handle('shell:open-folder', async (event, targetPath) => {
     if (!targetPath || typeof targetPath !== 'string') return false;
     try {
-      // Ensure the directory exists so Explorer can open it without error
-      if (!fs.existsSync(targetPath)) {
-        fs.mkdirSync(targetPath, { recursive: true });
+      // If path does not exist, do NOT create a fake empty directory!
+      // Check if path or its parent directory exists
+      let pathToOpen = targetPath;
+      if (!fs.existsSync(pathToOpen)) {
+        console.warn(`Target path does not exist: ${pathToOpen}`);
+        const parentDir = path.dirname(pathToOpen);
+        if (fs.existsSync(parentDir)) {
+          pathToOpen = parentDir;
+        } else {
+          return false;
+        }
       }
-      const err = await shell.openPath(targetPath);
+      const err = await shell.openPath(pathToOpen);
       if (err) {
         console.error('shell.openPath error:', err);
         return false;
@@ -206,7 +214,21 @@ app.whenReady().then(() => {
 
   ipcMain.handle('mod:install', async (event, params) => {
     try {
-      const result = await modInstaller.installMod(params);
+      const sender = event.sender;
+      const onProgress = (progressData) => {
+        if (sender && !sender.isDestroyed()) {
+          sender.send('mod:install-progress', {
+            queueId: params.queueId,
+            modName: params.modName,
+            ...progressData,
+          });
+        }
+      };
+
+      const result = await modInstaller.installMod({
+        ...params,
+        onProgress,
+      });
       return { success: true, ...result };
     } catch (err) {
       console.error('mod:install error:', err);

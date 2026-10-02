@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   openFolder: (targetPath) => ipcRenderer.invoke('shell:open-folder', targetPath),
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   installMod: (params) => ipcRenderer.invoke('mod:install', params),
+  onInstallProgress: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('mod:install-progress', listener);
+    return () => ipcRenderer.removeListener('mod:install-progress', listener);
+  },
   uninstallMod: (params) => ipcRenderer.invoke('mod:uninstall', params),
   toggleDisableMod: (params) => ipcRenderer.invoke('mod:toggle-disable', params),
   scanInstalledMods: (params) => ipcRenderer.invoke('mod:scan-installed', params),
