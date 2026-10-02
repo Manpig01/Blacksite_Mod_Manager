@@ -13,11 +13,6 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   uninstallMod: (params) => ipcRenderer.invoke('mod:uninstall', params),
   toggleDisableMod: (params) => ipcRenderer.invoke('mod:toggle-disable', params),
   scanInstalledMods: (params) => ipcRenderer.invoke('mod:scan-installed', params),
-  onInstallProgress: (callback) => {
-    const listener = (_event, data) => callback(data);
-    ipcRenderer.on('mod:install-progress', listener);
-    return () => ipcRenderer.removeListener('mod:install-progress', listener);
-  },
   windowControl: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

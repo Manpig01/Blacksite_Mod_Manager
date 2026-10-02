@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const { Readable } = require('stream');
 const sevenZip = require('7zip-bin');
 const AdmZip = require('adm-zip');
 
@@ -19,18 +18,8 @@ function get7zaPath() {
 /**
  * Robust archive extraction using 7za-first, falling back to AdmZip, tar, and PowerShell
  */
-async function extractArchive(archivePath, destinationDir, onProgress, queueId) {
+async function extractArchive(archivePath, destinationDir) {
   fs.mkdirSync(destinationDir, { recursive: true });
-
-  if (onProgress) {
-    onProgress({
-      queueId,
-      stage: 'extracting',
-      percent: 75,
-      speed: 'Decompressing...',
-      detail: 'Decompressing archive with high-speed engine...',
-    });
-  }
 
   // 1. Try precompiled 7za binary
   const bin7za = get7zaPath();
@@ -86,52 +75,24 @@ async function extractArchive(archivePath, destinationDir, onProgress, queueId) 
 }
 
 /**
- * Recursively find directories matching specific names (e.g. 'user', 'BepInEx')
- */
-function findMatchingDirs(root, targetNames, maxDepth = 4, currentDepth = 0) {
-  const matches = [];
-  if (currentDepth > maxDepth || !fs.existsSync(root)) return matches;
-  try {
-    const entries = fs.readdirSync(root, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const full = path.join(root, entry.name);
-        if (targetNames.map((n) => n.toLowerCase()).includes(entry.name.toLowerCase())) {
-          matches.push(full);
-        } else {
-          matches.push(...findMatchingDirs(full, targetNames, maxDepth, currentDepth + 1));
-        }
-      }
-    }
-  } catch (err) {
-    // ignore permission or access errors
-  }
-  return matches;
-}
-
-/**
  * Recursively find package.json or dll files inside extracted directory
  */
 function findFileRecursive(dir, targetName, maxDepth = 4, currentDepth = 0) {
   if (currentDepth > maxDepth || !fs.existsSync(dir)) return null;
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (!entry.isDirectory() && entry.name.toLowerCase() === targetName.toLowerCase()) {
-        return fullPath;
-      }
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (!entry.isDirectory() && entry.name.toLowerCase() === targetName.toLowerCase()) {
+      return fullPath;
     }
+  }
 
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const found = findFileRecursive(path.join(dir, entry.name), targetName, maxDepth, currentDepth + 1);
-        if (found) return found;
-      }
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const found = findFileRecursive(path.join(dir, entry.name), targetName, maxDepth, currentDepth + 1);
+      if (found) return found;
     }
-  } catch (err) {
-    // ignore
   }
 
   return null;
@@ -139,8 +100,7 @@ function findFileRecursive(dir, targetName, maxDepth = 4, currentDepth = 0) {
 
 /**
  * Intelligent SPT Routing Engine:
- * Analyzes extracted directory tree (including SPT_Runtime, SPT containers, and nested folders)
- * and places user/mods and BepInEx/plugins/patchers into the target SPT installation.
+ * Analyzes extracted directory tree and copies user/mods and BepInEx/plugins to proper locations.
  */
 function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName) {
   fs.mkdirSync(path.join(sptDirectory, 'user', 'mods'), { recursive: true });
@@ -150,255 +110,122 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName) {
   let detectedServerPath = null;
   let detectedClientPath = null;
 
-  // 1. Discover all 'user' directories (handles SPT_Runtime/user, SPT/user, user/, etc.)
-  const userDirs = findMatchingDirs(extractedDir, ['user']);
-  for (const userDir of userDirs) {
+  // Case 1: Archive has an SPT container root folder (e.g. SPT/user and SPT/BepInEx)
+  const sptContainer = path.join(extractedDir, 'SPT');
+  const sourceRoot = fs.existsSync(sptContainer) ? sptContainer : extractedDir;
+
+  let hasDirectUser = fs.existsSync(path.join(sourceRoot, 'user'));
+  let hasDirectBepInEx = fs.existsSync(path.join(sourceRoot, 'BepInEx'));
+
+  // If not at root, check if wrapped in a single top-level folder
+  if (!hasDirectUser && !hasDirectBepInEx) {
+    const topEntries = fs.readdirSync(sourceRoot, { withFileTypes: true }).filter((e) => e.isDirectory());
+    if (topEntries.length === 1) {
+      const candidateDir = path.join(sourceRoot, topEntries[0].name);
+      if (fs.existsSync(path.join(candidateDir, 'user')) || fs.existsSync(path.join(candidateDir, 'BepInEx'))) {
+        hasDirectUser = fs.existsSync(path.join(candidateDir, 'user'));
+        hasDirectBepInEx = fs.existsSync(path.join(candidateDir, 'BepInEx'));
+        if (hasDirectUser) {
+          fs.cpSync(path.join(candidateDir, 'user'), path.join(sptDirectory, 'user'), { recursive: true, force: true });
+        }
+        if (hasDirectBepInEx) {
+          fs.cpSync(path.join(candidateDir, 'BepInEx'), path.join(sptDirectory, 'BepInEx'), { recursive: true, force: true });
+        }
+      }
+    }
+  } else {
+    if (hasDirectUser) {
+      fs.cpSync(path.join(sourceRoot, 'user'), path.join(sptDirectory, 'user'), { recursive: true, force: true });
+    }
+    if (hasDirectBepInEx) {
+      fs.cpSync(path.join(sourceRoot, 'BepInEx'), path.join(sptDirectory, 'BepInEx'), { recursive: true, force: true });
+    }
+  }
+
+  // Case 2: Standalone Server Mod (contains package.json)
+  const pkgJsonPath = findFileRecursive(extractedDir, 'package.json');
+  if (pkgJsonPath) {
     try {
-      fs.cpSync(userDir, path.join(sptDirectory, 'user'), { recursive: true, force: true });
-      const modsSub = path.join(userDir, 'mods');
-      if (fs.existsSync(modsSub)) {
-        const modEntries = fs.readdirSync(modsSub, { withFileTypes: true });
-        for (const entry of modEntries) {
-          if (entry.isDirectory()) {
-            detectedServerPath = `user/mods/${entry.name}`;
-            break;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Error copying user directory:', err);
+      const pkgFolder = path.dirname(pkgJsonPath);
+      const pkgData = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+      const modFolderName = pkgData.name || cleanName;
+      const targetServerDir = path.join(sptDirectory, 'user', 'mods', modFolderName);
+      fs.cpSync(pkgFolder, targetServerDir, { recursive: true, force: true });
+      detectedServerPath = `user/mods/${modFolderName}`;
+    } catch (e) {
+      console.error('Failed reading mod package.json:', e);
     }
   }
 
-  // 2. Discover all 'BepInEx' directories (handles SPT_Runtime/BepInEx, BepInEx/, etc.)
-  const bepDirs = findMatchingDirs(extractedDir, ['BepInEx']);
-  for (const bepDir of bepDirs) {
-    try {
-      fs.cpSync(bepDir, path.join(sptDirectory, 'BepInEx'), { recursive: true, force: true });
-      const pluginsSub = path.join(bepDir, 'plugins');
-      if (fs.existsSync(pluginsSub)) {
-        const pluginEntries = fs.readdirSync(pluginsSub, { withFileTypes: true });
-        for (const entry of pluginEntries) {
-          if (entry.isDirectory()) {
-            detectedClientPath = `BepInEx/plugins/${entry.name}`;
-            break;
-          } else if (entry.name.toLowerCase().endsWith('.dll')) {
-            detectedClientPath = `BepInEx/plugins/${entry.name}`;
-            break;
-          }
-        }
+  // Case 3: Standalone Client Plugin (contains .dll files)
+  const dllPath = findFileRecursive(extractedDir, '.dll');
+  // Or check any .dll
+  function findAnyDll(dir, maxDepth = 4, depth = 0) {
+    if (depth > maxDepth || !fs.existsSync(dir)) return null;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.dll')) {
+        return path.join(dir, entry.name);
       }
-      // Also check patchers if plugins had none
-      if (!detectedClientPath) {
-        const patchersSub = path.join(bepDir, 'patchers');
-        if (fs.existsSync(patchersSub)) {
-          const patcherEntries = fs.readdirSync(patchersSub, { withFileTypes: true });
-          if (patcherEntries.length > 0) {
-            detectedClientPath = `BepInEx/patchers/${patcherEntries[0].name}`;
-          }
-        }
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const found = findAnyDll(path.join(dir, entry.name), maxDepth, depth + 1);
+        if (found) return found;
       }
-    } catch (err) {
-      console.warn('Error copying BepInEx directory:', err);
+    }
+    return null;
+  }
+
+  const anyDll = findAnyDll(extractedDir);
+  if (anyDll && !hasDirectBepInEx) {
+    const dllDir = path.dirname(anyDll);
+    const dllName = path.basename(anyDll);
+    const targetPluginDir = path.join(sptDirectory, 'BepInEx', 'plugins');
+
+    // If folder has multiple assets, copy folder; otherwise copy dll directly
+    const siblingFiles = fs.readdirSync(dllDir);
+    if (siblingFiles.length > 2) {
+      const targetFolder = path.join(targetPluginDir, cleanName);
+      fs.cpSync(dllDir, targetFolder, { recursive: true, force: true });
+      detectedClientPath = `BepInEx/plugins/${cleanName}/${dllName}`;
+    } else {
+      fs.copyFileSync(anyDll, path.join(targetPluginDir, dllName));
+      detectedClientPath = `BepInEx/plugins/${dllName}`;
     }
   }
 
-  // 3. Case 2: Standalone Server Mod (contains package.json outside user/mods)
-  if (!detectedServerPath) {
-    const pkgJsonPath = findFileRecursive(extractedDir, 'package.json');
-    if (pkgJsonPath) {
-      try {
-        const pkgFolder = path.dirname(pkgJsonPath);
-        const pkgData = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
-        const modFolderName = pkgData.name || cleanName;
-        const targetServerDir = path.join(sptDirectory, 'user', 'mods', modFolderName);
-        fs.cpSync(pkgFolder, targetServerDir, { recursive: true, force: true });
-        detectedServerPath = `user/mods/${modFolderName}`;
-      } catch (e) {
-        console.error('Failed reading mod package.json:', e);
-      }
-    }
+  // If direct folders were copied, identify the installed paths
+  if (!detectedServerPath && (hasDirectUser || fs.existsSync(path.join(sptDirectory, 'user', 'mods')))) {
+    const userMods = fs.readdirSync(path.join(sptDirectory, 'user', 'mods'));
+    const matched = userMods.find((m) => m.toLowerCase().includes(cleanName.toLowerCase()));
+    if (matched) detectedServerPath = `user/mods/${matched}`;
+    else if (userMods.length > 0) detectedServerPath = `user/mods/${userMods[userMods.length - 1]}`;
   }
 
-  // 4. Case 3: Standalone Client Plugin (contains .dll files outside BepInEx)
-  if (!detectedClientPath) {
-    function findAnyDll(dir, maxDepth = 4, depth = 0) {
-      if (depth > maxDepth || !fs.existsSync(dir)) return null;
-      try {
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.dll')) {
-            return path.join(dir, entry.name);
-          }
-        }
-        for (const entry of entries) {
-          if (entry.isDirectory()) {
-            const found = findAnyDll(path.join(dir, entry.name), maxDepth, depth + 1);
-            if (found) return found;
-          }
-        }
-      } catch {}
-      return null;
-    }
-
-    const anyDll = findAnyDll(extractedDir);
-    if (anyDll) {
-      const dllDir = path.dirname(anyDll);
-      const dllName = path.basename(anyDll);
-      const targetPluginDir = path.join(sptDirectory, 'BepInEx', 'plugins');
-
-      const siblingFiles = fs.readdirSync(dllDir);
-      if (siblingFiles.length > 2) {
-        const targetFolder = path.join(targetPluginDir, cleanName);
-        fs.cpSync(dllDir, targetFolder, { recursive: true, force: true });
-        detectedClientPath = `BepInEx/plugins/${cleanName}/${dllName}`;
-      } else {
-        fs.copyFileSync(anyDll, path.join(targetPluginDir, dllName));
-        detectedClientPath = `BepInEx/plugins/${dllName}`;
-      }
-    }
+  if (!detectedClientPath && (hasDirectBepInEx || fs.existsSync(path.join(sptDirectory, 'BepInEx', 'plugins')))) {
+    const plugins = fs.readdirSync(path.join(sptDirectory, 'BepInEx', 'plugins'));
+    const matched = plugins.find((p) => p.toLowerCase().includes(cleanName.toLowerCase()));
+    if (matched) detectedClientPath = `BepInEx/plugins/${matched}`;
+    else if (plugins.length > 0) detectedClientPath = `BepInEx/plugins/${plugins[plugins.length - 1]}`;
   }
 
-  // Determine actual mod installation classification
-  const kind =
-    detectedServerPath && detectedClientPath
-      ? 'Both'
-      : detectedServerPath
-      ? 'Server'
-      : 'Client';
+  const kind = detectedServerPath && detectedClientPath ? 'Both' : detectedServerPath ? 'Server' : 'Client';
 
   return {
     success: true,
-    serverPath: detectedServerPath || undefined,
-    clientPath: detectedClientPath || undefined,
+    serverPath: detectedServerPath || `user/mods/${cleanName}`,
+    clientPath: detectedClientPath || `BepInEx/plugins/${cleanName}.dll`,
     kind,
   };
 }
 
 /**
- * Downloads directly to disk with chunked stream pipeline to prevent memory lag on large mods.
+ * Downloads and installs a mod from URL or local archive Buffer
  */
-async function streamDownloadToFile(downloadUrl, targetFilePath, onProgress, queueId) {
-  const response = await fetch(downloadUrl, {
-    headers: {
-      'Referer': 'https://sp-mod.com/',
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-    },
-  });
-
-  if (!response.ok) {
-    const httpErr = new Error(
-      `Download failed with HTTP status ${response.status}: ${
-        response.statusText || (response.status === 404 ? 'Not Found' : 'Download Error')
-      }`
-    );
-    httpErr.statusCode = response.status;
-    throw httpErr;
-  }
-
-  const contentLengthHeader = response.headers.get('content-length');
-  const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
-  let receivedBytes = 0;
-  let lastProgressTime = 0;
-  let lastBytes = 0;
-  let currentSpeed = 'Connecting...';
-
-  const fileStream = fs.createWriteStream(targetFilePath);
-
-  if (onProgress) {
-    onProgress({
-      queueId,
-      stage: 'downloading',
-      percent: 0,
-      bytesReceived: 0,
-      totalBytes,
-      speed: 'Initiating stream...',
-      detail: 'Connecting to download server...',
-    });
-  }
-
-  if (!response.body) {
-    throw new Error('Response body stream is empty or unavailable.');
-  }
-
-  const nodeReadable = Readable.fromWeb(response.body);
-
-  nodeReadable.on('data', (chunk) => {
-    receivedBytes += chunk.length;
-    const now = Date.now();
-
-    // Throttle progress updates to every 150ms to keep UI snappy without IPC flooding
-    if (now - lastProgressTime >= 150) {
-      const elapsedSec = (now - lastProgressTime) / 1000;
-      const bytesDiff = receivedBytes - lastBytes;
-      if (elapsedSec > 0 && bytesDiff > 0) {
-        const mbps = bytesDiff / (1024 * 1024) / elapsedSec;
-        currentSpeed = `${mbps.toFixed(1)} MB/s`;
-      }
-
-      lastProgressTime = now;
-      lastBytes = receivedBytes;
-
-      const percent =
-        totalBytes > 0
-          ? Math.min(98, Math.round((receivedBytes / totalBytes) * 100))
-          : Math.min(95, Math.round(receivedBytes / (10 * 1024 * 1024)));
-
-      if (onProgress) {
-        onProgress({
-          queueId,
-          stage: 'downloading',
-          percent,
-          bytesReceived,
-          totalBytes: totalBytes || receivedBytes,
-          speed: currentSpeed,
-          detail: `Downloading (${percent}%)...`,
-        });
-      }
-    }
-  });
-
-  await new Promise((resolve, reject) => {
-    nodeReadable.pipe(fileStream);
-    fileStream.on('finish', resolve);
-    fileStream.on('error', reject);
-    nodeReadable.on('error', reject);
-  });
-
-  if (onProgress) {
-    onProgress({
-      queueId,
-      stage: 'downloading',
-      percent: 100,
-      bytesReceived: receivedBytes,
-      totalBytes: totalBytes || receivedBytes,
-      speed: 'Complete',
-      detail: 'Download complete. Preparing extraction...',
-    });
-  }
-
-  return receivedBytes;
-}
-
-/**
- * Main Install Mod Execution Pipeline:
- * Direct disk streaming, 7za decompression, and SPT tree placement
- */
-async function installMod({
-  sptDirectory,
-  modName,
-  author,
-  version,
-  downloadUrl,
-  archiveBase64,
-  archiveFileName,
-  queueId,
-  onProgress,
-}) {
-  if (!sptDirectory) {
-    throw new Error('SPT Directory is not specified. Please configure your SPT path in Settings.');
+async function installMod({ sptDirectory, modName, author, version, downloadUrl, archiveBase64, archiveFileName }) {
+  if (!sptDirectory || typeof sptDirectory !== 'string') {
+    throw new Error('Valid SPT root directory is required.');
   }
 
   const osTemp = require('os').tmpdir();
@@ -408,40 +235,37 @@ async function installMod({
 
   try {
     if (downloadUrl) {
-      console.log(`[Blacksite Installer] Streaming download from ${downloadUrl}...`);
-      await streamDownloadToFile(downloadUrl, tempArchiveFile, onProgress, queueId);
+      console.log(`[Blacksite Installer] Downloading from ${downloadUrl}...`);
+      const response = await fetch(downloadUrl, {
+        headers: {
+          'Referer': 'https://sp-mod.com/',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+        },
+      });
+
+      if (!response.ok) {
+        const httpErr = new Error(`Download failed with HTTP status ${response.status}: ${response.statusText || (response.status === 404 ? 'Not Found' : 'Download Error')}`);
+        httpErr.statusCode = response.status;
+        throw httpErr;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      fs.writeFileSync(tempArchiveFile, Buffer.from(arrayBuffer));
+      console.log(`[Blacksite Installer] Downloaded archive size: ${arrayBuffer.byteLength} bytes`);
     } else if (archiveBase64) {
-      console.log(`[Blacksite Installer] Writing local archive buffer to disk...`);
+      console.log(`[Blacksite Installer] Processing local archive buffer...`);
       fs.writeFileSync(tempArchiveFile, Buffer.from(archiveBase64, 'base64'));
     } else {
       throw new Error('Neither downloadUrl nor archiveBase64 was provided.');
     }
 
     console.log(`[Blacksite Installer] Extracting archive...`);
-    await extractArchive(tempArchiveFile, tempExtractDir, onProgress, queueId);
-
-    if (onProgress) {
-      onProgress({
-        queueId,
-        stage: 'routing',
-        percent: 92,
-        speed: 'Placing files...',
-        detail: 'Routing mod folders into SPT directory...',
-      });
-    }
+    await extractArchive(tempArchiveFile, tempExtractDir);
 
     console.log(`[Blacksite Installer] Routing files into SPT: ${sptDirectory}...`);
     const routeResult = routeExtractedModToSpt(tempExtractDir, sptDirectory, modName);
-
-    if (onProgress) {
-      onProgress({
-        queueId,
-        stage: 'installed',
-        percent: 100,
-        speed: 'Finished',
-        detail: 'Installation complete!',
-      });
-    }
 
     console.log(`[Blacksite Installer] Installation completed successfully!`, routeResult);
     return routeResult;

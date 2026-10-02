@@ -133,27 +133,11 @@ app.whenReady().then(() => {
   ipcMain.handle('shell:open-folder', async (event, targetPath) => {
     if (!targetPath || typeof targetPath !== 'string') return false;
     try {
-      let finalPath = targetPath;
-      if (!fs.existsSync(finalPath)) {
-        const parentDir = path.dirname(finalPath);
-        const folderName = path.basename(finalPath);
-        if (fs.existsSync(parentDir)) {
-          const siblings = fs.readdirSync(parentDir);
-          const cleanSearch = folderName.toLowerCase().replace(/[^a-z0-9]/g, '');
-          const match = siblings.find((s) => {
-            const cleanSibling = s.toLowerCase().replace(/[^a-z0-9]/g, '');
-            return cleanSibling.includes(cleanSearch) || cleanSearch.includes(cleanSibling);
-          });
-          if (match) {
-            finalPath = path.join(parentDir, match);
-          } else {
-            finalPath = parentDir;
-          }
-        } else {
-          fs.mkdirSync(finalPath, { recursive: true });
-        }
+      // Ensure the directory exists so Explorer can open it without error
+      if (!fs.existsSync(targetPath)) {
+        fs.mkdirSync(targetPath, { recursive: true });
       }
-      const err = await shell.openPath(finalPath);
+      const err = await shell.openPath(targetPath);
       if (err) {
         console.error('shell.openPath error:', err);
         return false;
@@ -222,16 +206,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('mod:install', async (event, params) => {
     try {
-      const result = await modInstaller.installMod({
-        ...params,
-        onProgress: (progressData) => {
-          try {
-            event.sender.send('mod:install-progress', progressData);
-          } catch (e) {
-            // Window may have closed
-          }
-        },
-      });
+      const result = await modInstaller.installMod(params);
       return { success: true, ...result };
     } catch (err) {
       console.error('mod:install error:', err);
