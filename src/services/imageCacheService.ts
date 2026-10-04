@@ -146,6 +146,28 @@ class ImageCacheService {
   }
 
   /**
+   * Preloads a batch of image URLs in parallel using an 8-stream worker pool
+   */
+  async preloadImages(urls: string[], concurrency = 8): Promise<number> {
+    const validUrls = Array.from(new Set(urls.filter(Boolean)));
+    let completed = 0;
+    for (let i = 0; i < validUrls.length; i += concurrency) {
+      const batch = validUrls.slice(i, i + concurrency);
+      await Promise.all(
+        batch.map(async (url) => {
+          try {
+            await this.fetchAndCache(url);
+            completed++;
+          } catch {
+            // Ignore individual failure
+          }
+        })
+      );
+    }
+    return completed;
+  }
+
+  /**
    * Computes statistics about the local image cache
    */
   async getCacheStats(): Promise<{ count: number; totalSizeBytes: number }> {

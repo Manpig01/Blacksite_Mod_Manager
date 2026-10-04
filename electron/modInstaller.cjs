@@ -203,6 +203,37 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
   let detectedServerPath = null;
   let detectedClientPath = null;
 
+  // Atomic same-drive move helper: tries instant O(1) fs.promises.rename (1-2ms pointer reassignment)
+  // Gracefully falls back to parallel copy if cross-device or locked
+  async function moveOrCopyDirectory(srcDir, destDir) {
+    if (!fs.existsSync(srcDir)) return;
+    try {
+      if (fs.existsSync(destDir)) {
+        await fs.promises.rm(destDir, { recursive: true, force: true });
+      }
+      await fs.promises.mkdir(path.dirname(destDir), { recursive: true });
+      await fs.promises.rename(srcDir, destDir);
+      return;
+    } catch (renameErr) {
+      // If cross-device (EXDEV) or rename blocked, fallback to parallel copy
+      await copyDirectoryContents(srcDir, destDir);
+    }
+  }
+
+  async function moveOrCopyFile(srcFile, destFile) {
+    if (!fs.existsSync(srcFile)) return;
+    try {
+      await fs.promises.mkdir(path.dirname(destFile), { recursive: true });
+      if (fs.existsSync(destFile)) {
+        await fs.promises.unlink(destFile);
+      }
+      await fs.promises.rename(srcFile, destFile);
+      return;
+    } catch (renameErr) {
+      await fs.promises.copyFile(srcFile, destFile);
+    }
+  }
+
   // Helper to copy directory contents asynchronously: parallel chunks for Turbo Max, non-blocking yielding for Balanced/Smooth
   async function copyDirectoryContents(srcDir, destDir) {
     if (!fs.existsSync(srcDir)) return;
@@ -219,9 +250,9 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
             const srcPath = path.join(srcDir, entry.name);
             const destPath = path.join(destDir, entry.name);
             if (entry.isDirectory()) {
-              await fs.promises.cp(srcPath, destPath, { recursive: true, force: true });
+              await moveOrCopyDirectory(srcPath, destPath);
             } else {
-              await fs.promises.copyFile(srcPath, destPath);
+              await moveOrCopyFile(srcPath, destPath);
             }
           })
         );
@@ -231,9 +262,9 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
         const srcPath = path.join(srcDir, entry.name);
         const destPath = path.join(destDir, entry.name);
         if (entry.isDirectory()) {
-          await fs.promises.cp(srcPath, destPath, { recursive: true, force: true });
+          await moveOrCopyDirectory(srcPath, destPath);
         } else {
-          await fs.promises.copyFile(srcPath, destPath);
+          await moveOrCopyFile(srcPath, destPath);
         }
         // Yield to Node event loop so UI / IPC doesn't freeze during large file moves
         await new Promise((r) => setImmediate(r));
@@ -275,8 +306,7 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
           const modFolderName = entry.name;
           const srcModDir = path.join(uModsDir, modFolderName);
           const destModDir = path.join(serverModsDir, modFolderName);
-          await fs.promises.cp(srcModDir, destModDir, { recursive: true, force: true });
-          await new Promise((r) => setImmediate(r));
+          await moveOrCopyDirectory(srcModDir, destModDir);
           if (!detectedServerPath) {
             detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
           }
@@ -307,8 +337,7 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
         const pkgData = JSON.parse(fs.readFileSync(path.join(pDir, 'package.json'), 'utf8'));
         const modFolderName = pkgData.name || path.basename(pDir) || cleanFallback;
         const destModDir = path.join(serverModsDir, modFolderName);
-        await fs.promises.cp(pDir, destModDir, { recursive: true, force: true });
-        await new Promise((r) => setImmediate(r));
+        await moveOrCopyDirectory(pDir, destModDir);
         if (!detectedServerPath) {
           detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
         }
@@ -544,8 +573,18 @@ async function installMod({
     throw new Error('Valid SPT root directory is required.');
   }
 
-  const osTemp = require('os').tmpdir();
-  const tempWorkDir = fs.mkdtempSync(path.join(osTemp, 'blacksite-inst-'));
+  let tempWorkDir;
+  let isSameDriveStaging = false;
+  try {
+    const stagingRoot = path.join(sptDirectory, '.blacksite_staging');
+    fs.mkdirSync(stagingRoot, { recursive: true });
+    tempWorkDir = fs.mkdtempSync(path.join(stagingRoot, 'inst-'));
+    isSameDriveStaging = true;
+  } catch (stagingErr) {
+    console.warn('[Blacksite Installer] Could not create staging in SPT directory, falling back to os.tmpdir():', stagingErr.message);
+    const osTemp = os.tmpdir();
+    tempWorkDir = fs.mkdtempSync(path.join(osTemp, 'blacksite-inst-'));
+  }
   const tempArchiveFile = path.join(tempWorkDir, archiveFileName || 'mod-download.archive');
   const tempExtractDir = path.join(tempWorkDir, 'extracted');
 
@@ -587,7 +626,7 @@ async function installMod({
       onProgress({
         stage: 'routing',
         percent: 100,
-        downloadSpeed: 'Routing to SPT_Runtime...',
+        downloadSpeed: isSameDriveStaging ? 'Atomic same-drive moving...' : 'Routing to SPT_Runtime...',
       });
     }
     const routeResult = await routeExtractedModToSpt(tempExtractDir, sptDirectory, modName, sptVersion, performanceMode);
@@ -607,6 +646,15 @@ async function installMod({
     try {
       if (fs.existsSync(tempWorkDir)) {
         fs.rmSync(tempWorkDir, { recursive: true, force: true });
+      }
+      if (isSameDriveStaging) {
+        const stagingRoot = path.join(sptDirectory, '.blacksite_staging');
+        if (fs.existsSync(stagingRoot)) {
+          const remaining = fs.readdirSync(stagingRoot);
+          if (remaining.length === 0) {
+            fs.rmdirSync(stagingRoot);
+          }
+        }
       }
     } catch (cleanupErr) {
       console.warn('Failed cleaning temp directory:', cleanupErr);
