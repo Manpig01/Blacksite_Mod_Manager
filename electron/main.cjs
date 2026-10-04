@@ -232,7 +232,12 @@ app.whenReady().then(() => {
       return { success: true, ...result };
     } catch (err) {
       console.error('mod:install error:', err);
-      return { success: false, error: err.message, statusCode: err.statusCode || 500 };
+      return {
+        success: false,
+        error: err.message,
+        stack: err.stack,
+        statusCode: err.statusCode || 500,
+      };
     }
   });
 

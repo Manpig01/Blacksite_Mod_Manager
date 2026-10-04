@@ -216,6 +216,11 @@ export interface ResolvedDependencyItem {
   installedVersion?: string;
   selected: boolean;
   depth: number;
+  thumbnail?: string;
+  author?: string;
+  kind?: ModKind;
+  categoryTitle?: string;
+  teaser?: string;
 }
 
 export interface ModpackSnapshot {

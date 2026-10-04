@@ -27,15 +27,21 @@ function get7zaPath() {
 async function extractArchive(archivePath, destinationDir) {
   fs.mkdirSync(destinationDir, { recursive: true });
 
-  // 1. Try precompiled 7za binary
+  // 1. Try precompiled 7za binary with large buffer and quiet stdout flags
   const bin7za = get7zaPath();
   if (bin7za && fs.existsSync(bin7za)) {
     try {
       await new Promise((resolve, reject) => {
-        execFile(bin7za, ['x', '-y', `-o${destinationDir}`, archivePath], (error) => {
-          if (error) reject(error);
-          else resolve();
-        });
+        // -bso0 -bsp0 suppresses file-by-file output, avoiding Node.js child_process maxBuffer overflows
+        execFile(
+          bin7za,
+          ['x', '-y', '-bso0', '-bsp0', `-o${destinationDir}`, archivePath],
+          { maxBuffer: 100 * 1024 * 1024 },
+          (error) => {
+            if (error) reject(error);
+            else resolve();
+          }
+        );
       });
       return true;
     } catch (err) {
@@ -43,11 +49,14 @@ async function extractArchive(archivePath, destinationDir) {
     }
   }
 
-  // 2. Try AdmZip for standard zip files
+  // 2. Try AdmZip for standard zip files (skip if file is huge > 1GB to prevent V8 memory crashes)
   try {
-    const zip = new AdmZip(archivePath);
-    zip.extractAllTo(destinationDir, true);
-    return true;
+    const stat = fs.statSync(archivePath);
+    if (stat.size < 1024 * 1024 * 1024) {
+      const zip = new AdmZip(archivePath);
+      zip.extractAllTo(destinationDir, true);
+      return true;
+    }
   } catch (zipErr) {
     console.warn('AdmZip extraction failed, trying system tools...', zipErr.message);
   }
@@ -55,7 +64,7 @@ async function extractArchive(archivePath, destinationDir) {
   // 3. Try Windows built-in tar.exe or system tar
   try {
     await new Promise((resolve, reject) => {
-      execFile('tar', ['-xf', archivePath, '-C', destinationDir], (error) => {
+      execFile('tar', ['-xf', archivePath, '-C', destinationDir], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
         if (error) reject(error);
         else resolve();
       });
@@ -67,9 +76,26 @@ async function extractArchive(archivePath, destinationDir) {
 
   // 4. Try PowerShell Expand-Archive on Windows
   if (process.platform === 'win32') {
+    let psZipPath = archivePath;
+    if (!archivePath.toLowerCase().endsWith('.zip')) {
+      const renamedZip = `${archivePath}.zip`;
+      try {
+        fs.copyFileSync(archivePath, renamedZip);
+        psZipPath = renamedZip;
+      } catch {
+        try {
+          fs.renameSync(archivePath, renamedZip);
+          psZipPath = renamedZip;
+        } catch {}
+      }
+    }
+
     await new Promise((resolve, reject) => {
-      const psCmd = `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
-      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], (error) => {
+      const psCmd = `Expand-Archive -LiteralPath '${psZipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
+        if (psZipPath !== archivePath) {
+          try { fs.rmSync(psZipPath, { force: true }); } catch {}
+        }
         if (error) reject(error);
         else resolve();
       });

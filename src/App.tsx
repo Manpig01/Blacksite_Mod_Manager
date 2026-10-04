@@ -37,6 +37,8 @@ import {
 import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
 import { imageCacheService } from './services/imageCacheService';
+import { errorLogService } from './services/errorLogService';
+import { getKnownDependencyMeta } from './data/knownDependencies';
 
 export const App: React.FC = () => {
   // App State
@@ -386,10 +388,16 @@ export const App: React.FC = () => {
     downloadUrl?: string,
     archiveBase64?: string,
     archiveFileName?: string,
-    sourceMod?: Mod
+    sourceMod?: Mod,
+    extraMeta?: Partial<InstalledMod>
   ) => {
     const queueId = `q-${Date.now()}-${Math.random()}`;
     const targetGuid = guid || `mod.${modName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+
+    // Auto-cache mod or dependency thumbnail in the background
+    if (thumbnail) {
+      imageCacheService.fetchAndCache(thumbnail).catch(() => {});
+    }
 
     const totalBytes = 12 * 1024 * 1024;
     const newQueueItem: QueueItem = {
@@ -431,6 +439,7 @@ export const App: React.FC = () => {
         if (!installResult || !installResult.success) {
           const errObj: any = new Error(installResult?.error || 'Installation failed during extraction or folder placement.');
           if (installResult?.statusCode) errObj.statusCode = installResult.statusCode;
+          if (installResult?.stack) errObj.stack = installResult.stack;
           throw errObj;
         }
 
@@ -448,8 +457,9 @@ export const App: React.FC = () => {
         );
         setStatusText('Ready');
 
-        const isServer = installResult.kind === 'Server' || installResult.kind === 'Both';
-        const isClient = installResult.kind === 'Client' || installResult.kind === 'Both';
+        const resolvedKind = extraMeta?.kind || installResult.kind || 'Both';
+        const isServer = resolvedKind === 'Server' || resolvedKind === 'Both';
+        const isClient = resolvedKind === 'Client' || resolvedKind === 'Both';
 
         setInstalledMods((prev) => {
           const existingIdx = prev.findIndex((m) => m.id === targetGuid);
@@ -457,12 +467,14 @@ export const App: React.FC = () => {
             id: targetGuid,
             modId: modId,
             name: modName,
-            author,
+            author: (author && author !== 'Forge Dependency') ? author : (extraMeta?.author || 'Community Author'),
             version,
-            kind: installResult.kind || 'Both',
-            thumbnail,
+            kind: resolvedKind,
+            thumbnail: thumbnail || extraMeta?.thumbnail,
+            categoryTitle: extraMeta?.categoryTitle || (isServer ? 'Overhauls' : 'Tools'),
+            teaser: extraMeta?.teaser,
             sptVersion: settings.sptVersion,
-            fikaCompatibility: true,
+            fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
             installDate: new Date().toISOString().split('T')[0],
             serverPath: installResult.serverPath || (isServer ? `${settings.serverModPath}/${modName.replace(/\s+/g, '')}` : undefined),
             clientPath: installResult.clientPath || (isClient ? `BepInEx/plugins/${modName.replace(/\s+/g, '')}.dll` : undefined),
@@ -488,6 +500,13 @@ export const App: React.FC = () => {
         return;
       } catch (err: any) {
         console.error('Desktop install error:', err);
+        errorLogService.logError(
+          'Installer',
+          `Desktop install error on "${modName}" v${version}: ${err.message}`,
+          err.stack || (typeof err === 'object' ? JSON.stringify(err) : String(err)),
+          modName,
+          `bridge.installMod({ mod: "${modName}", url: "${downloadUrl || archiveFileName || 'local'}" })`
+        );
         setQueue((prev) =>
           prev.map((item) =>
             item.id === queueId
@@ -549,8 +568,9 @@ export const App: React.FC = () => {
         );
         setStatusText('Ready');
 
-        const isServerMod = modName.toLowerCase().includes('server') || modName.toLowerCase().includes('trader');
-        const isClientMod = !isServerMod;
+        const resolvedKind = extraMeta?.kind || (modName.toLowerCase().includes('server') ? 'Server' : 'Both');
+        const isServerMod = resolvedKind === 'Server' || resolvedKind === 'Both';
+        const isClientMod = resolvedKind === 'Client' || resolvedKind === 'Both';
         const serverDir = settings.serverModPath || 'user/mods';
         const clientDir = settings.clientModPath || 'BepInEx/plugins';
 
@@ -561,12 +581,14 @@ export const App: React.FC = () => {
             id: targetGuid,
             modId: modId,
             name: modName,
-            author,
+            author: (author && author !== 'Forge Dependency') ? author : (extraMeta?.author || 'Community Author'),
             version,
-            kind: isServerMod ? 'Server' : isClientMod ? 'Client' : 'Both',
-            thumbnail,
+            kind: resolvedKind,
+            thumbnail: thumbnail || extraMeta?.thumbnail,
+            categoryTitle: extraMeta?.categoryTitle || (isServerMod ? 'Overhauls' : 'Tools'),
+            teaser: extraMeta?.teaser,
             sptVersion: settings.sptVersion,
-            fikaCompatibility: true,
+            fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
             installDate: new Date().toISOString().split('T')[0],
             serverPath: `${serverDir}/${modName.replace(/\s+/g, '')}`,
             clientPath: `${clientDir}/${modName.replace(/\s+/g, '')}.dll`,
@@ -696,14 +718,37 @@ export const App: React.FC = () => {
 
     // Queue prerequisites sequentially in topological order (dependencies first)
     for (const dep of selectedDeps) {
+      const known = getKnownDependencyMeta(dep.guid) || getKnownDependencyMeta(dep.name) || getKnownDependencyMeta(dep.id);
+      const thumbnail = dep.thumbnail || known?.thumbnail || (dep.id ? `https://files.sp-mod.com/mods/${dep.id}.png` : '');
+      const author = (dep.author && dep.author !== 'Forge Dependency' && dep.author !== 'Community Author')
+        ? dep.author
+        : known?.author || 'Community Author';
+      const kind = dep.kind || known?.kind || 'Both';
+      const categoryTitle = dep.categoryTitle || known?.categoryTitle || (kind === 'Server' ? 'Overhauls' : 'Tools');
+      const teaser = dep.teaser || known?.teaser || '';
+
+      if (thumbnail) {
+        imageCacheService.fetchAndCache(thumbnail).catch(() => {});
+      }
+
       await queueInstall(
         dep.name,
-        'Forge Dependency',
+        author,
         dep.version,
-        '',
+        thumbnail,
         dep.guid,
         dep.id,
-        dep.downloadUrl
+        dep.downloadUrl,
+        undefined,
+        undefined,
+        undefined,
+        {
+          kind,
+          categoryTitle,
+          teaser,
+          thumbnail,
+          fikaCompatibility: true,
+        }
       );
     }
 
@@ -720,10 +765,32 @@ export const App: React.FC = () => {
   const handleInstallFromFile = (file: File) => {
     const cleanName = file.name.replace(/\.(zip|7z|rar)$/i, '');
     const reader = new FileReader();
+
+    reader.onerror = () => {
+      const errMsg = reader.error?.message || 'Failed reading archive buffer (possible browser memory limit).';
+      errorLogService.logError(
+        'ArchiveExtractor',
+        `Failed reading file "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)} MB): ${errMsg}`,
+        reader.error?.stack,
+        cleanName
+      );
+      showToast('File Read Error', `Unable to read archive "${file.name}": ${errMsg}`, 'error');
+    };
+
     reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-      queueInstall(cleanName, 'Local Archive', '1.0.0', '', undefined, undefined, undefined, base64, file.name);
+      try {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+        queueInstall(cleanName, 'Local Archive', '1.0.0', '', undefined, undefined, undefined, base64, file.name);
+      } catch (err: any) {
+        errorLogService.logError(
+          'ArchiveExtractor',
+          `Failed converting archive buffer for "${file.name}": ${err.message}`,
+          err.stack,
+          cleanName
+        );
+        showToast('Archive Error', err.message, 'error');
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -1005,6 +1072,7 @@ export const App: React.FC = () => {
           await bridge.openFolder(fullPath);
         } catch (err: any) {
           console.error('Failed to open folder:', err);
+          errorLogService.logError('DiskRouter', `Failed opening folder: ${fullPath}`, err.stack || err.message);
         }
       }
     }

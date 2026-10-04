@@ -32,6 +32,7 @@ import { InstalledSearchBar } from './InstalledSearchBar';
 import { TagEditorModal } from './TagEditorModal';
 import { HighlightText } from './HighlightText';
 import { ExportModsModal } from './ExportModsModal';
+import { InstalledModThumbnail } from './InstalledModThumbnail';
 
 export type InstalledSortField = 'loadOrder' | 'name' | 'date' | 'date-desc' | 'date-asc' | 'category' | 'status' | 'author';
 export type GroupByMode = 'none' | 'category' | 'date';
@@ -846,64 +847,14 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
           </button>
         </div>
 
-        {/* Thumbnail column (125x125) */}
-        <div className="w-[125px] h-[125px] shrink-0 relative bg-[#20252D] rounded-md overflow-hidden self-center border border-[#23272E]">
-          {hasThumbnail ? (
-            <img
-              src={mod.thumbnail}
-              alt={mod.name}
-              className={`w-full h-full object-cover ${mod.isDisabled ? 'grayscale' : ''}`}
-              loading="lazy"
-              onError={(e) => {
-                (e.target as HTMLElement).style.display = 'none';
-              }}
-            />
-          ) : null}
-
-          {/* Placeholder initial */}
-          <div className="absolute inset-0 flex items-center justify-center text-4xl font-bold text-[#3A4150] -z-10 select-none">
-            {mod.name.charAt(0).toUpperCase()}
-          </div>
-
-          {/* Top-left: green SPT version badge */}
-          <div className="absolute top-1 left-1 bg-[#16A34A] rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-white tracking-tight shadow">
-            SPT {mod.sptVersion || '4.x'}
-          </div>
-
-          {/* Missing Dependency Badge */}
-          {hasMissingDeps && (
-            <div
-              className="absolute bottom-1 right-1 bg-[#DC2626] border border-white/30 text-white rounded px-1.5 py-0.5 text-[9px] font-extrabold flex items-center gap-0.5 shadow-md animate-pulse"
-              title={`Missing dependencies: ${depStatus.allMissing.join(', ')}`}
-            >
-              <AlertCircle className="w-2.5 h-2.5" />
-              <span>MISSING DEP</span>
-            </div>
-          )}
-
-          {/* Top-right: Conflict Warning Badge */}
-          {conflict && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onShowConflict(conflict);
-              }}
-              className="absolute top-1 right-1 bg-[#3A2A10] border border-[#F59E0B] text-[#F59E0B] rounded px-1.5 py-0.5 text-[9.5px] font-bold flex items-center gap-0.5 cursor-pointer shadow hover:bg-[#4A3515] transition-colors z-10"
-              title={conflict.details}
-              type="button"
-            >
-              <AlertTriangle className="w-2.5 h-2.5" />
-              <span>CONFLICT</span>
-            </button>
-          )}
-
-          {/* Bottom-left: Fika Compatible overlay */}
-          {mod.fikaCompatibility && !hasMissingDeps && (
-            <div className="absolute bottom-1 left-1 bg-[#0E2A18] border border-[#16A34A] rounded px-1.5 py-0.5 text-[9.5px] font-semibold text-[#22C55E] tracking-tight shadow">
-              Fika Compatible
-            </div>
-          )}
-        </div>
+        {/* Thumbnail column (125x125) with proxy caching, fallback artwork, and badges */}
+        <InstalledModThumbnail
+          mod={mod}
+          conflict={conflict}
+          hasMissingDeps={hasMissingDeps}
+          missingDepSummary={depStatus.allMissing}
+          onShowConflict={onShowConflict}
+        />
 
         {/* Content area right */}
         <div className="flex-1 flex flex-col justify-between overflow-hidden min-w-0">
@@ -1143,27 +1094,45 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
                 </button>
               )}
 
-              {/* Open Mod Directory in Explorer */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const paths = getModFolderPaths(mod);
-                  if (paths.length > 1) {
-                    onOpenFolder(paths);
-                  } else {
-                    onOpenFolder(paths[0] || 'BepInEx/plugins');
-                  }
-                }}
-                className="bg-[#20252D] hover:bg-[#2A2F38] text-[#9AA3AF] hover:text-[#E8EAEE] p-1.5 rounded transition-colors cursor-pointer"
-                title={
-                  mod.kind === 'Both' || (Boolean(mod.serverPath) && Boolean(mod.clientPath))
-                    ? 'Open both BepInEx and SPT_Runtime/user/mods folders in File Explorer'
-                    : 'Open mod files directory in File Explorer'
-                }
-                type="button"
-              >
-                <Folder className="w-3.5 h-3.5" />
-              </button>
+              {/* Show in folder button (opens both BepInEx and SPT_Runtime/user/mods if applicable) */}
+              {(() => {
+                const paths = getModFolderPaths(mod);
+                const hasBoth = paths.length > 1;
+                return (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (hasBoth) {
+                        onOpenFolder(paths);
+                      } else {
+                        onOpenFolder(paths[0] || 'BepInEx/plugins');
+                      }
+                    }}
+                    className={`p-1.5 rounded transition-colors cursor-pointer relative ${
+                      hasBoth
+                        ? 'bg-[#182333] hover:bg-[#203147] text-[#38BDF8] hover:text-[#7DD3FC] border border-[#0284C7]/40'
+                        : 'bg-[#20252D] hover:bg-[#2A2F38] text-[#9AA3AF] hover:text-[#E8EAEE]'
+                    }`}
+                    title={
+                      hasBoth
+                        ? `Show in folders: Open both BepInEx and SPT_Runtime/user/mods folders in File Explorer (${paths.join(' + ')})`
+                        : `Show in folder: Open ${paths[0] || 'mod folder'} in File Explorer`
+                    }
+                    type="button"
+                    aria-label={hasBoth ? 'Show in folders: open both BepInEx and server mods folders' : 'Show in folder'}
+                  >
+                    <Folder className="w-3.5 h-3.5" />
+                    {hasBoth && (
+                      <span
+                        className="absolute -top-1 -right-1 bg-[#0284C7] text-white text-[8px] font-mono font-bold px-1 py-0.2 rounded-full leading-none shadow-xs"
+                        title="Both BepInEx & SPT_Runtime/user/mods folders will open"
+                      >
+                        2
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
 
               {/* Uninstall */}
               <button

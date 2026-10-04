@@ -1,5 +1,6 @@
 import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem } from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
+import { getKnownDependencyMeta } from '../data/knownDependencies';
 
 const API_BASE = 'https://sp-mod.com/api/v0';
 
@@ -172,6 +173,35 @@ export const apiService = {
           installedMap.get(String(nodeId)) ||
           installedMap.get(node.name.toLowerCase());
 
+        const knownMeta =
+          getKnownDependencyMeta(nodeGuid) ||
+          getKnownDependencyMeta(node.name) ||
+          getKnownDependencyMeta(nodeId);
+        const fixtureMatch = FIXTURE_MODS.find(
+          (m) =>
+            m.id === nodeId ||
+            (m.guid && m.guid.toLowerCase() === nodeGuid.toLowerCase()) ||
+            m.name.toLowerCase() === node.name.toLowerCase()
+        );
+
+        const thumbnail =
+          (node as any).thumbnail ||
+          knownMeta?.thumbnail ||
+          fixtureMatch?.thumbnail ||
+          '';
+        const author =
+          (node as any).author ||
+          (node as any).owner?.name ||
+          knownMeta?.author ||
+          fixtureMatch?.owner?.name ||
+          'Community Author';
+        const kind = (node as any).kind || knownMeta?.kind || (fixtureMatch ? 'Server' : 'Both');
+        const categoryTitle =
+          (node as any).category?.title ||
+          knownMeta?.categoryTitle ||
+          fixtureMatch?.category?.title ||
+          'Tools';
+
         flattened.push({
           id: nodeId,
           guid: nodeGuid,
@@ -185,6 +215,10 @@ export const apiService = {
           installedVersion: existingInstalled?.version,
           selected: !isInstalled,
           depth,
+          thumbnail,
+          author,
+          kind,
+          categoryTitle,
         });
       }
 
