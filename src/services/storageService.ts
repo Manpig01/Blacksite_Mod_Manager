@@ -1,4 +1,4 @@
-import { InstalledMod, SettingsState, ModProfile, ConflictInfo } from '../types';
+import { InstalledMod, SettingsState, ModProfile, ConflictInfo, ModpackSnapshot, LoadoutManifest } from '../types';
 import { INITIAL_INSTALLED_MODS, INITIAL_PROFILES, INITIAL_CONFLICTS } from '../data/fixtureCatalog';
 
 const SETTINGS_KEY = 'blacksite_settings_v1';
@@ -6,6 +6,7 @@ const INSTALLED_MODS_KEY = 'blacksite_installed_mods_v1';
 const PROFILES_KEY = 'blacksite_profiles_v1';
 const CONFLICT_IGNORES_KEY = 'blacksite_conflict_ignores_v1';
 const FAVORITE_MODS_KEY = 'blacksite_favorite_mods_v1';
+const SNAPSHOTS_KEY = 'blacksite_snapshots_v1';
 
 const DEFAULT_SETTINGS: SettingsState = {
   sptDirectory: 'C:\\SPT',
@@ -242,5 +243,120 @@ export const storageService = {
     }
 
     return conflicts;
-  }
+  },
+
+  loadSnapshots(): ModpackSnapshot[] {
+    try {
+      const saved = localStorage.getItem(SNAPSHOTS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [
+      {
+        id: 'snap-baseline-416',
+        name: 'Vanilla Baseline Checkpoint',
+        notes: 'Clean baseline backup before installing experimental combat plugins.',
+        createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
+        sptVersion: '4.1.6',
+        enabledModIds: ['xyz.drakia.bigbrain', 'fika.ghostfenixx.svm'],
+        totalModsCount: 2,
+        modSnapshots: [
+          {
+            id: 'xyz.drakia.bigbrain',
+            name: 'BigBrain',
+            version: '1.1.2',
+            isDisabled: false,
+            loadOrder: 1,
+            kind: 'Client',
+          },
+          {
+            id: 'fika.ghostfenixx.svm',
+            name: 'Server Value Modifier [SVM]',
+            version: '1.9.0',
+            isDisabled: false,
+            loadOrder: 2,
+            kind: 'Both',
+          },
+        ],
+      },
+    ];
+  },
+
+  saveSnapshots(snapshots: ModpackSnapshot[]): void {
+    try {
+      localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(snapshots));
+    } catch {
+      // ignore
+    }
+  },
+
+  createSnapshot(
+    name: string,
+    notes: string | undefined,
+    sptVersion: string,
+    installedMods: InstalledMod[]
+  ): ModpackSnapshot {
+    const newSnapshot: ModpackSnapshot = {
+      id: `snap-${Date.now()}`,
+      name: name.trim() || `Snapshot ${new Date().toLocaleDateString()}`,
+      notes: notes?.trim() || undefined,
+      createdAt: new Date().toISOString(),
+      sptVersion,
+      enabledModIds: installedMods.filter((m) => !m.isDisabled).map((m) => m.id),
+      totalModsCount: installedMods.length,
+      modSnapshots: installedMods.map((m) => ({
+        id: m.id,
+        name: m.name,
+        version: m.version,
+        isDisabled: m.isDisabled,
+        loadOrder: m.loadOrder,
+        kind: m.kind,
+      })),
+    };
+
+    const existing = this.loadSnapshots();
+    const updated = [newSnapshot, ...existing];
+    this.saveSnapshots(updated);
+    return newSnapshot;
+  },
+
+  deleteSnapshot(id: string): void {
+    const existing = this.loadSnapshots();
+    const updated = existing.filter((s) => s.id !== id);
+    this.saveSnapshots(updated);
+  },
+
+  generateShareCode(manifest: LoadoutManifest): string {
+    try {
+      const json = JSON.stringify(manifest);
+      const encoded = btoa(encodeURIComponent(json));
+      return `BS-${encoded}`;
+    } catch {
+      return '';
+    }
+  },
+
+  parseShareCode(input: string): LoadoutManifest | null {
+    try {
+      const trimmed = input.trim();
+      let rawJson = trimmed;
+
+      if (trimmed.startsWith('BS-')) {
+        const base64 = trimmed.slice(3);
+        rawJson = decodeURIComponent(atob(base64));
+      }
+
+      const parsed = JSON.parse(rawJson);
+      if (parsed && Array.isArray(parsed.mods)) {
+        return parsed as LoadoutManifest;
+      }
+    } catch {
+      // invalid JSON or share code
+    }
+    return null;
+  },
 };

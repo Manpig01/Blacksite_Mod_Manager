@@ -17,7 +17,7 @@ export const InstalledSearchBar: React.FC<InstalledSearchBarProps> = ({
   onClear,
   totalCount,
   filteredCount,
-  placeholder = 'Search by mod name or author...',
+  placeholder = 'Search by name, author, or category...',
   className = '',
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,7 +56,7 @@ export const InstalledSearchBar: React.FC<InstalledSearchBarProps> = ({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        aria-label="Filter installed mods by name or author"
+        aria-label="Filter installed mods by name, author, or category"
         className="w-full bg-[#0E1013] border border-[#23272E] rounded-lg pl-9 pr-20 py-1.5 text-[13px] text-[#E8EAEE] placeholder-[#6B7480] focus:outline-none focus:border-[#EA580C] focus:ring-1 focus:ring-[#EA580C]/40 transition-all shadow-inner"
       />
 

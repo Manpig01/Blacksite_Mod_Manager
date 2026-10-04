@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Boxes } from 'lucide-react';
 import { CustomTitleBar } from './components/CustomTitleBar';
 import { Header } from './components/Header';
 import { BrowseModsTab } from './components/BrowseModsTab';
-import { InstalledModsTab } from './components/InstalledModsTab';
+import { InstalledModsTab, InstalledSortField } from './components/InstalledModsTab';
+import { ModpacksTab } from './components/ModpacksTab';
 import { AnalyticsTab } from './components/AnalyticsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { InstallQueueModal } from './components/InstallQueueModal';
@@ -12,6 +14,7 @@ import { ConflictResolverModal } from './components/ConflictResolverModal';
 import { DependencyInstallModal } from './components/DependencyInstallModal';
 import { SptLauncherModal } from './components/SptLauncherModal';
 import { WindowsDownloadModal } from './components/WindowsDownloadModal';
+import { ExportModsModal } from './components/ExportModsModal';
 import { StatusBar } from './components/StatusBar';
 import { ToastContainer } from './components/ToastContainer';
 
@@ -20,6 +23,7 @@ import {
   ModCategory,
   SptVersionInfo,
   InstalledMod,
+  ModKind,
   QueueItem,
   QueueItemStatus,
   SettingsState,
@@ -41,12 +45,81 @@ export const App: React.FC = () => {
   const [ignoredConflicts, setIgnoredConflicts] = useState<string[]>(storageService.loadIgnoredConflicts);
   const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
 
+  // Reactive Auto-Sort State for Installed Mods
+  const [installedSortField, setInstalledSortField] = useState<InstalledSortField>(() => {
+    return (localStorage.getItem('blacksite_installed_sort_field') as InstalledSortField) || 'category';
+  });
+  const [installedSortDirection, setInstalledSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Reactively sorted installed mods list based on user's selection in the Auto-Sort dropdown
+  const sortedInstalledMods = useMemo(() => {
+    const list = [...installedMods];
+    list.sort((a, b) => {
+      let comparison = 0;
+      switch (installedSortField) {
+        case 'category': {
+          const orderMap: Record<ModKind, number> = { Server: 1, Both: 2, Client: 3 };
+          const catA = orderMap[a.kind] || 4;
+          const catB = orderMap[b.kind] || 4;
+          if (catA !== catB) {
+            comparison = catA - catB;
+          } else {
+            comparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+          }
+          break;
+        }
+        case 'date':
+        case 'date-desc':
+        case 'date-asc': {
+          const timeA = new Date(a.installDate).getTime() || 0;
+          const timeB = new Date(b.installDate).getTime() || 0;
+          comparison = timeA - timeB;
+          break;
+        }
+        case 'name':
+          comparison = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+          break;
+        case 'status': {
+          const statusA = a.isDisabled ? 1 : 0;
+          const statusB = b.isDisabled ? 1 : 0;
+          comparison = statusA - statusB;
+          if (comparison === 0) {
+            comparison = (a.loadOrder ?? 9999) - (b.loadOrder ?? 9999);
+          }
+          break;
+        }
+        case 'author':
+          comparison = a.author.localeCompare(b.author, undefined, { sensitivity: 'base' });
+          break;
+        case 'loadOrder':
+        default: {
+          if (a.isDisabled !== b.isDisabled) {
+            comparison = a.isDisabled ? 1 : -1;
+          } else {
+            comparison = (a.loadOrder ?? 9999) - (b.loadOrder ?? 9999);
+          }
+          break;
+        }
+      }
+      return installedSortDirection === 'asc' ? comparison : -comparison;
+    });
+    return list;
+  }, [installedMods, installedSortField, installedSortDirection]);
+
+  const handleInstalledSortChange = (field: InstalledSortField, direction?: 'asc' | 'desc') => {
+    setInstalledSortField(field);
+    if (direction) {
+      setInstalledSortDirection(direction);
+    }
+    localStorage.setItem('blacksite_installed_sort_field', field);
+  };
+
   // Metadata
   const [categories, setCategories] = useState<ModCategory[]>([]);
   const [sptVersions, setSptVersions] = useState<SptVersionInfo[]>([]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'analytics' | 'settings'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'modpacks' | 'analytics' | 'settings'>('browse');
 
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -68,6 +141,7 @@ export const App: React.FC = () => {
   const [selectedConflict, setSelectedConflict] = useState<ConflictInfo | null>(null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [isExportModsModalOpen, setIsExportModsModalOpen] = useState(false);
 
   // Queue & Progress
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -862,6 +936,46 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleApplyLoadout = (
+    modsToEnable: string[],
+    modsToDisable: string[],
+    loadOrders?: Record<string, number>,
+    missingMods?: string[]
+  ) => {
+    const enableSet = new Set(modsToEnable.map((id) => id.toLowerCase()));
+    const disableSet = new Set(modsToDisable.map((id) => id.toLowerCase()));
+
+    setInstalledMods((prev) => {
+      const updated = prev.map((m) => {
+        const idLower = m.id.toLowerCase();
+        let isDisabled = m.isDisabled;
+        if (enableSet.has(idLower)) {
+          isDisabled = false;
+        } else if (disableSet.has(idLower)) {
+          isDisabled = true;
+        }
+
+        let loadOrder = m.loadOrder;
+        if (loadOrders && typeof loadOrders[m.id] === 'number') {
+          loadOrder = loadOrders[m.id];
+        }
+
+        return {
+          ...m,
+          isDisabled,
+          loadOrder,
+        };
+      });
+
+      storageService.saveInstalledMods(updated);
+      return updated;
+    });
+
+    if (missingMods && missingMods.length > 0) {
+      console.info('Loadout requested mods not installed:', missingMods);
+    }
+  };
+
   const handleOpenFolder = async (target: 'client' | 'server' | string) => {
     let relPath = '';
     let label = '';
@@ -1044,6 +1158,19 @@ export const App: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('modpacks')}
+          className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'modpacks'
+              ? 'text-[#EA580C] border-[#EA580C]'
+              : 'text-[#9AA3AF] hover:text-[#E8EAEE] border-transparent'
+          }`}
+          type="button"
+        >
+          <Boxes className="w-3.5 h-3.5" />
+          <span>Modpack Tools</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('analytics')}
           className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'analytics'
@@ -1087,8 +1214,11 @@ export const App: React.FC = () => {
 
         {activeTab === 'installed' && (
           <InstalledModsTab
-            installedMods={installedMods}
+            installedMods={sortedInstalledMods}
             conflicts={conflicts}
+            activeSortField={installedSortField}
+            activeSortDirection={installedSortDirection}
+            onSortChange={handleInstalledSortChange}
             onToggleMod={handleToggleMod}
             onUninstallMod={handleUninstallMod}
             onUpdateMod={handleUpdateMod}
@@ -1105,6 +1235,16 @@ export const App: React.FC = () => {
             onBulkDisable={handleBulkDisableMods}
             onBulkUninstall={handleBulkUninstallMods}
             onShowToast={showToast}
+          />
+        )}
+
+        {activeTab === 'modpacks' && (
+          <ModpacksTab
+            installedMods={installedMods}
+            sptVersion={settings.sptVersion}
+            onApplyLoadout={handleApplyLoadout}
+            onShowToast={showToast}
+            onNavigateToBrowse={() => setActiveTab('browse')}
           />
         )}
 
@@ -1138,6 +1278,7 @@ export const App: React.FC = () => {
               showToast('Temp Cleaned', 'Cleaned leftover bs-staging-* and bs-extract-* directories.', 'info')
             }
             onExportDiagnostics={handleExportDiagnostics}
+            onExportMods={() => setIsExportModsModalOpen(true)}
             onShowToast={showToast}
           />
         )}
@@ -1231,6 +1372,13 @@ export const App: React.FC = () => {
         isOpen={isDownloadModalOpen}
         onClose={() => setIsDownloadModalOpen(false)}
         appVersion="1.8.0"
+      />
+
+      <ExportModsModal
+        isOpen={isExportModsModalOpen}
+        onClose={() => setIsExportModsModalOpen(false)}
+        installedMods={sortedInstalledMods}
+        onShowToast={showToast}
       />
 
       {/* Toasts */}

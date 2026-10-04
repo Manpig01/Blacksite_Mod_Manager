@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Save, Trash, RefreshCw, FileText, CheckCircle2, ShieldCheck, Plus, Trash2, FolderSync, Sun, Moon } from 'lucide-react';
+import { Save, Trash, RefreshCw, FileText, CheckCircle2, ShieldCheck, Plus, Trash2, FolderSync, Sun, Moon, Download } from 'lucide-react';
 import { SettingsState, ModProfile, InstalledMod } from '../types';
 
 interface SettingsTabProps {
@@ -14,6 +14,7 @@ interface SettingsTabProps {
   onClearCache: () => void;
   onClearTempFiles: () => void;
   onExportDiagnostics: () => void;
+  onExportMods?: () => void;
   onShowToast: (title: string, message: string, type: 'success' | 'info' | 'warning' | 'error') => void;
   onPickDirectory?: () => void;
 }
@@ -31,6 +32,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   onClearCache,
   onClearTempFiles,
   onExportDiagnostics,
+  onExportMods,
   onShowToast,
 }) => {
   const [newProfileName, setNewProfileName] = useState('');
@@ -415,6 +417,18 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           <FileText className="w-4 h-4 text-[#EA580C]" />
           <span>Export Diagnostics Bundle</span>
         </button>
+
+        {onExportMods && (
+          <button
+            onClick={onExportMods}
+            className="bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] hover:text-[#EA580C] text-xs font-medium px-4 py-2.5 rounded-lg border border-[#2A2F38] hover:border-[#EA580C]/40 flex items-center gap-2 transition-colors cursor-pointer"
+            title="Export installed mods list as JSON manifest or CSV spreadsheet"
+            type="button"
+          >
+            <Download className="w-4 h-4 text-[#EA580C]" />
+            <span>Export Mods List (JSON/CSV)</span>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -218,3 +218,37 @@ export interface ResolvedDependencyItem {
   depth: number;
 }
 
+export interface ModpackSnapshot {
+  id: string;
+  name: string;
+  notes?: string;
+  createdAt: string;
+  sptVersion: string;
+  enabledModIds: string[];
+  totalModsCount: number;
+  modSnapshots: {
+    id: string;
+    name: string;
+    version: string;
+    isDisabled: boolean;
+    loadOrder?: number;
+    kind: ModKind;
+  }[];
+}
+
+export interface LoadoutManifest {
+  name: string;
+  author?: string;
+  description?: string;
+  sptVersion: string;
+  exportedAt: string;
+  mods: {
+    id: string;
+    name?: string;
+    version?: string;
+    enabled: boolean;
+    loadOrder?: number;
+    kind?: ModKind;
+  }[];
+}
+
