@@ -4,9 +4,18 @@ import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'http';
 
 function forgeImageProxyPlugin(): Plugin {
+  const imageCache = new Map<string, { buffer: Buffer; contentType: string; timestamp: number }>();
+
   const handler = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url?.startsWith('/api/forge-image')) {
       return next();
+    }
+
+    if (req.url === '/api/forge-image/clear') {
+      imageCache.clear();
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: true, message: 'Server image cache cleared' }));
+      return;
     }
 
     try {
@@ -16,6 +25,17 @@ function forgeImageProxyPlugin(): Plugin {
       if (!targetUrl) {
         res.statusCode = 400;
         res.end('Missing url query parameter');
+        return;
+      }
+
+      // Check server-side memory cache
+      const cached = imageCache.get(targetUrl);
+      if (cached) {
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=2592000');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('X-Blacksite-Image-Cache', 'HIT');
+        res.end(cached.buffer);
         return;
       }
 
@@ -42,11 +62,21 @@ function forgeImageProxyPlugin(): Plugin {
 
       const contentType = remoteRes.headers.get('content-type') || 'image/png';
       res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      res.setHeader('Cache-Control', 'public, max-age=604800, stale-while-revalidate=2592000');
       res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('X-Blacksite-Image-Cache', 'MISS');
 
       const arrayBuffer = await remoteRes.arrayBuffer();
-      res.end(Buffer.from(arrayBuffer));
+      const buffer = Buffer.from(arrayBuffer);
+
+      // Keep cache size bounded to last 500 images
+      if (imageCache.size > 500) {
+        const firstKey = imageCache.keys().next().value;
+        if (firstKey) imageCache.delete(firstKey);
+      }
+      imageCache.set(targetUrl, { buffer, contentType, timestamp: Date.now() });
+
+      res.end(buffer);
     } catch (err: any) {
       res.statusCode = 500;
       res.end(`Proxy error: ${err.message}`);

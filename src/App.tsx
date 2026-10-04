@@ -36,6 +36,7 @@ import {
 } from './types';
 import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
+import { imageCacheService } from './services/imageCacheService';
 
 export const App: React.FC = () => {
   // App State
@@ -342,13 +343,16 @@ export const App: React.FC = () => {
     showToast('Profile Loaded', `Switched to profile: ${profile.name}`, 'success');
   };
 
-  const handleCreateProfile = () => {
-    const name = prompt('Enter a name for the new profile:');
-    if (!name?.trim()) return;
+  const handleCreateProfile = (profileName?: string) => {
+    let name = profileName?.trim();
+    if (!name) {
+      name = prompt('Enter a name for the new profile:')?.trim();
+    }
+    if (!name) return;
 
     const newProfile: ModProfile = {
       id: `prof-${Date.now()}`,
-      name: name.trim(),
+      name: name,
       description: 'Custom mod loadout',
       enabledModIds: installedMods.filter((m) => !m.isDisabled).map((m) => m.id),
       createdDate: new Date().toISOString().split('T')[0],
@@ -976,40 +980,44 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleOpenFolder = async (target: 'client' | 'server' | string) => {
-    let relPath = '';
-    let label = '';
+  const handleOpenFolder = async (target: 'client' | 'server' | string | string[]) => {
+    const targets = Array.isArray(target) ? target : [target];
     const isSpt4 = settings.sptVersion.startsWith('4');
-    if (target === 'client') {
-      relPath = settings.clientModPath || 'BepInEx/plugins';
-      label = 'Plugins Folder (BepInEx/plugins)';
-    } else if (target === 'server') {
-      relPath = settings.serverModPath || (isSpt4 ? 'SPT_Runtime/user/mods' : 'user/mods');
-      label = `Server Folder (${relPath})`;
-    } else {
-      relPath = target;
-      label = `Mod Folder (${target})`;
-    }
-
-    const fullPath = `${settings.sptDirectory}\\${relPath.replace(/\//g, '\\')}`;
     const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
 
-    if (bridge?.openFolder) {
-      try {
-        const opened = await bridge.openFolder(fullPath);
-        if (opened) {
-          showToast('Directory Explorer', `Opened ${label} in File Explorer: ${fullPath}`, 'success');
-          return;
-        } else {
-          showToast('Folder Notice', `Target path does not exist on disk: ${fullPath}`, 'warning');
-          return;
+    const fullPaths: string[] = [];
+
+    for (const item of targets) {
+      let relPath = '';
+      if (item === 'client') {
+        relPath = settings.clientModPath || 'BepInEx/plugins';
+      } else if (item === 'server') {
+        relPath = settings.serverModPath || (isSpt4 ? 'SPT_Runtime/user/mods' : 'user/mods');
+      } else {
+        relPath = item;
+      }
+
+      const fullPath = `${settings.sptDirectory}\\${relPath.replace(/\//g, '\\')}`;
+      fullPaths.push(fullPath);
+
+      if (bridge?.openFolder) {
+        try {
+          await bridge.openFolder(fullPath);
+        } catch (err: any) {
+          console.error('Failed to open folder:', err);
         }
-      } catch (err: any) {
-        console.error('Failed to open folder:', err);
       }
     }
 
-    showToast('Directory Explorer', `Target path: ${fullPath}`, 'info');
+    if (fullPaths.length > 1) {
+      showToast(
+        'Dual Locations Opened',
+        `Opened both BepInEx and SPT_Runtime\\user\\mods folders:\n${fullPaths.join('\n')}`,
+        'success'
+      );
+    } else if (fullPaths.length === 1) {
+      showToast('Directory Explorer', `Opened folder in File Explorer: ${fullPaths[0]}`, 'success');
+    }
   };
 
   // Config Saving
@@ -1273,7 +1281,15 @@ export const App: React.FC = () => {
             onCreateProfile={handleCreateProfile}
             onDeleteProfile={handleDeleteProfile}
             onSelectProfile={handleSelectProfile}
-            onClearCache={() => showToast('Cache Cleared', 'Thumbnail and API metadata cache cleared.', 'info')}
+            onClearCache={async () => {
+              await imageCacheService.clearCache();
+              try {
+                await fetch('/api/forge-image/clear');
+              } catch {
+                // ignore
+              }
+              showToast('Cache Cleared', 'Thumbnail, image blobs, and API metadata cache cleared.', 'info');
+            }}
             onClearTempFiles={() =>
               showToast('Temp Cleaned', 'Cleaned leftover bs-staging-* and bs-extract-* directories.', 'info')
             }

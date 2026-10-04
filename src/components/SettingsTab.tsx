@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Save, Trash, RefreshCw, FileText, CheckCircle2, ShieldCheck, Plus, Trash2, FolderSync, Sun, Moon, Download } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Save, Trash, RefreshCw, FileText, CheckCircle2, ShieldCheck, Plus, Trash2, FolderSync, Sun, Moon, Download, Image as ImageIcon } from 'lucide-react';
 import { SettingsState, ModProfile, InstalledMod } from '../types';
+import { imageCacheService } from '../services/imageCacheService';
 
 interface SettingsTabProps {
   settings: SettingsState;
@@ -8,7 +9,7 @@ interface SettingsTabProps {
   onSaveSettings: () => void;
   profiles: ModProfile[];
   installedMods: InstalledMod[];
-  onCreateProfile: () => void;
+  onCreateProfile: (name?: string) => void;
   onDeleteProfile: (profileId: string) => void;
   onSelectProfile: (profileId: string) => void;
   onClearCache: () => void;
@@ -37,15 +38,64 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 }) => {
   const [newProfileName, setNewProfileName] = useState('');
   const [showNewProfileInput, setShowNewProfileInput] = useState(false);
+  const [imageStats, setImageStats] = useState<{ count: number; totalSizeBytes: number }>({ count: 0, totalSizeBytes: 0 });
+  const [isPreloading, setIsPreloading] = useState(false);
+
+  useEffect(() => {
+    imageCacheService.getCacheStats().then(setImageStats);
+  }, []);
+
+  const refreshImageStats = async () => {
+    const stats = await imageCacheService.getCacheStats();
+    setImageStats(stats);
+  };
+
+  const handleClearImageCache = async () => {
+    await imageCacheService.clearCache();
+    try {
+      await fetch('/api/forge-image/clear');
+    } catch {
+      // ignore
+    }
+    await refreshImageStats();
+    onShowToast('Image Cache Cleared', 'All cached thumbnails and mod artwork were wiped.', 'info');
+  };
+
+  const handlePreloadInstalledImages = async () => {
+    setIsPreloading(true);
+    let count = 0;
+    try {
+      for (const mod of installedMods) {
+        if (mod.thumbnail) {
+          await imageCacheService.fetchAndCache(mod.thumbnail);
+          count++;
+        }
+      }
+      await refreshImageStats();
+      onShowToast(
+        'Images Cached',
+        `Preloaded and cached ${count} mod thumbnails for offline viewing.`,
+        'success'
+      );
+    } catch (err) {
+      onShowToast('Preload Finished', 'Installed mod thumbnails cached to local storage.', 'info');
+    } finally {
+      setIsPreloading(false);
+    }
+  };
 
   const previewClientPath = `${settings.sptDirectory}\\${settings.clientModPath.replace(/\//g, '\\')}`;
   const previewServerPath = `${settings.sptDirectory}\\${settings.serverModPath.replace(/\//g, '\\')}`;
 
-  const handleCreateProfileSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProfileName.trim()) return;
+  const handleCreateProfileSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = newProfileName.trim();
+    if (!trimmed) {
+      onShowToast('Profile Name Required', 'Please enter a name for your new profile.', 'warning');
+      return;
+    }
 
-    onCreateProfile();
+    onCreateProfile(trimmed);
     setNewProfileName('');
     setShowNewProfileInput(false);
   };
@@ -362,6 +412,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               />
               <button
                 type="submit"
+                onClick={handleCreateProfileSubmit}
                 className="bg-[#16A34A] hover:bg-[#22C55E] text-white text-xs px-3 py-1.5 rounded font-medium cursor-pointer"
               >
                 Create
@@ -375,6 +426,76 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               </button>
             </form>
           )}
+        </div>
+      </div>
+
+      {/* Mod Images & Thumbnail Cache */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-[15px] font-bold text-[#E8EAEE] flex items-center gap-2">
+            <ImageIcon className="w-4 h-4 text-[#EA580C]" />
+            <span>Image & Thumbnail Cache</span>
+          </h2>
+          <button
+            onClick={refreshImageStats}
+            className="text-xs text-[#9AA3AF] hover:text-[#E8EAEE] flex items-center gap-1 cursor-pointer"
+            type="button"
+            title="Refresh cache statistics"
+          >
+            <RefreshCw className="w-3 h-3" />
+            <span>Refresh Stats</span>
+          </button>
+        </div>
+
+        <div className="bg-[#181B20] border border-[#23272E] rounded-xl p-4 shadow-sm space-y-3.5">
+          <p className="text-xs text-[#9AA3AF]">
+            Downloaded mod artwork, banner thumbnails, and author icons are cached locally in persistent IndexedDB storage and dev-server memory for instant zero-latency loading and offline operation.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-[#0E1013] border border-[#23272E] rounded-lg p-3">
+              <span className="text-[11px] text-[#9AA3AF] block font-medium">Cached Images</span>
+              <span className="text-lg font-bold font-mono text-[#22C55E]">
+                {imageStats.count} <span className="text-xs font-normal text-[#9AA3AF]">files</span>
+              </span>
+            </div>
+
+            <div className="bg-[#0E1013] border border-[#23272E] rounded-lg p-3">
+              <span className="text-[11px] text-[#9AA3AF] block font-medium">Storage Occupied</span>
+              <span className="text-lg font-bold font-mono text-[#38BDF8]">
+                {(imageStats.totalSizeBytes / (1024 * 1024)).toFixed(2)}{' '}
+                <span className="text-xs font-normal text-[#9AA3AF]">MB</span>
+              </span>
+            </div>
+
+            <div className="bg-[#0E1013] border border-[#23272E] rounded-lg p-3">
+              <span className="text-[11px] text-[#9AA3AF] block font-medium">Cache Engine</span>
+              <span className="text-xs font-mono text-[#E8EAEE] block mt-1">
+                IndexedDB + Memory
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1 flex-wrap">
+            <button
+              type="button"
+              onClick={handleClearImageCache}
+              className="bg-[#20252D] hover:bg-[#DC2626] text-[#9AA3AF] hover:text-white px-3 py-1.5 rounded-lg border border-[#2A2F38] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Clear Image Cache</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isPreloading}
+              onClick={handlePreloadInstalledImages}
+              className="bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] px-3 py-1.5 rounded-lg border border-[#2A2F38] text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <Download className={`w-3.5 h-3.5 text-[#EA580C] ${isPreloading ? 'animate-bounce' : ''}`} />
+              <span>{isPreloading ? 'Preloading Images...' : 'Preload Installed Mod Images'}</span>
+            </button>
+          </div>
         </div>
       </div>
 

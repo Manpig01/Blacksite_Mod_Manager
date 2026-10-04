@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mod } from '../types';
 import { Bot, Cpu, Eye, ShoppingBag, Crosshair, Volume2, Compass, Wrench, Package } from 'lucide-react';
+import { imageCacheService } from '../services/imageCacheService';
 
 export function getProxiedForgeImageUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string') return null;
@@ -69,14 +70,42 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
 
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [cachedUrl, setCachedUrl] = useState<string | null>(() => {
+    for (const url of candidateImages) {
+      const mem = imageCacheService.getMemoryUrl(url);
+      if (mem) return mem;
+    }
+    return null;
+  });
+  const [isLoaded, setIsLoaded] = useState<boolean>(Boolean(cachedUrl));
   const [hasAllFailed, setHasAllFailed] = useState<boolean>(candidateImages.length === 0);
 
   React.useEffect(() => {
     setCurrentIndex(0);
     setDataUrl(null);
-    setIsLoaded(false);
     setHasAllFailed(candidateImages.length === 0);
+
+    let isMounted = true;
+    // Check if any candidate is already in memory or indexedDB
+    const checkCache = async () => {
+      for (const url of candidateImages) {
+        const cached = await imageCacheService.getCachedImageUrl(url);
+        if (cached && isMounted) {
+          setCachedUrl(cached);
+          setIsLoaded(true);
+          return;
+        }
+      }
+      if (isMounted) {
+        setCachedUrl(null);
+        setIsLoaded(false);
+      }
+    };
+    checkCache();
+
+    return () => {
+      isMounted = false;
+    };
   }, [candidateImages]);
 
   const handleImageError = async () => {
@@ -107,9 +136,14 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
 
   const handleImageLoad = () => {
     setIsLoaded(true);
+    // Cache the image into IndexedDB in the background if not cached yet
+    const activeUrl = candidateImages[currentIndex];
+    if (activeUrl && !cachedUrl && !activeUrl.startsWith('data:')) {
+      imageCacheService.fetchAndCache(activeUrl).catch(() => {});
+    }
   };
 
-  const currentImageUrl = !hasAllFailed ? (dataUrl || candidateImages[currentIndex]) : null;
+  const currentImageUrl = !hasAllFailed ? (cachedUrl || dataUrl || candidateImages[currentIndex]) : null;
 
   // Thematic Category Graphic Fallback Renderer
   const renderCategoryArtwork = () => {

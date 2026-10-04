@@ -111,7 +111,20 @@ export const storageService = {
   loadProfiles(): ModProfile[] {
     try {
       const saved = localStorage.getItem(PROFILES_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: ModProfile[] = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((p) =>
+            p.id === 'prof-1'
+              ? {
+                  ...p,
+                  enabledModIds: [],
+                  description: 'Clean vanilla profile with zero active mods',
+                }
+              : p
+          );
+        }
+      }
     } catch {
       // ignore
     }

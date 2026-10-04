@@ -9,7 +9,7 @@ interface HeaderProps {
   onLaunchSpt: () => void;
   profiles: ModProfile[];
   onSelectProfile: (profileId: string) => void;
-  onCreateProfile: () => void;
+  onCreateProfile: (name?: string) => void;
   onOpenDownloadModal?: () => void;
   isLaunching?: boolean;
 }

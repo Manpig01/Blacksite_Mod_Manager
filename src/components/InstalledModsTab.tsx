@@ -48,7 +48,7 @@ interface InstalledModsTabProps {
   onDisableAll: () => void;
   onUninstallAll: () => void;
   onCheckUpdates: () => void;
-  onOpenFolder: (target: 'client' | 'server' | string) => void;
+  onOpenFolder: (target: 'client' | 'server' | string | string[]) => void;
   onReorderMods: (reorderedMods: InstalledMod[]) => void;
   onUpdateModTags: (modId: string, tags: ModTag[]) => void;
   onBulkEnable?: (modIds: string[]) => void;
@@ -59,6 +59,33 @@ interface InstalledModsTabProps {
   activeSortDirection?: 'asc' | 'desc';
   onSortChange?: (field: InstalledSortField, direction: 'asc' | 'desc') => void;
 }
+
+const getModFolderPaths = (mod: InstalledMod): string[] => {
+  const paths: string[] = [];
+  const hasServer = mod.kind === 'Server' || mod.kind === 'Both' || Boolean(mod.serverPath);
+  const hasClient = mod.kind === 'Client' || mod.kind === 'Both' || Boolean(mod.clientPath);
+
+  if (hasServer) {
+    if (mod.serverPath) {
+      paths.push(mod.serverPath);
+    } else {
+      paths.push('SPT_Runtime/user/mods');
+    }
+  }
+
+  if (hasClient) {
+    if (mod.clientPath) {
+      const cleanDir = /\.[a-zA-Z0-9]+$/.test(mod.clientPath)
+        ? mod.clientPath.replace(/\/[^/]+$/, '')
+        : mod.clientPath;
+      paths.push(cleanDir || 'BepInEx/plugins');
+    } else {
+      paths.push('BepInEx/plugins');
+    }
+  }
+
+  return Array.from(new Set(paths));
+};
 
 export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
   installedMods,
@@ -1120,11 +1147,19 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  const path = mod.serverPath || (mod.clientPath ? mod.clientPath.replace(/\/[^/]+$/, '') : 'BepInEx/plugins');
-                  onOpenFolder(path);
+                  const paths = getModFolderPaths(mod);
+                  if (paths.length > 1) {
+                    onOpenFolder(paths);
+                  } else {
+                    onOpenFolder(paths[0] || 'BepInEx/plugins');
+                  }
                 }}
                 className="bg-[#20252D] hover:bg-[#2A2F38] text-[#9AA3AF] hover:text-[#E8EAEE] p-1.5 rounded transition-colors cursor-pointer"
-                title="Open mod files directory in File Explorer"
+                title={
+                  mod.kind === 'Both' || (Boolean(mod.serverPath) && Boolean(mod.clientPath))
+                    ? 'Open both BepInEx and SPT_Runtime/user/mods folders in File Explorer'
+                    : 'Open mod files directory in File Explorer'
+                }
                 type="button"
               >
                 <Folder className="w-3.5 h-3.5" />

@@ -824,8 +824,8 @@ export const INITIAL_PROFILES: ModProfile[] = [
   {
     id: "prof-1",
     name: "Default Loadout",
-    description: "All installed mods active and enabled",
-    enabledModIds: ["xyz.drakia.bigbrain", "fika.ghostfenixx.svm", "me.sol.sain", "com.amanda.graphics"],
+    description: "Clean vanilla profile with zero active mods",
+    enabledModIds: [],
     createdDate: "2026-09-01"
   },
   {
