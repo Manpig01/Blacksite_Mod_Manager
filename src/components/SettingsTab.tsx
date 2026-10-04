@@ -24,6 +24,9 @@ import {
   X,
   FileCode,
   Bug,
+  Cpu,
+  Zap,
+  Gauge,
 } from 'lucide-react';
 import { SettingsState, ModProfile, InstalledMod } from '../types';
 import { imageCacheService } from '../services/imageCacheService';
@@ -205,6 +208,17 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   const errorCount = logs.filter((l) => l.level === 'error').length;
   const warnCount = logs.filter((l) => l.level === 'warn').length;
+
+  const detectedCores = typeof window !== 'undefined' && (window as any).desktopBridge?.cpuCount
+    ? Number((window as any).desktopBridge.cpuCount)
+    : 8;
+
+  const currentMode = settings.extractionPerformanceMode || 'balanced';
+  const allocatedThreads = currentMode === 'turbo'
+    ? detectedCores
+    : currentMode === 'smooth'
+    ? Math.max(2, Math.floor(detectedCores / 2))
+    : Math.max(2, detectedCores - 2);
 
   const previewClientPath = `${settings.sptDirectory}\\${settings.clientModPath.replace(/\//g, '\\')}`;
   const previewServerPath = `${settings.sptDirectory}\\${settings.serverModPath.replace(/\//g, '\\')}`;

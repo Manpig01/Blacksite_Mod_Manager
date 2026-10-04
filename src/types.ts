@@ -158,6 +158,8 @@ export interface ModProfile {
   createdDate: string;
 }
 
+export type ExtractionPerformanceMode = 'balanced' | 'turbo' | 'smooth';
+
 export interface SettingsState {
   sptDirectory: string;
   sptVersion: string;
@@ -170,6 +172,7 @@ export interface SettingsState {
   downloadStallTimeoutSeconds: number;
   theme: 'dark' | 'light';
   showRecommendedMods?: boolean;
+  extractionPerformanceMode?: ExtractionPerformanceMode;
 }
 
 export interface ToastMessage {

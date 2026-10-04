@@ -1,9 +1,28 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execFile } = require('child_process');
 const { Readable } = require('stream');
 const sevenZip = require('7zip-bin');
 const AdmZip = require('adm-zip');
+
+/**
+ * Resolves optimal 7-Zip decompression thread count based on performance mode
+ * - 'balanced' (default): os.cpus().length - 2 (reserves 2 cores for Windows OS/compositor/mouse)
+ * - 'turbo': os.cpus().length (all available cores)
+ * - 'smooth': os.cpus().length / 2 (low-spec / battery preservation)
+ */
+function getExtractionThreadCount(performanceMode = 'balanced') {
+  const totalCores = os.cpus()?.length || 4;
+  if (performanceMode === 'turbo') {
+    return totalCores;
+  }
+  if (performanceMode === 'smooth') {
+    return Math.max(2, Math.floor(totalCores / 2));
+  }
+  // 'balanced'
+  return Math.max(2, totalCores - 2);
+}
 
 /**
  * Resolves 7za binary path safely inside or outside Electron ASAR and ensures execution permissions
@@ -22,26 +41,40 @@ function get7zaPath() {
 }
 
 /**
- * Robust archive extraction using 7za-first, falling back to AdmZip, tar, and PowerShell
+ * Robust archive extraction using 7za-first with CPU priority tuning and multithreading
  */
-async function extractArchive(archivePath, destinationDir) {
+async function extractArchive(archivePath, destinationDir, performanceMode = 'balanced') {
   fs.mkdirSync(destinationDir, { recursive: true });
 
-  // 1. Try precompiled 7za binary with large buffer and quiet stdout flags
+  // 1. Try precompiled 7za binary with large buffer, quiet stdout flags, and CPU priority tuning
   const bin7za = get7zaPath();
   if (bin7za && fs.existsSync(bin7za)) {
     try {
+      const threadCount = getExtractionThreadCount(performanceMode);
       await new Promise((resolve, reject) => {
         // -bso0 -bsp0 suppresses file-by-file output, avoiding Node.js child_process maxBuffer overflows
-        execFile(
+        // -mmt={threadCount} uses optimal multithreading without consuming 100% of CPU
+        const child = execFile(
           bin7za,
-          ['x', '-y', '-bso0', '-bsp0', `-o${destinationDir}`, archivePath],
-          { maxBuffer: 100 * 1024 * 1024 },
+          ['x', '-y', `-mmt=${threadCount}`, '-bso0', '-bsp0', `-o${destinationDir}`, archivePath],
+          { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
           (error) => {
             if (error) reject(error);
             else resolve();
           }
         );
+
+        // Lower process priority on OS scheduler to eliminate cursor lag & frame drops
+        if (child.pid && typeof os.setPriority === 'function') {
+          try {
+            const prio = performanceMode === 'smooth'
+              ? (os.constants?.priority?.PRIORITY_LOW || 19)
+              : (os.constants?.priority?.PRIORITY_BELOW_NORMAL || 10);
+            os.setPriority(child.pid, prio);
+          } catch {
+            // Ignore if OS does not allow adjusting priority
+          }
+        }
       });
       return true;
     } catch (err) {
@@ -152,11 +185,11 @@ function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
 }
 
 /**
- * Intelligent SPT Routing Engine:
+ * Intelligent SPT Routing Engine (Asynchronous & Non-Blocking):
  * Analyzes extracted archive directories and places server mods into SPT_Runtime/user/mods (or user/mods)
- * and client files strictly into root BepInEx/plugins and BepInEx/patchers.
+ * and client files strictly into root BepInEx/plugins and BepInEx/patchers without locking Electron event loop.
  */
-function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6') {
+async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6') {
   const { serverModsDir, serverModsRelDir } = resolveSptPaths(sptDirectory, sptVersion);
   const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
   const targetClientPatchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
@@ -165,24 +198,26 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
   let detectedServerPath = null;
   let detectedClientPath = null;
 
-  // Helper to copy directory contents recursively
-  function copyDirectoryContents(srcDir, destDir) {
+  // Helper to copy directory contents asynchronously without blocking Node event loop
+  async function copyDirectoryContents(srcDir, destDir) {
     if (!fs.existsSync(srcDir)) return;
-    fs.mkdirSync(destDir, { recursive: true });
-    const entries = fs.readdirSync(srcDir, { withFileTypes: true });
+    await fs.promises.mkdir(destDir, { recursive: true });
+    const entries = await fs.promises.readdir(srcDir, { withFileTypes: true });
     for (const entry of entries) {
       const srcPath = path.join(srcDir, entry.name);
       const destPath = path.join(destDir, entry.name);
       if (entry.isDirectory()) {
-        fs.cpSync(srcPath, destPath, { recursive: true, force: true });
+        await fs.promises.cp(srcPath, destPath, { recursive: true, force: true });
       } else {
-        fs.copyFileSync(srcPath, destPath);
+        await fs.promises.copyFile(srcPath, destPath);
       }
+      // Yield to Node event loop so UI / IPC doesn't freeze during large file moves
+      await new Promise((r) => setImmediate(r));
     }
   }
 
   // Find all directory occurrences recursively
-  function findDirectoriesByName(dir, targetName, maxDepth = 4, depth = 0) {
+  function findDirectoriesByName(dir, targetName, maxDepth = 6, depth = 0) {
     const matches = [];
     if (depth > maxDepth || !fs.existsSync(dir)) return matches;
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -215,7 +250,8 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
           const modFolderName = entry.name;
           const srcModDir = path.join(uModsDir, modFolderName);
           const destModDir = path.join(serverModsDir, modFolderName);
-          fs.cpSync(srcModDir, destModDir, { recursive: true, force: true });
+          await fs.promises.cp(srcModDir, destModDir, { recursive: true, force: true });
+          await new Promise((r) => setImmediate(r));
           if (!detectedServerPath) {
             detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
           }
@@ -228,7 +264,7 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
   if (!detectedServerPath) {
     function findPackageJsonDirs(dir, depth = 0) {
       const dirs = [];
-      if (depth > 4 || !fs.existsSync(dir)) return dirs;
+      if (depth > 6 || !fs.existsSync(dir)) return dirs;
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && entry.name.toLowerCase() === 'package.json') {
@@ -246,7 +282,8 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
         const pkgData = JSON.parse(fs.readFileSync(path.join(pDir, 'package.json'), 'utf8'));
         const modFolderName = pkgData.name || path.basename(pDir) || cleanFallback;
         const destModDir = path.join(serverModsDir, modFolderName);
-        fs.cpSync(pDir, destModDir, { recursive: true, force: true });
+        await fs.promises.cp(pDir, destModDir, { recursive: true, force: true });
+        await new Promise((r) => setImmediate(r));
         if (!detectedServerPath) {
           detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
         }
@@ -264,7 +301,7 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
 
   if (pluginsDirs.length > 0) {
     for (const pDir of pluginsDirs) {
-      copyDirectoryContents(pDir, targetClientPluginsDir);
+      await copyDirectoryContents(pDir, targetClientPluginsDir);
       const entries = fs.readdirSync(pDir);
       if (entries.length > 0 && !detectedClientPath) {
         detectedClientPath = `BepInEx/plugins/${entries[0]}`;
@@ -280,7 +317,7 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
 
   if (patchersDirs.length > 0) {
     for (const pDir of patchersDirs) {
-      copyDirectoryContents(pDir, targetClientPatchersDir);
+      await copyDirectoryContents(pDir, targetClientPatchersDir);
       const entries = fs.readdirSync(pDir);
       if (entries.length > 0 && !detectedClientPath) {
         detectedClientPath = `BepInEx/patchers/${entries[0]}`;
@@ -292,7 +329,7 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
   if (!detectedClientPath && !detectedServerPath) {
     function findDlls(dir, depth = 0) {
       const dlls = [];
-      if (depth > 4 || !fs.existsSync(dir)) return dlls;
+      if (depth > 6 || !fs.existsSync(dir)) return dlls;
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.dll')) {
@@ -308,7 +345,8 @@ function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, spt
     if (foundDlls.length > 0) {
       for (const dllPath of foundDlls) {
         const fileName = path.basename(dllPath);
-        fs.copyFileSync(dllPath, path.join(targetClientPluginsDir, fileName));
+        await fs.promises.copyFile(dllPath, path.join(targetClientPluginsDir, fileName));
+        await new Promise((r) => setImmediate(r));
         if (!detectedClientPath) {
           detectedClientPath = `BepInEx/plugins/${fileName}`;
         }
@@ -451,6 +489,7 @@ async function installMod({
   downloadUrl,
   archiveBase64,
   archiveFileName,
+  performanceMode = 'balanced',
   onProgress,
 }) {
   if (!sptDirectory || typeof sptDirectory !== 'string') {
@@ -484,15 +523,15 @@ async function installMod({
     }
 
     // Extraction stage
-    console.log(`[Blacksite Installer] Extracting archive...`);
+    console.log(`[Blacksite Installer] Extracting archive (Performance mode: ${performanceMode})...`);
     if (onProgress) {
       onProgress({
         stage: 'extracting',
         percent: 100,
-        downloadSpeed: 'Extracting archive (7-Zip)...',
+        downloadSpeed: `Extracting (${performanceMode} mode)...`,
       });
     }
-    await extractArchive(tempArchiveFile, tempExtractDir);
+    await extractArchive(tempArchiveFile, tempExtractDir, performanceMode);
 
     // Routing stage
     console.log(`[Blacksite Installer] Routing files into SPT: ${sptDirectory}...`);
@@ -503,7 +542,7 @@ async function installMod({
         downloadSpeed: 'Routing to SPT_Runtime...',
       });
     }
-    const routeResult = routeExtractedModToSpt(tempExtractDir, sptDirectory, modName, sptVersion);
+    const routeResult = await routeExtractedModToSpt(tempExtractDir, sptDirectory, modName, sptVersion);
 
     if (onProgress) {
       onProgress({

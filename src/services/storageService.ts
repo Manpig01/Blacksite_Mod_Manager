@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   downloadStallTimeoutSeconds: 60,
   theme: 'dark',
   showRecommendedMods: true,
+  extractionPerformanceMode: 'balanced',
 };
 
 const DEFAULT_KNOWN_DEPS: Record<string, string[]> = {

@@ -1,70 +1,67 @@
-# Modpack Tools & Community Loadouts Tab
+# High-Performance Mod Extraction & CPU Priority Tuning
 
-A dedicated navigation tab in Blacksite Mod Manager for creating, importing, sharing, and snapshotting complete Single Player Tarkov modpacks and loadout configurations.
+A non-blocking decompression architecture and performance manager for Blacksite Mod Manager that eliminates system lag and desktop stutter during massive Single Player Tarkov mod installations while accelerating extraction throughput.
 
 ---
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The user confirmed that this major addition should be integrated as a **new dedicated navigation tab** ("Modpacks" / "Loadouts") in the primary navigation header, alongside Browse, Installed, Analytics, and Settings.
+> The following technical choices were confirmed during Phase 1:
+> - **Performance Profile**: **Balanced High Speed with Reserved CPU Cores** (allocates `N - 2` CPU threads to 7-Zip with `BelowNormal` process priority so Windows desktop, mouse cursor, and audio never stutter).
+> - **Settings Control**: **Dedicated Extraction Speed & CPU Selector** added to the Settings tab, allowing switching between *Balanced*, *Turbo Max*, and *Smooth Background* modes.
 
-- **Navigation Integration**: A 5th primary tab labeled `Modpacks` with icon indicator and active preset counter.
-- **Loadout Share & Import Engine**: Supports raw JSON manifest imports, file drops (`.json`), and compact Base64 share codes with a full dry-run diff preview before applying.
-- **Curated SPT Presets**: 4 built-in community loadouts (Hardcore Realism, Visual Fidelity, Fika Co-op Base, Lightweight AI) with 1-click application.
-- **Instant Snapshots & Rollback**: Create named loadout checkpoints (e.g., "Pre-Update Backup") with single-click restoration of enabled/disabled states and load orders.
+- **Confirmed Decision 1**: Use multi-threaded 7za execution constrained to `os.cpus().length - 2` threads with Windows process priority set to `BelowNormal`, ensuring maximum extraction speed without starving the OS compositor.
+- **Confirmed Decision 2**: Replace blocking synchronous disk copies (`fs.cpSync`) in the Electron main thread with non-blocking asynchronous stream pipelines (`fs.promises.cp` / streaming chunks) to eliminate the main process event loop lockups that caused the app and PC to freeze.
+- **Confirmed Decision 3**: Add persistent performance preferences to `SettingsState` (`extractionPerformanceMode: 'balanced' | 'turbo' | 'smooth'`).
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Provides an end-to-end modpack management hub. Players can import friend loadouts, test curated community packs, and take non-destructive snapshots of their working mod loadouts with instant rollback if SPT crashes or conflicts arise.
-- **Target Audience**: SPT players sharing loadouts on Discord/forums, players wanting quick starter modpacks without manually assembling 15+ mods, and players wanting safety checkpoints before updating or testing new mods.
-- **Key Value**: Eliminates the frustration of broken loadouts and tedious manual mod synchronization by providing automated diff analysis, instant preset activation, and safe snapshot checkpoints.
+- **What It Does**: Solves computer slowdowns and freezes during the installation of large SPT mods (such as 1GB–10GB weapon packs, visual overhauls, and trader bundles). It tunes decompression engine parameters and moves disk routing into non-blocking asynchronous streams.
+- **Target Audience**: Single Player Tarkov players installing massive mod packages who want their PC to remain completely responsive (smooth mouse cursor, uninterrupted Discord/browser/gameplay) while enjoying significantly faster extraction times.
+- **Key Value**: 
+  - **Zero Desktop Lag**: By dropping 7za worker process priority below normal and reserving 1–2 CPU cores for the operating system, CPU starvation is completely eliminated.
+  - **Faster Extraction Times**: Multi-threaded decompression (`-mmt={cores}`) with quiet output flags (`-bso0 -bsp0`) and direct asynchronous disk routing eliminates redundant copy passes and buffer overheads.
+  - **User Controllability**: Players can customize CPU thread allocation and extraction aggressiveness directly in Settings.
 
 ---
 
 ### 2. User Experience & Visual Design
 
 #### Key User Flows
-1. **Curated Presets Carousel / Grid**:
-   - User browses curated presets with tactical tags, SPT compatibility badges, and mod summaries.
-   - Clicking *"Inspect Loadout"* opens a detailed modal showing which mods are installed vs missing, with an *"Apply Preset"* button that automatically adjusts active states and queues missing mods.
-2. **Import Modpack / Loadout Wizard**:
-   - User clicks *"Import Loadout"* and can either drag-and-drop a JSON manifest file, paste raw JSON, or enter a compact Base64 share code.
-   - An interactive dry-run preview displays:
-     - Exact mods to be activated
-     - Active mods that will be disabled
-     - Missing mods that need installation from `sp-mod.com`
-   - User clicks *"Confirm & Apply"*, applying the loadout seamlessly with toast notifications.
-3. **Snapshot & Checkpoint Rollback**:
-   - User clicks *"Create Snapshot"*, gives it a label (e.g., *"Stable 4.1.6 - SAIN 3.0.5"*), and saves it.
-   - The snapshot history displays timestamp, active mod count, and load order summary.
-   - Clicking *"Rollback"* instantly restores the exact state without needing to re-download files.
+1. **Configuring Performance in Settings**:
+   - User navigates to the **Settings** tab.
+   - Under the new **Extraction & Performance Tuning** card, the user sees three tactical mode buttons:
+     - **Balanced (Recommended)**: Utilizes `N - 2` CPU cores with background I/O priority. High speed with zero desktop stutter.
+     - **Turbo Max**: Utilizes all CPU cores for fastest possible completion when the user is away from keyboard.
+     - **Smooth Background**: Restricts to 2–4 cores with low priority for low-spec PCs or laptops on battery.
+   - A real-time hardware summary displays detected CPU cores (e.g. `8 Cores Detected · 6 Threads Allocated`).
+2. **Installing Large Mod**:
+   - User queues a large mod (e.g. WTT - Armory, SAIN + BPK, or 4K Retextures).
+   - During extraction, the progress bar displays real-time throughput metrics without stuttering the UI.
+   - The user can continue navigating the mod manager, browsing mods, or using other applications with zero cursor lag.
 
 #### Visual Identity & Theme
-- **Color Discipline**: Strict 60-30-10 palette adhering to Blacksite dark tactical style:
-  - Canvas: `#121418` dark slate
-  - Structural cards: `#181B20` with `#23272E` hairline borders and subtle hover rings
-  - Accent budget: `#EA580C` tactical orange and `#22C55E` success emerald for primary actions
-- **Typography & Layout**:
-  - Tabular numerals (`font-mono tabular-nums`) for mod counts, versions, and timestamps.
-  - Zero-pill metadata: quiet text with subtle `·` separators.
-  - No code comments in headers (`//`), no fake telemetry tickers.
+- Strict 60-30-10 Blacksite tactical palette:
+  - Container card: `#181B20` with `#23272E` border and subtle hover state.
+  - Accent: `#EA580C` tactical orange for active mode selection and `#22C55E` for status indicators.
+  - Hardware specs: clean `font-mono text-[11px] text-[#9AA3AF]` with `·` separators (zero pills).
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Full-Screen Dedicated Tab vs Drawer Modal**:
-  - *Chosen Approach*: New top-level navigation tab (`activeTab === 'modpacks'`).
-  - *Why*: Accommodates curated cards, snapshot timelines, and the import wizard without cramping existing views or cluttering the Installed tab.
-- **Decision 2: Non-Destructive Preset Application**:
-  - *Chosen Approach*: Applying a preset or snapshot modifies enabled/disabled flags and load orders, but never deletes unmentioned mods from disk unless explicitly requested.
-  - *Why*: Protects user mod installations and custom configurations from accidental deletion.
-- **Decision 3: Local Storage Persistence**:
-  - *Chosen Approach*: Custom snapshots and preset states persist in `localStorage` under `blacksite_snapshots_v1` via `storageService`.
-  - *Why*: Zero server dependencies, instantaneous performance, and offline reliability.
+- **Decision 1: Asynchronous Non-blocking IO vs Synchronous `fs.cpSync`**:
+  - *Chosen Approach*: Replace `fs.cpSync` with `fs.promises.cp` and chunked asynchronous routing.
+  - *Why*: In Node.js / Electron, `fs.cpSync` completely blocks the V8 main thread event loop for seconds (or minutes on mechanical hard drives or large mods), freezing IPC messages, window rendering, and window movement. Asynchronous IO yields to the event loop between directory entries.
+- **Decision 2: `BelowNormal` Process Priority for Decompression Engines**:
+  - *Chosen Approach*: Launch 7za with Windows `BELOW_NORMAL_PRIORITY_CLASS` (or `nice` on Unix).
+  - *Why*: In Windows, 7-Zip executing at normal priority starves the Windows Desktop Window Manager (DWM.exe) and audio subsystem. `BelowNormal` allows 7za to consume 100% of its assigned cores when idle, but instantly yields CPU cycles whenever the user moves the mouse, switches windows, or plays audio.
+- **Decision 3: Dedicated Performance Toggle in Settings**:
+  - *Chosen Approach*: Persist `performanceMode` in `SettingsState` (`storageService`) and pass it to Electron IPC `mod:install`.
+  - *Why*: Allows users on high-end 16-core gaming rigs to unleash Turbo mode, while laptop or budget quad-core users can select Smooth mode.
 
 ---
 
@@ -72,53 +69,42 @@ A dedicated navigation tab in Blacksite Mod Manager for creating, importing, sha
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                               Header                                   │
-│  [Browse Mods]  [Installed Mods]  [Modpacks]  [Analytics]  [Settings]   │
-└────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
+│                        Renderer Process (React)                        │
+│   SettingsTab: Performance Mode Selector ('balanced' | 'turbo' | 'smooth')
+│   App.tsx: Dispatches queueInstall with performanceMode options       │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ IPC: mod:install
+                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                            ModpacksTab                                 │
-│  ┌───────────────────────┐ ┌───────────────────┐ ┌───────────────────┐ │
-│  │  Import / Share Hub   │ │  Curated Presets  │ │  Saved Snapshots  │ │
-│  │  - JSON Drop / Paste  │ │  - Hardcore 2026  │ │  - Checkpoint #1  │ │
-│  │  - Share Code Decode  │ │  - Visual Immersion│ │  - Checkpoint #2  │ │
-│  │  - Diff Inspector     │ │  - Fika Co-op Base│ │  - Restore Button │ │
-│  └───────────────────────┘ └───────────────────┘ └───────────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                           StorageService                               │
-│  - loadSnapshots() / saveSnapshots()                                   │
-│  - generateShareCode() / parseShareCode()                              │
-│  - applyLoadoutDiff(installedMods, targetManifest)                     │
+│                     Electron Main Process (Node.js)                    │
+│   modInstaller.cjs                                                     │
+│   ┌──────────────────────────────────────────────────────────────────┐ │
+│   │ 1. Stream Download (64KB chunks directly to temp file)          │ │
+│   │ 2. Decompression Engine (7za / tar)                             │ │
+│   │    - Multi-threaded: -mmt={calculatedCores}                     │ │
+│   │    - Process Priority: BelowNormal Priority Class                │ │
+│   │    - Quiet Output: -bso0 -bsp0 (no maxBuffer lag)                │ │
+│   │ 3. Non-Blocking Async Routing                                    │ │
+│   │    - fs.promises.cp / asynchronous recursive directory walk      │ │
+│   │    - Yields to event loop: zero UI freezes or IPC stalling       │ │
+│   │ 4. Cleanup & IPC Completion                                      │ │
+│   └──────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Key Data Interfaces
-```typescript
-export interface ModpackSnapshot {
-  id: string;
-  name: string;
-  notes?: string;
-  createdAt: string;
-  sptVersion: string;
-  enabledModIds: string[];
-  totalModsCount: number;
-  manifest: Record<string, { version: string; loadOrder?: number }>;
-}
+#### Calculated Thread Allocations
+- **Balanced (Default)**: `Math.max(2, Math.min(8, os.cpus().length - 2))` threads, `BelowNormal` priority.
+- **Turbo Max**: `os.cpus().length` threads, `BelowNormal` priority.
+- **Smooth Background**: `Math.max(2, Math.floor(os.cpus().length / 2))` threads, `Idle` / lowest priority.
 
-export interface CuratedPreset {
-  id: string;
-  title: string;
-  tagline: string;
-  author: string;
-  sptVersion: string;
-  category: 'Hardcore' | 'Immersion' | 'Multiplayer' | 'Performance';
-  description: string;
-  modIds: string[];
-  recommendedLoadOrders?: Record<string, number>;
+#### Interface Additions (`src/types.ts`)
+```typescript
+export type ExtractionPerformanceMode = 'balanced' | 'turbo' | 'smooth';
+
+export interface SettingsState {
+  // ... existing fields ...
+  extractionPerformanceMode: ExtractionPerformanceMode;
+  maxExtractionThreads?: number;
 }
 ```
 
@@ -126,17 +112,16 @@ export interface CuratedPreset {
 
 ### 5. Implementation Steps
 
-1. **Types & Storage Service Updates (`src/types.ts`, `src/services/storageService.ts`)**:
-   - Define `ModpackSnapshot` and `CuratedPreset` interfaces.
-   - Add snapshot persistence (`loadSnapshots`, `saveSnapshot`, `deleteSnapshot`).
-   - Add share code generator and decoder (compact JSON + Base64 encoding).
-2. **Curated Presets Catalog (`src/data/curatedPresets.ts`)**:
-   - Populate 4 realistic community presets using verified SPT mod GUIDs from the catalog.
-3. **Modpack Tools Tab (`src/components/ModpacksTab.tsx`)**:
-   - Build 3-section layout: Top Action Hub (Import & New Snapshot), Curated Presets Grid, and Snapshots Timeline.
-   - Implement interactive Diff Inspector showing exact changes before applying any loadout.
-4. **App Navigation Mounting (`src/App.tsx`)**:
-   - Add `'modpacks'` to navigation tabs in `src/App.tsx`.
-   - Wire handlers for applying presets, restoring snapshots, and queueing missing mods.
+1. **Update Data Interfaces & Storage Defaults (`src/types.ts`, `src/services/storageService.ts`)**:
+   - Add `ExtractionPerformanceMode` type and field to `SettingsState`.
+   - Default to `'balanced'` in `DEFAULT_SETTINGS`.
+2. **Optimize Decompression Engine in `electron/modInstaller.cjs`**:
+   - Add thread calculation utility based on `os.cpus().length` and performance mode.
+   - Configure 7za spawn/execFile with Windows `BELOW_NORMAL_PRIORITY_CLASS` (or `windowsHide: true`).
+   - Replace synchronous `fs.cpSync` in `routeExtractedModToSpt` with asynchronous `fs.promises.cp`.
+3. **Connect IPC Parameters (`electron/main.cjs`, `electron/preload.cjs`, `src/App.tsx`)**:
+   - Pass `extractionPerformanceMode` from `settings` through `bridge.installMod`.
+4. **Build Extraction & Performance Tuning UI in `src/components/SettingsTab.tsx`**:
+   - Add card with 3 tactical mode options, CPU hardware summary, and explanation of thread reservation.
 5. **Verification**:
-   - Run `compile_applet` and `lint_applet` to verify zero type or build errors.
+   - Run `compile_applet` and `lint_applet` to verify clean build with zero regressions.

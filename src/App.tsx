@@ -434,6 +434,7 @@ export const App: React.FC = () => {
           downloadUrl,
           archiveBase64,
           archiveFileName: archiveFileName || `${targetGuid}-${version}.archive`,
+          performanceMode: settings.extractionPerformanceMode || 'balanced',
         });
 
         if (!installResult || !installResult.success) {
