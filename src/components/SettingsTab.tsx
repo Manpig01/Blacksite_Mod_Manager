@@ -475,6 +475,162 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         </div>
       </div>
 
+      {/* Extraction Speed & CPU Tuning */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-[15px] font-bold text-[#E8EAEE] flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-[#EA580C]" />
+            <span>Extraction Speed & CPU Tuning</span>
+          </h2>
+          <div className="text-[11px] font-mono text-[#9AA3AF] flex items-center gap-1.5">
+            <span>{detectedCores} Cores Detected</span>
+            <span aria-hidden="true">·</span>
+            <span className={currentMode === 'turbo' ? 'text-[#F97316] font-semibold' : 'text-[#22C55E]'}>
+              {allocatedThreads} Threads Active
+            </span>
+          </div>
+        </div>
+
+        <div className="bg-[#181B20] border border-[#23272E] rounded-xl p-4 shadow-sm space-y-4">
+          <p className="text-xs text-[#9AA3AF]">
+            Configure multi-threaded 7-Zip decompression and process scheduling priority for extracting large archives (weapon packs, texture overhauls, and SPT bundles).
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Balanced Mode (Default) */}
+            <div
+              onClick={() => {
+                onUpdateSettings({ extractionPerformanceMode: 'balanced' });
+                onShowToast('Performance Mode: Balanced', 'Using N-2 CPU cores with BelowNormal priority for smooth multitasking.', 'info');
+              }}
+              className={`border rounded-xl p-3.5 cursor-pointer transition-all flex flex-col justify-between ${
+                currentMode === 'balanced'
+                  ? 'bg-[#20252D] border-[#EA580C] shadow-sm ring-1 ring-[#EA580C]/30'
+                  : 'bg-[#121418] border-[#23272E] hover:border-[#3A4150]'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <Gauge className="w-4 h-4 text-[#22C55E]" />
+                    <span className="text-sm font-bold text-[#E8EAEE]">Balanced</span>
+                  </div>
+                  {currentMode === 'balanced' && (
+                    <span className="text-[10px] bg-[#EA580C] text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] font-mono text-[#9AA3AF] mb-2">
+                  {Math.max(2, detectedCores - 2)} Threads · BelowNormal Priority
+                </div>
+                <p className="text-xs text-[#9AA3AF] leading-relaxed">
+                  Reserves 2 CPU cores for Windows, audio, and browser. Fast extraction with zero desktop or mouse stutter.
+                </p>
+              </div>
+              <div className="mt-3 pt-2 border-t border-[#23272E] text-[10.5px] font-mono text-[#6B7480]">
+                Recommended for everyday use
+              </div>
+            </div>
+
+            {/* Turbo Max (Uncapped) */}
+            <div
+              onClick={() => {
+                onUpdateSettings({ extractionPerformanceMode: 'turbo' });
+                onShowToast('Performance Mode: Turbo Max', 'All CPU cores saturated with High process priority for maximum throughput.', 'warning');
+              }}
+              className={`border rounded-xl p-3.5 cursor-pointer transition-all flex flex-col justify-between ${
+                currentMode === 'turbo'
+                  ? 'bg-[#20252D] border-[#EA580C] shadow-sm ring-1 ring-[#EA580C]/40'
+                  : 'bg-[#121418] border-[#23272E] hover:border-[#3A4150]'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-[#F97316]" />
+                    <span className="text-sm font-bold text-[#E8EAEE]">Turbo Max (Uncapped)</span>
+                  </div>
+                  {currentMode === 'turbo' && (
+                    <span className="text-[10px] bg-[#EA580C] text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] font-mono text-[#F97316] mb-2">
+                  {detectedCores} Threads (100% Cores) · High Priority
+                </div>
+                <p className="text-xs text-[#9AA3AF] leading-relaxed">
+                  Full throttle with zero limitations. Saturates all CPU cores and parallelizes disk routing for maximum extraction speed.
+                </p>
+              </div>
+              <div className="mt-3 pt-2 border-t border-[#23272E] text-[10.5px] font-mono text-[#F97316]">
+                Maximum Speed · Unconstrained
+              </div>
+            </div>
+
+            {/* Smooth Background */}
+            <div
+              onClick={() => {
+                onUpdateSettings({ extractionPerformanceMode: 'smooth' });
+                onShowToast('Performance Mode: Smooth', 'Extraction limited to half cores with low CPU priority.', 'info');
+              }}
+              className={`border rounded-xl p-3.5 cursor-pointer transition-all flex flex-col justify-between ${
+                currentMode === 'smooth'
+                  ? 'bg-[#20252D] border-[#EA580C] shadow-sm ring-1 ring-[#EA580C]/30'
+                  : 'bg-[#121418] border-[#23272E] hover:border-[#3A4150]'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-[#38BDF8]" />
+                    <span className="text-sm font-bold text-[#E8EAEE]">Smooth Background</span>
+                  </div>
+                  {currentMode === 'smooth' && (
+                    <span className="text-[10px] bg-[#EA580C] text-white px-1.5 py-0.5 rounded font-bold uppercase tracking-wider">
+                      ACTIVE
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] font-mono text-[#9AA3AF] mb-2">
+                  {Math.max(2, Math.floor(detectedCores / 2))} Threads · Low Priority
+                </div>
+                <p className="text-xs text-[#9AA3AF] leading-relaxed">
+                  Gentle resource consumption. Designed for low-power laptops on battery or heavy in-game mod installations.
+                </p>
+              </div>
+              <div className="mt-3 pt-2 border-t border-[#23272E] text-[10.5px] font-mono text-[#6B7480]">
+                Battery & Multi-tasking saver
+              </div>
+            </div>
+          </div>
+
+          {/* Real-time Hardware Telemetry Bar */}
+          <div className="bg-[#0E1013] border border-[#23272E] rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2 text-[#9AA3AF]">
+              <span className="font-semibold text-[#E8EAEE]">Engine Telemetry:</span>
+              <span>7-Zip Decompressor</span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-[#22C55E]">
+                {allocatedThreads} / {detectedCores} Logical Threads
+              </span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono">
+                {currentMode === 'turbo'
+                  ? 'HIGH_PRIORITY_CLASS'
+                  : currentMode === 'smooth'
+                  ? 'IDLE_PRIORITY_CLASS'
+                  : 'BELOW_NORMAL_PRIORITY_CLASS'}
+              </span>
+            </div>
+            <div className="text-[11px] font-mono text-[#6B7480]">
+              Batch Disk Routing: {currentMode === 'turbo' ? '16x Parallel Direct' : 'Async Event Loop Yield'}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Mod Profiles Management */}
       <div>
         <div className="flex items-center justify-between mb-2">

@@ -131,12 +131,12 @@ export const InstallQueueModal: React.FC<InstallQueueModalProps> = ({
                       )}
                       {isExtracting && (
                         <span className="text-[11px] font-medium text-[#EA580C] bg-[#3A2415] px-2 py-0.5 rounded border border-[#EA580C]/40 animate-pulse">
-                          Extracting (7za-first)...
+                          {item.downloadSpeed || 'Extracting (7za)...'}
                         </span>
                       )}
                       {isRouting && (
                         <span className="text-[11px] font-medium text-[#22C55E] bg-[#0E2A18] px-2 py-0.5 rounded border border-[#16A34A]/40 animate-pulse">
-                          Placing into SPT...
+                          {item.downloadSpeed || 'Placing into SPT...'}
                         </span>
                       )}
                       {item.status === 'downloading' && (

@@ -1,6 +1,6 @@
 {
-  "summary":  "High-performance extraction pipeline and CPU throttle controls to eliminate computer lag during large mod installations while accelerating decompression speeds.",
-  "updatedAt":  "2026-10-04T06:33:15.059082021Z",
+  "summary":  "High-Performance Turbo Max Mod Extraction Architecture with uncapped CPU threads, high process priority scheduling, and parallel direct disk routing for ultra-fast mod installations.",
+  "updatedAt":  "2026-10-04T07:05:00.866444998Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

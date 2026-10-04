@@ -536,23 +536,67 @@ export const App: React.FC = () => {
     }
 
     // Web Fallback Simulation (when viewing in standard web browser)
-    let currentPercent = 10;
-    const interval = setInterval(() => {
-      currentPercent += 25;
+    const perfMode = settings.extractionPerformanceMode || 'balanced';
+    let currentPercent = 15;
 
-      if (currentPercent < 100) {
+    const tickMs = perfMode === 'turbo' ? 140 : perfMode === 'smooth' ? 320 : 220;
+    const speedBase = perfMode === 'turbo' ? 85 : perfMode === 'smooth' ? 14 : 32;
+
+    const interval = setInterval(() => {
+      currentPercent += perfMode === 'turbo' ? 22 : perfMode === 'smooth' ? 12 : 16;
+
+      if (currentPercent < 70) {
+        const simulatedSpeed = `${(speedBase + Math.random() * 12).toFixed(1)} MB/s${perfMode === 'turbo' ? ' (Turbo Max)' : ''}`;
         setQueue((prev) =>
           prev.map((item) =>
             item.id === queueId
               ? {
                   ...item,
+                  status: 'downloading',
                   progressPercent: currentPercent,
                   bytesReceived: Math.floor((currentPercent / 100) * totalBytes),
-                  downloadSpeed: `${(12 + Math.random() * 4).toFixed(1)} MB/s`,
+                  downloadSpeed: simulatedSpeed,
                 }
               : item
           )
         );
+        setStatusText(`Downloading ${modName}: ${simulatedSpeed} (${currentPercent}%)`);
+      } else if (currentPercent < 90) {
+        const extractDesc = perfMode === 'turbo'
+          ? 'Turbo Max: All Cores · High Priority'
+          : perfMode === 'smooth'
+          ? 'Smooth Background Decompression'
+          : 'Extracting (7za N-2 Cores)';
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === queueId
+              ? {
+                  ...item,
+                  status: 'extracting',
+                  progressPercent: currentPercent,
+                  downloadSpeed: extractDesc,
+                }
+              : item
+          )
+        );
+        setStatusText(`Extracting ${modName} (${extractDesc})...`);
+      } else if (currentPercent < 100) {
+        const routeDesc = perfMode === 'turbo'
+          ? 'Parallel Direct Dispatch to SPT'
+          : 'Placing into SPT_Runtime...';
+        setQueue((prev) =>
+          prev.map((item) =>
+            item.id === queueId
+              ? {
+                  ...item,
+                  status: 'routing',
+                  progressPercent: currentPercent,
+                  downloadSpeed: routeDesc,
+                }
+              : item
+          )
+        );
+        setStatusText(`Routing ${modName} files to SPT...`);
       } else {
         clearInterval(interval);
         setQueue((prev) =>
@@ -613,7 +657,7 @@ export const App: React.FC = () => {
           'success'
         );
       }
-    }, 250);
+    }, tickMs);
   };
 
   const handleInstallMod = async (mod: Mod, specificVersion?: string, skipDepCheck = false) => {

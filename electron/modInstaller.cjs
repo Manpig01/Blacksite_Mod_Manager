@@ -15,7 +15,7 @@ const AdmZip = require('adm-zip');
 function getExtractionThreadCount(performanceMode = 'balanced') {
   const totalCores = os.cpus()?.length || 4;
   if (performanceMode === 'turbo') {
-    return totalCores;
+    return Math.max(4, totalCores);
   }
   if (performanceMode === 'smooth') {
     return Math.max(2, Math.floor(totalCores / 2));
@@ -53,7 +53,7 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
       const threadCount = getExtractionThreadCount(performanceMode);
       await new Promise((resolve, reject) => {
         // -bso0 -bsp0 suppresses file-by-file output, avoiding Node.js child_process maxBuffer overflows
-        // -mmt={threadCount} uses optimal multithreading without consuming 100% of CPU
+        // -mmt={threadCount} uses multithreading; in Turbo mode all CPU cores are utilized
         const child = execFile(
           bin7za,
           ['x', '-y', `-mmt=${threadCount}`, '-bso0', '-bsp0', `-o${destinationDir}`, archivePath],
@@ -64,12 +64,17 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           }
         );
 
-        // Lower process priority on OS scheduler to eliminate cursor lag & frame drops
+        // Adjust process priority on OS scheduler: High priority for Turbo Max, BelowNormal for Balanced, Low for Smooth
         if (child.pid && typeof os.setPriority === 'function') {
           try {
-            const prio = performanceMode === 'smooth'
-              ? (os.constants?.priority?.PRIORITY_LOW || 19)
-              : (os.constants?.priority?.PRIORITY_BELOW_NORMAL || 10);
+            let prio;
+            if (performanceMode === 'turbo') {
+              prio = os.constants?.priority?.PRIORITY_HIGH || -10;
+            } else if (performanceMode === 'smooth') {
+              prio = os.constants?.priority?.PRIORITY_LOW || 19;
+            } else {
+              prio = os.constants?.priority?.PRIORITY_BELOW_NORMAL || 10;
+            }
             os.setPriority(child.pid, prio);
           } catch {
             // Ignore if OS does not allow adjusting priority
@@ -189,7 +194,7 @@ function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
  * Analyzes extracted archive directories and places server mods into SPT_Runtime/user/mods (or user/mods)
  * and client files strictly into root BepInEx/plugins and BepInEx/patchers without locking Electron event loop.
  */
-async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6') {
+async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6', performanceMode = 'balanced') {
   const { serverModsDir, serverModsRelDir } = resolveSptPaths(sptDirectory, sptVersion);
   const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
   const targetClientPatchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
@@ -198,21 +203,41 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
   let detectedServerPath = null;
   let detectedClientPath = null;
 
-  // Helper to copy directory contents asynchronously without blocking Node event loop
+  // Helper to copy directory contents asynchronously: parallel chunks for Turbo Max, non-blocking yielding for Balanced/Smooth
   async function copyDirectoryContents(srcDir, destDir) {
     if (!fs.existsSync(srcDir)) return;
     await fs.promises.mkdir(destDir, { recursive: true });
     const entries = await fs.promises.readdir(srcDir, { withFileTypes: true });
-    for (const entry of entries) {
-      const srcPath = path.join(srcDir, entry.name);
-      const destPath = path.join(destDir, entry.name);
-      if (entry.isDirectory()) {
-        await fs.promises.cp(srcPath, destPath, { recursive: true, force: true });
-      } else {
-        await fs.promises.copyFile(srcPath, destPath);
+
+    if (performanceMode === 'turbo') {
+      // Parallel batch routing for maximum NVMe throughput with zero delay
+      const batchSize = 16;
+      for (let i = 0; i < entries.length; i += batchSize) {
+        const batch = entries.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (entry) => {
+            const srcPath = path.join(srcDir, entry.name);
+            const destPath = path.join(destDir, entry.name);
+            if (entry.isDirectory()) {
+              await fs.promises.cp(srcPath, destPath, { recursive: true, force: true });
+            } else {
+              await fs.promises.copyFile(srcPath, destPath);
+            }
+          })
+        );
       }
-      // Yield to Node event loop so UI / IPC doesn't freeze during large file moves
-      await new Promise((r) => setImmediate(r));
+    } else {
+      for (const entry of entries) {
+        const srcPath = path.join(srcDir, entry.name);
+        const destPath = path.join(destDir, entry.name);
+        if (entry.isDirectory()) {
+          await fs.promises.cp(srcPath, destPath, { recursive: true, force: true });
+        } else {
+          await fs.promises.copyFile(srcPath, destPath);
+        }
+        // Yield to Node event loop so UI / IPC doesn't freeze during large file moves
+        await new Promise((r) => setImmediate(r));
+      }
     }
   }
 
@@ -387,93 +412,116 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
 /**
  * Streams a remote file directly to disk in 64KB chunks with throttled progress events
  */
-async function streamDownloadToFile(url, destFilePath, onProgress) {
-  const response = await fetch(url, {
-    headers: {
-      'Referer': 'https://sp-mod.com/',
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': '*/*',
-    },
-  });
+async function streamDownloadToFile(url, destFilePath, onProgress, maxRetries = 2) {
+  let attempt = 0;
+  while (attempt <= maxRetries) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'Referer': 'https://sp-mod.com/',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+        },
+      });
 
-  if (!response.ok) {
-    const httpErr = new Error(
-      `Download failed with HTTP status ${response.status}: ${
-        response.statusText || (response.status === 404 ? 'Not Found' : 'Download Error')
-      }`
-    );
-    httpErr.statusCode = response.status;
-    throw httpErr;
-  }
-
-  const contentLengthHeader = response.headers.get('content-length');
-  const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
-
-  const fileStream = fs.createWriteStream(destFilePath);
-  const readable = Readable.fromWeb(response.body);
-
-  let receivedBytes = 0;
-  let lastProgressTime = Date.now();
-  let lastBytesInWindow = 0;
-  let downloadSpeed = 'Calculating...';
-
-  await new Promise((resolve, reject) => {
-    readable.on('data', (chunk) => {
-      receivedBytes += chunk.length;
-      fileStream.write(chunk);
-
-      const now = Date.now();
-      if (now - lastProgressTime >= 150) {
-        const elapsedSec = (now - lastProgressTime) / 1000;
-        const bytesInInterval = receivedBytes - lastBytesInWindow;
-        if (elapsedSec > 0) {
-          const speedMBps = (bytesInInterval / elapsedSec / (1024 * 1024)).toFixed(1);
-          downloadSpeed = `${speedMBps} MB/s`;
-        }
-
-        const percent = totalBytes > 0 ? Math.min(99, Math.round((receivedBytes / totalBytes) * 100)) : 0;
-
-        if (onProgress) {
-          onProgress({
-            stage: 'downloading',
-            percent,
-            bytesReceived: receivedBytes,
-            totalBytes,
-            downloadSpeed,
-          });
-        }
-
-        lastProgressTime = now;
-        lastBytesInWindow = receivedBytes;
+      if (!response.ok) {
+        const httpErr = new Error(
+          `Download failed with HTTP status ${response.status}: ${
+            response.statusText || (response.status === 404 ? 'Not Found' : 'Download Error')
+          }`
+        );
+        httpErr.statusCode = response.status;
+        throw httpErr;
       }
-    });
 
-    readable.on('end', () => {
-      fileStream.end();
+      const contentLengthHeader = response.headers.get('content-length');
+      const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+
+      const fileStream = fs.createWriteStream(destFilePath);
+      const readable = Readable.fromWeb(response.body);
+
+      let receivedBytes = 0;
+      let lastProgressTime = Date.now();
+      let lastBytesInWindow = 0;
+      let downloadSpeed = 'Calculating...';
+
+      await new Promise((resolve, reject) => {
+        readable.on('data', (chunk) => {
+          receivedBytes += chunk.length;
+          fileStream.write(chunk);
+
+          const now = Date.now();
+          if (now - lastProgressTime >= 120) {
+            const elapsedSec = (now - lastProgressTime) / 1000;
+            const bytesInInterval = receivedBytes - lastBytesInWindow;
+            if (elapsedSec > 0) {
+              const speedBytesPerSec = bytesInInterval / elapsedSec;
+              const speedMBps = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
+              const remainingBytes = totalBytes > receivedBytes ? totalBytes - receivedBytes : 0;
+              const etaSec = speedBytesPerSec > 0 && remainingBytes > 0 ? Math.ceil(remainingBytes / speedBytesPerSec) : 0;
+              const etaStr = etaSec > 60 ? `${Math.floor(etaSec / 60)}m ${etaSec % 60}s` : `${etaSec}s`;
+              downloadSpeed = remainingBytes > 0 && etaSec > 0 ? `${speedMBps} MB/s · ETA: ${etaStr}` : `${speedMBps} MB/s`;
+            }
+
+            const percent = totalBytes > 0 ? Math.min(99, Math.round((receivedBytes / totalBytes) * 100)) : 0;
+
+            if (onProgress) {
+              onProgress({
+                stage: 'downloading',
+                percent,
+                bytesReceived: receivedBytes,
+                totalBytes,
+                downloadSpeed,
+              });
+            }
+
+            lastProgressTime = now;
+            lastBytesInWindow = receivedBytes;
+          }
+        });
+
+        readable.on('end', () => {
+          fileStream.end();
+          if (onProgress) {
+            onProgress({
+              stage: 'downloading',
+              percent: 100,
+              bytesReceived: receivedBytes,
+              totalBytes: totalBytes || receivedBytes,
+              downloadSpeed: 'Complete',
+            });
+          }
+          resolve();
+        });
+
+        readable.on('error', (err) => {
+          fileStream.destroy();
+          reject(err);
+        });
+
+        fileStream.on('error', (err) => {
+          reject(err);
+        });
+      });
+
+      return { totalBytes: totalBytes || receivedBytes };
+    } catch (err) {
+      attempt++;
+      if (attempt > maxRetries || err.statusCode === 404) {
+        throw err;
+      }
+      console.warn(`[Blacksite Installer] Download attempt ${attempt} failed, retrying in 1.2s...`, err.message);
       if (onProgress) {
         onProgress({
           stage: 'downloading',
-          percent: 100,
-          bytesReceived: receivedBytes,
-          totalBytes: totalBytes || receivedBytes,
-          downloadSpeed: 'Complete',
+          percent: 0,
+          downloadSpeed: `Retrying download (attempt ${attempt + 1}/${maxRetries + 1})...`,
         });
       }
-      resolve();
-    });
-
-    readable.on('error', (err) => {
-      fileStream.destroy();
-      reject(err);
-    });
-
-    fileStream.on('error', (err) => {
-      reject(err);
-    });
-  });
-
-  return { totalBytes: totalBytes || receivedBytes };
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+  }
 }
 
 /**
@@ -542,7 +590,7 @@ async function installMod({
         downloadSpeed: 'Routing to SPT_Runtime...',
       });
     }
-    const routeResult = await routeExtractedModToSpt(tempExtractDir, sptDirectory, modName, sptVersion);
+    const routeResult = await routeExtractedModToSpt(tempExtractDir, sptDirectory, modName, sptVersion, performanceMode);
 
     if (onProgress) {
       onProgress({
