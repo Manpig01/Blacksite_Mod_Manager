@@ -12,6 +12,7 @@ interface HeaderProps {
   onCreateProfile: (name?: string) => void;
   onOpenDownloadModal?: () => void;
   isLaunching?: boolean;
+  isServerRunning?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   onCreateProfile,
   onOpenDownloadModal,
   isLaunching = false,
+  isServerRunning = false,
 }) => {
   return (
     <div className="bg-[#181B20] border-b border-[#23272E] px-4.5 pt-3 pb-3 shrink-0">
@@ -121,12 +123,29 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Launch SPT button */}
         <button
           onClick={onLaunchSpt}
-          className="bg-[#16A34A] hover:bg-[#22C55E] text-white text-[13px] font-semibold px-4 py-1.5 rounded-md flex items-center gap-2 transition-colors shrink-0 shadow-sm ml-auto cursor-pointer"
-          title="Start the SPT server, watch its console until it is ready, then launch the game launcher"
+          className={`${
+            isServerRunning
+              ? 'bg-[#15803D] hover:bg-[#16A34A] ring-1 ring-[#22C55E]/50'
+              : 'bg-[#16A34A] hover:bg-[#22C55E]'
+          } text-white text-[13px] font-semibold px-4 py-1.5 rounded-md flex items-center gap-2 transition-all shrink-0 shadow-sm ml-auto cursor-pointer`}
+          title={
+            isServerRunning
+              ? 'SPT.Server is actively running on 127.0.0.1:6969. Click to view console or stop.'
+              : 'Start SPT.Server.exe, watch console until ready, then chain SPT.Launcher.exe'
+          }
           type="button"
         >
-          <Play className={`w-3.5 h-3.5 fill-current ${isLaunching ? 'animate-pulse' : ''}`} />
-          <span>{isLaunching ? 'Launching SPT...' : '🚀 Launch SPT'}</span>
+          {isServerRunning ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-[#4ADE80] animate-pulse" />
+              <span>SPT Server Active</span>
+            </>
+          ) : (
+            <>
+              <Play className={`w-3.5 h-3.5 fill-current ${isLaunching ? 'animate-pulse' : ''}`} />
+              <span>{isLaunching ? 'Launching SPT...' : '🚀 Launch SPT'}</span>
+            </>
+          )}
         </button>
       </div>
     </div>

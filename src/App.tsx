@@ -143,6 +143,7 @@ export const App: React.FC = () => {
   const [selectedModForConfig, setSelectedModForConfig] = useState<InstalledMod | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<ConflictInfo | null>(null);
   const [isLauncherOpen, setIsLauncherOpen] = useState(false);
+  const [isSptServerRunning, setIsSptServerRunning] = useState(false);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [isExportModsModalOpen, setIsExportModsModalOpen] = useState(false);
 
@@ -1244,6 +1245,7 @@ export const App: React.FC = () => {
         profiles={profiles}
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
+        isServerRunning={isSptServerRunning}
       />
 
       {/* Navigation Tabs */}
@@ -1493,8 +1495,10 @@ export const App: React.FC = () => {
       <SptLauncherModal
         isOpen={isLauncherOpen}
         onClose={() => setIsLauncherOpen(false)}
+        sptDirectory={settings.sptDirectory}
         sptVersion={settings.sptVersion}
         onShowToast={showToast}
+        onServerStatusChange={(running) => setIsSptServerRunning(running)}
       />
 
       <WindowsDownloadModal

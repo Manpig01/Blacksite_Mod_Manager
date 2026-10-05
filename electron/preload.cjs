@@ -19,6 +19,24 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   uninstallMod: (params) => ipcRenderer.invoke('mod:uninstall', params),
   toggleDisableMod: (params) => ipcRenderer.invoke('mod:toggle-disable', params),
   scanInstalledMods: (params) => ipcRenderer.invoke('mod:scan-installed', params),
+  launchSpt: (params) => ipcRenderer.invoke('spt:launch', params),
+  stopSptServer: () => ipcRenderer.invoke('spt:stop'),
+  getSptStatus: () => ipcRenderer.invoke('spt:status'),
+  onSptServerLog: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('spt:server-log', listener);
+    return () => ipcRenderer.removeListener('spt:server-log', listener);
+  },
+  onSptClientLaunched: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('spt:client-launched', listener);
+    return () => ipcRenderer.removeListener('spt:client-launched', listener);
+  },
+  onSptServerExit: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('spt:server-exit', listener);
+    return () => ipcRenderer.removeListener('spt:server-exit', listener);
+  },
   windowControl: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

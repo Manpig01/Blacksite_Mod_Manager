@@ -1,6 +1,6 @@
-# Direct-Destination Same-Drive Unpacking & Full-Suite Acceleration
+# Real SPT Process Launcher: Server & Client Chaining Engine
 
-A comprehensive performance overhaul for Blacksite Mod Manager that eliminates multi-gigabyte redundant disk copies, replaces cross-drive file copies with instant sub-millisecond atomic directory moves, parallelizes asset caching, and optimizes startup boot times.
+An integrated execution manager for Single Player Tarkov that spawns `SPT.Server.exe`, streams real-time console output directly into Blacksite's terminal modal, monitors server startup milestones, and automatically launches `SPT.Launcher.exe` once the server is ready.
 
 ---
 
@@ -8,60 +8,65 @@ A comprehensive performance overhaul for Blacksite Mod Manager that eliminates m
 
 > [!IMPORTANT]
 > The following technical choices were confirmed during Phase 1 clarification:
-> - **Extraction Pipeline**: **Direct destination unpacking with instant same-drive folder moves** (stages downloads and extraction on the same storage drive as SPT, enabling instant `fs.rename` inode updates in 1–2 milliseconds instead of copying gigabytes of files across drives).
-> - **Optimization Scope**: **Full-suite speedup** covering archive extraction, atomic same-drive folder moves, parallelized image asset caching (8x concurrent streams), and non-blocking instant boot.
+> - **Launch Flow**: **Spawn `SPT.Server.exe` first, wait for the server to initialize, then launch `SPT.Launcher.exe`**.
+> - **Console Output Location**: **Streamed live directly inside Blacksite's integrated console modal** with color-coded status, search/filter, and autoscrolling.
 
-- **Confirmed Decision 1**: Stage temporary extraction in a hidden `.blacksite_staging` directory located on the target SPT drive (`sptDirectory`). This allows the operating system to perform instant atomic directory moves (`fs.promises.rename`) into `SPT_Runtime/user/mods/` in ~2 milliseconds instead of deep file-by-file copy loops.
-- **Confirmed Decision 2**: Eliminate the 3x disk I/O write bottleneck (temp archive -> temp extract -> final destination) by extracting directly into staged destination layouts on the target volume.
-- **Confirmed Decision 3**: Upgrade `imageCacheService.ts` with parallel batch pooling (8 concurrent streams) to preload mod thumbnails and banners in seconds rather than sequential fetches.
-- **Confirmed Decision 4**: Defer non-critical startup scans (conflict detection, deep disk checks) using `requestIdleCallback` for sub-second instant UI boot.
+- **Confirmed Decision 1**: Use `child_process.spawn` in the Electron main process with working directory set to `sptDirectory`, capturing raw `stdout` and `stderr` streams without shell buffering.
+- **Confirmed Decision 2**: IPC streaming (`spt:server-log`) transmits console lines directly to the renderer in real time (< 5ms latency).
+- **Confirmed Decision 3**: Regex and string marker analysis ("Server is ready", "Happy hunting", "Started webserver") detects when the database and server mods finish loading, immediately triggering detached execution of `SPT.Launcher.exe`.
+- **Confirmed Decision 4**: Graceful process termination with Windows process-tree cleanup (`taskkill /F /T`) so port 6969 is cleanly released whenever the user clicks "Stop Server" or exits the app.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**: Completely re-engineers how files move during mod installation and manager operation. By keeping temporary staging on the target SPT volume and utilizing atomic filesystem pointer renames, a 10 GB mod pack moves into place in milliseconds rather than minutes.
-- **Target Audience**: Single Player Tarkov players installing massive overhaul packs (WTT, SAIN, realism retextures) who demand instant installations with zero disk thrashing.
+- **What It Does**: Replaces manual, multi-window launching with a unified, one-click experience. Clicking "Launch SPT" in Blacksite boots `SPT.Server.exe`, live-streams server initialization logs in an embedded terminal, detects server readiness, and opens `SPT.Launcher.exe`.
+- **Target Audience**: Single Player Tarkov players who want an automated launch sequence without juggling open command prompt windows and launcher shortcuts.
 - **Key Value**:
-  - **Eliminates 3x Disk I/O Pass**: Decompression writes directly to the target storage volume; routing becomes an instant filesystem pointer reassignment (`fs.rename`).
-  - **Zero Cross-Drive Copy Stalls**: Moving files across different drives (C: to D: or E:) is completely bypassed by co-locating staging on the SPT drive.
-  - **Blazing Fast Asset Cache**: 8x parallelized image caching with memory memoization.
-  - **Instant Boot**: Cold launch time dropped to under 100ms with deferred background indexing.
+  - **Zero Manual Steps**: Auto-chains server boot into launcher execution.
+  - **Embedded Terminal**: Watch server mods (SAIN, SVM, Realism) compile and initialize directly in Blacksite without a distracting CMD window.
+  - **Double-Launch Prevention**: Tracks active server PID and port 6969 state to prevent multiple server instances from conflicting.
+  - **One-Click Teardown**: Stop the server and clean up child processes with a single click.
 
 ---
 
 ### 2. User Experience & Visual Design
 
 #### Key User Flows
-1. **Installing a 5GB+ Mod Pack**:
-   - User queues installation of a multi-gigabyte weapon pack.
-   - Decompressor writes directly to `.blacksite_staging` on the SPT drive using uncapped CPU threads.
-   - Routing finishes in **under 50 milliseconds** via atomic directory rename (`.blacksite_staging/xyz` -> `SPT_Runtime/user/mods/xyz`).
-   - Notification appears immediately: `Installed Mod in 4.2s (Atomic Same-Drive Move)`.
-2. **Browsing & Caching Mod Artwork**:
-   - Catalog thumbnails stream in simultaneously across 8 parallel streams without blocking UI rendering.
-3. **Switching Profiles or Toggling Mods**:
-   - Folder renaming (`mod_name` <-> `mod_name.disabled`) happens instantaneously without recursive disk traversal.
+1. **Launching from Header**:
+   - Player clicks **Launch SPT** in the top navigation bar.
+   - The **SPT Integrated Process Launcher** modal opens.
+   - Blacksite checks executable paths (`SPT.Server.exe` and `SPT.Launcher.exe`).
+   - Server begins booting; raw console logs stream in with color-coded timestamps.
+2. **Server Ready & Chained Client Launch**:
+   - Server finishes loading mods and outputs `Server is ready! Happy hunting in Tarkov!`.
+   - The modal marks server status as `Ready (Port 6969 Active)`.
+   - Blacksite automatically launches `SPT.Launcher.exe`.
+   - Toast notification appears: `SPT Launched · SPT.Server.exe running & SPT.Launcher.exe started`.
+3. **Stopping or Restarting**:
+   - Player can click **Stop Server** to terminate the server process tree.
+   - Console logs note clean shutdown: `[Blacksite Launcher] Server stopped. Process tree terminated.`
 
-#### Visual Polish & Performance Feedback
-- Settings Tab & Queue Display:
-  - Telemetry badge reflects the active pipeline: `Atomic Same-Drive Moving: Active · Zero Redundant I/O`.
-  - Staging location indicator: `SPT Volume Staging: Enabled (D:\SPT\.blacksite_staging)`.
-- Adheres to frontend design rules: zero static pills, clean unboxed typographic dividers (`·`), and high-contrast dark/light tokens.
+#### Visual Polish & Theme Integration
+- Dark high-contrast tactical terminal (`#0B0D10` background, `#1F242C` border, monospaced font).
+- Status bar header with live indicators:
+  - Server status: `Starting` (pulsing orange) -> `Ready (Port 6969)` (emerald green) -> `Stopped` (slate).
+  - Client status: `Waiting for Server...` -> `Launched (SPT.Launcher.exe)`.
+- Action buttons: "Stop Server", "Restart", "Copy Logs", "Clear Console".
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Same-Drive Staging vs System Temp Directory**:
-  - *Chosen Approach*: Stage extraction in `path.join(sptDirectory, '.blacksite_staging')`.
-  - *Why*: In Windows and Linux, `fs.rename` is an atomic $O(1)$ operation only when source and destination are on the same mount point / volume. When staging in `C:\Users\...\Temp` while SPT is on `D:\`, `fs.rename` fails (`EXDEV: cross-device link not permitted`) and forces a slow, byte-by-byte file copy. Co-locating staging guarantees instant $O(1)$ atomic moves.
-- **Decision 2: Automatic Fallback for Cross-Drive Edge Cases**:
-  - *Chosen Approach*: Try atomic `fs.promises.rename` first; if `EXDEV` occurs, fall back to parallel batch copy.
-  - *Why*: Ensures 100% reliability even in virtualized network storage or unusual multi-mount configurations.
-- **Decision 3: Parallel Image Pool vs Uncontrolled Concurrency**:
-  - *Chosen Approach*: Use a controlled batch size of 8 concurrent HTTP requests.
-  - *Why*: Prevents socket saturation or HTTP 429 rate limits from mod forge servers while achieving maximum download speed.
+- **Decision 1: Direct Executable Detection with Fallback**:
+  - *Chosen Approach*: Check for modern `SPT.Server.exe` and `SPT.Launcher.exe` first, with automatic fallback to legacy `Aki.Server.exe` and `Aki.Launcher.exe`.
+  - *Why*: Supports both modern SPT 4.x / 3.10+ and legacy installations without configuration errors.
+- **Decision 2: Detached Client Launch vs Process Piping**:
+  - *Chosen Approach*: Launch `SPT.Launcher.exe` as a detached, unreferenced process (`detached: true`, `stdio: 'ignore'`).
+  - *Why*: Allows the game launcher to run independently so closing or minimizing Blacksite never kills the game window.
+- **Decision 3: Tree Kill on Shutdown**:
+  - *Chosen Approach*: Use Windows `taskkill /pid {pid} /T /F` (or `kill(-pid)` on Unix) to clean up Node.js server child processes.
+  - *Why*: Prevents orphaned background server processes from locking port 6969 and causing "EADDRINUSE" errors on subsequent launches.
 
 ---
 
@@ -69,48 +74,50 @@ A comprehensive performance overhaul for Blacksite Mod Manager that eliminates m
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Old Pipeline (3x Disk I/O)                      │
-│   Download to C:\Temp ──▶ Extract to C:\Temp ──▶ Copy to D:\SPT (SLOW)  │
-└────────────────────────────────────────────────────────────────────────┘
-
+│                        Renderer Process (React)                        │
+│   SptLauncherModal.tsx                                                 │
+│   - Subscribes to desktopBridge.onSptServerLog                        │
+│   - Displays live terminal logs & process status                       │
+│   - Dispatches desktopBridge.launchSpt / stopSptServer                │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ IPC: spt:launch / spt:server-log
+                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│                   New Accelerated Same-Drive Pipeline                  │
-│                                                                        │
-│   1. Stream Download Directly to Target Drive                         │
-│      target: {sptDirectory}/.blacksite_staging/archive.tmp            │
-│                                                                        │
-│   2. Multi-threaded Unpacking on Same Volume                          │
-│      target: {sptDirectory}/.blacksite_staging/extracted/             │
-│                                                                        │
-│   3. Sub-Millisecond Atomic Filesystem Pointer Move                   │
-│      fs.promises.rename(stagedDir, finalSptDir)                        │
-│      Elapsed Time: ~2ms (Zero byte copying)                           │
-│                                                                        │
-│   4. Instant Staging Prune                                             │
+│                     Electron Main Process (Node.js)                    │
+│   main.cjs                                                             │
+│   ┌──────────────────────────────────────────────────────────────────┐ │
+│   │ 1. Verify SPT.Server.exe & SPT.Launcher.exe in sptDirectory      │ │
+│   │ 2. Spawn SPT.Server.exe (cwd: sptDirectory)                      │ │
+│   │    - stdout.on('data') ──▶ IPC 'spt:server-log'                  │ │
+│   │    - stderr.on('data') ──▶ IPC 'spt:server-log'                  │ │
+│   │ 3. Pattern Matcher: "Server is ready" / "Happy hunting"          │ │
+│   │    - On Match ──▶ Spawn SPT.Launcher.exe (detached)              │ │
+│   │    - IPC 'spt:client-launched'                                   │ │
+│   │ 4. Process Teardown Handler (taskkill /T /F)                     │ │
+│   └──────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Acceleration Components
-| Subsystem | Previous Implementation | Optimized Accelerated Implementation | Speedup Factor |
-| :--- | :--- | :--- | :--- |
-| **Mod Routing** | Byte-by-byte recursive file copy | Atomic same-drive `fs.promises.rename` | **~100x to 500x faster** (ms vs minutes) |
-| **Image Caching** | Sequential 1-by-1 download | 8x parallel concurrent batch worker pool | **8x faster** |
-| **Mod Toggling** | Sequential rename with deep checks | Parallel atomic rename with memory map | **Instant** (< 5ms) |
-| **App Startup** | Synchronous fixture & disk scan | Deferred non-blocking `requestIdleCallback` | **Instant boot** (< 100ms) |
+#### Executable Resolution Hierarchy
+1. Server: `path.join(sptDirectory, 'SPT.Server.exe')` -> `path.join(sptDirectory, 'Aki.Server.exe')`
+2. Launcher: `path.join(sptDirectory, 'SPT.Launcher.exe')` -> `path.join(sptDirectory, 'Aki.Launcher.exe')` -> `path.join(sptDirectory, 'EscapeFromTarkov.exe')`
 
 ---
 
 ### 5. Implementation Steps
 
-1. **Same-Drive Staging & Atomic Move in `electron/modInstaller.cjs`**:
-   - Create staging workspace directly inside `path.join(sptDirectory, '.blacksite_staging')`.
-   - Update `routeExtractedModToSpt` to attempt atomic `fs.promises.rename` for both server mods and client plugins.
-   - Graceful fallback to parallel copy if `EXDEV` is encountered.
-2. **Parallel Asset Caching in `src/services/imageCacheService.ts`**:
-   - Implement concurrent worker batching (concurrency = 8) in `preloadImages` and `fetchAndCache`.
-3. **Fast Non-Blocking Boot in `src/App.tsx`**:
-   - Defer secondary conflict resolution and disk scans to post-mount microtasks.
-4. **Settings & UI Telemetry in `src/components/SettingsTab.tsx`**:
-   - Add status note indicating same-drive atomic staging is active with zero-redundancy I/O.
+1. **Implement Real Process Spawning in `electron/main.cjs`**:
+   - Add `spt:launch`, `spt:stop`, and `spt:status` IPC handlers.
+   - Implement live `stdout`/`stderr` streaming through `spt:server-log`.
+   - Add ready-marker detection to auto-chain `SPT.Launcher.exe`.
+   - Add process-tree kill for clean shutdown.
+2. **Expose Bridge APIs in `electron/preload.cjs`**:
+   - `launchSpt`, `stopSptServer`, `onSptServerLog`, `onSptClientLaunched`, `onSptServerExit`.
+3. **Upgrade `src/components/SptLauncherModal.tsx`**:
+   - Wire up real Electron IPC listeners with graceful web simulation fallback.
+   - Display dynamic server readiness and launcher execution status.
+   - Support autoscrolling, log copying, and manual restart.
+4. **Header Integration in `src/components/Header.tsx` & `src/App.tsx`**:
+   - Pass active running status to Header for live pulse indicators.
 5. **Verification**:
-   - Run `compile_applet` and `lint_applet` to verify compilation and type safety.
+   - Run `compile_applet` and `lint_applet` to confirm clean builds and type safety.

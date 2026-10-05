@@ -268,6 +268,70 @@ app.whenReady().then(() => {
     }
   });
 
+  // Real SPT Process Launcher & Client Chaining Engine
+  const sptLauncher = require('./sptLauncher.cjs');
+
+  ipcMain.handle('spt:launch', async (event, params) => {
+    try {
+      const sender = event.sender;
+      const onLog = (logData) => {
+        if (sender && !sender.isDestroyed()) {
+          sender.send('spt:server-log', logData);
+        }
+      };
+      const onClientLaunched = (clientData) => {
+        if (sender && !sender.isDestroyed()) {
+          sender.send('spt:client-launched', clientData);
+        }
+      };
+      const onServerExit = (exitData) => {
+        if (sender && !sender.isDestroyed()) {
+          sender.send('spt:server-exit', exitData);
+        }
+      };
+
+      const result = await sptLauncher.launchSptSequence({
+        ...params,
+        onLog,
+        onClientLaunched,
+        onServerExit,
+      });
+      return { success: true, ...result };
+    } catch (err) {
+      console.error('spt:launch error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('spt:stop', async (event) => {
+    try {
+      const sender = event.sender;
+      const onLog = (logData) => {
+        if (sender && !sender.isDestroyed()) {
+          sender.send('spt:server-log', logData);
+        }
+      };
+      return await sptLauncher.stopSptServer(onLog);
+    } catch (err) {
+      console.error('spt:stop error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('spt:status', async () => {
+    try {
+      return sptLauncher.getSptStatus();
+    } catch (err) {
+      return { isRunning: false, error: err.message };
+    }
+  });
+
+  app.on('before-quit', () => {
+    try {
+      sptLauncher.stopSptServer();
+    } catch {}
+  });
+
   createWindow();
 
   app.on('activate', () => {

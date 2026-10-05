@@ -1,6 +1,6 @@
 {
-  "summary":  "Direct-Destination Same-Drive Unpacking and Full-Suite Acceleration Architecture eliminating 3x redundant disk writes with instant 2ms atomic folder moves, parallel asset caching, and zero-latency boot.",
-  "updatedAt":  "2026-10-04T07:23:43.793649432Z",
+  "summary":  "SPT Integrated Process Launcher Architecture that executes SPT.Server.exe, streams real-time console stdout/stderr directly into Blacksite's terminal modal, detects server readiness, and chains launch of SPT.Launcher.exe.",
+  "updatedAt":  "2026-10-05T20:03:26.005193397Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
