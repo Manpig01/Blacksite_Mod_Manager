@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Mod, ModVersion } from '../types';
 import { apiService } from '../services/apiService';
+import { sortModVersionsByMostRecent } from '../utils/versionUtils';
 
 interface VersionSelectionModalProps {
   mod: Mod | null;
@@ -38,7 +39,7 @@ export const VersionSelectionModal: React.FC<VersionSelectionModalProps> = ({
     apiService
       .getModVersions(mod.id)
       .then((res) => {
-        setVersions(res);
+        setVersions(sortModVersionsByMostRecent(res));
       })
       .finally(() => setLoading(false));
   }, [mod]);

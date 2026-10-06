@@ -1,6 +1,6 @@
 {
-  "summary":  "SPT Integrated Process Launcher Architecture that executes SPT.Server.exe, streams real-time console stdout/stderr directly into Blacksite's terminal modal, detects server readiness, and chains launch of SPT.Launcher.exe.",
-  "updatedAt":  "2026-10-05T20:03:26.005193397Z",
+  "summary":  "SPT 4.x Runtime Layout Executable Auto-Detection Architecture scanning both SPT_Runtime and root directories, with automated working directory binding to SPT_Runtime for seamless server and launcher execution.",
+  "updatedAt":  "2026-10-06T02:56:01.232645952Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

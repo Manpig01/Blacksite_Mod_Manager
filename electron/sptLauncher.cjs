@@ -7,38 +7,44 @@ let activeServerPid = null;
 let hasLaunchedClientThisSession = false;
 
 /**
- * Finds the server executable in the SPT directory
+ * Finds the server executable in SPT_Runtime or root SPT directory
  */
 function findServerExecutable(sptDirectory) {
   if (!sptDirectory) return null;
+  const subdirs = ['SPT_Runtime', ''];
   const candidates = [
     'SPT.Server.exe',
     'Aki.Server.exe',
     'Server.exe',
   ];
-  for (const name of candidates) {
-    const fullPath = path.join(sptDirectory, name);
-    if (fs.existsSync(fullPath)) {
-      return fullPath;
+  for (const subdir of subdirs) {
+    for (const name of candidates) {
+      const fullPath = subdir ? path.join(sptDirectory, subdir, name) : path.join(sptDirectory, name);
+      if (fs.existsSync(fullPath)) {
+        return fullPath;
+      }
     }
   }
   return null;
 }
 
 /**
- * Finds the launcher executable in the SPT directory
+ * Finds the launcher executable in SPT_Runtime or root SPT directory
  */
 function findLauncherExecutable(sptDirectory) {
   if (!sptDirectory) return null;
+  const subdirs = ['SPT_Runtime', ''];
   const candidates = [
     'SPT.Launcher.exe',
     'Aki.Launcher.exe',
     'EscapeFromTarkov.exe',
   ];
-  for (const name of candidates) {
-    const fullPath = path.join(sptDirectory, name);
-    if (fs.existsSync(fullPath)) {
-      return fullPath;
+  for (const subdir of subdirs) {
+    for (const name of candidates) {
+      const fullPath = subdir ? path.join(sptDirectory, subdir, name) : path.join(sptDirectory, name);
+      if (fs.existsSync(fullPath)) {
+        return fullPath;
+      }
     }
   }
   return null;
@@ -52,7 +58,7 @@ function launchClient(sptDirectory, onLog, onClientLaunched) {
   if (!launcherPath) {
     if (onLog) {
       onLog({
-        text: `[Blacksite Launcher] Warning: Could not find SPT.Launcher.exe or Aki.Launcher.exe in ${sptDirectory}`,
+        text: `[Blacksite Launcher] Warning: Could not find SPT.Launcher.exe or Aki.Launcher.exe in ${sptDirectory} or SPT_Runtime`,
         level: 'warn',
         timestamp: new Date().toLocaleTimeString(),
       });
@@ -61,9 +67,11 @@ function launchClient(sptDirectory, onLog, onClientLaunched) {
   }
 
   const launcherName = path.basename(launcherPath);
+  const launcherCwd = path.dirname(launcherPath);
+
   if (onLog) {
     onLog({
-      text: `[Blacksite Launcher] Ready marker detected! Starting ${launcherName}...`,
+      text: `[Blacksite Launcher] Ready marker detected! Starting ${launcherName} from ${launcherCwd}...`,
       level: 'info',
       timestamp: new Date().toLocaleTimeString(),
     });
@@ -71,7 +79,7 @@ function launchClient(sptDirectory, onLog, onClientLaunched) {
 
   try {
     const clientProc = spawn(launcherPath, [], {
-      cwd: sptDirectory,
+      cwd: launcherCwd,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
@@ -123,7 +131,7 @@ async function launchSptSequence({
   const serverExe = findServerExecutable(sptDirectory);
   if (!serverExe) {
     throw new Error(
-      `Could not find SPT.Server.exe or Aki.Server.exe in "${sptDirectory}". Please verify your SPT Folder Configuration in Settings.`
+      `Could not find SPT.Server.exe or Aki.Server.exe in "${sptDirectory}" or "${path.join(sptDirectory, 'SPT_Runtime')}". Please verify your SPT Folder Configuration in Settings.`
     );
   }
 
@@ -147,6 +155,7 @@ async function launchSptSequence({
 
   hasLaunchedClientThisSession = false;
   const serverName = path.basename(serverExe);
+  const serverCwd = path.dirname(serverExe);
 
   if (onLog) {
     onLog({
@@ -155,7 +164,12 @@ async function launchSptSequence({
       timestamp: new Date().toLocaleTimeString(),
     });
     onLog({
-      text: `[Blacksite Launcher] Working Directory: ${sptDirectory}`,
+      text: `[Blacksite Launcher] Server Binary: ${serverExe}`,
+      level: 'info',
+      timestamp: new Date().toLocaleTimeString(),
+    });
+    onLog({
+      text: `[Blacksite Launcher] Working Directory: ${serverCwd}`,
       level: 'info',
       timestamp: new Date().toLocaleTimeString(),
     });
@@ -163,7 +177,7 @@ async function launchSptSequence({
 
   try {
     const serverProc = spawn(serverExe, [], {
-      cwd: sptDirectory,
+      cwd: serverCwd,
       env: { ...process.env },
       shell: false,
       windowsHide: true,

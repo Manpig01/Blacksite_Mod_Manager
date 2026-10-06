@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Search, RotateCw, ChevronLeft, ChevronRight, Upload, History, ExternalLink, Download, Check, Sparkles, Heart, Calendar, ThumbsUp } from 'lucide-react';
 import { Mod, ModCategory, SptVersionInfo, CatalogSortOption, InstalledMod } from '../types';
 import { apiService, CatalogQueryResult } from '../services/apiService';
 import { storageService } from '../services/storageService';
+import { sortSptVersionsByMostRecent } from '../utils/versionUtils';
 import { ModThumbnail } from './ModThumbnail';
 import { RecommendedModsSection } from './RecommendedModsSection';
 
@@ -84,6 +85,9 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
   const [isDragOver, setIsDragOver] = useState<boolean>(false);
 
   const installedGuids = installedMods.map((m) => m.id);
+
+  // SPT versions sorted strictly in order of most recent releases
+  const sortedSptVersions = useMemo(() => sortSptVersionsByMostRecent(sptVersions), [sptVersions]);
 
   // Debounced search query
   useEffect(() => {
@@ -301,7 +305,7 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
 
         {/* Row 2: Dropdowns · Toggles · Pagination · Install from file */}
         <div className="flex items-center gap-2.5 flex-wrap text-[12.5px]">
-          {/* SPT Version Filter */}
+          {/* SPT Version Filter (Ordered by Most Recent Release) */}
           <select
             value={selectedSptVersion}
             onChange={(e) => {
@@ -309,14 +313,17 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
               setCurrentPage(1);
             }}
             className="bg-[#0E1013] border border-[#23272E] rounded-md px-2.5 py-1.5 text-[#E8EAEE] focus:outline-none focus:border-[#EA580C] cursor-pointer"
-            title="Only show mods compatible with the selected SPT release"
+            title="Filter mods by SPT release (ordered from most recent to oldest)"
           >
             <option value="All">All SPT Versions</option>
-            {sptVersions.map((v) => (
-              <option key={v.id} value={v.version}>
-                SPT {v.version} ({v.modCount} mods)
-              </option>
-            ))}
+            {sortedSptVersions.map((v) => {
+              const count = v.modCount ?? (v as any).mods_count ?? (v as any).count;
+              return (
+                <option key={v.id || v.version} value={v.version}>
+                  {count && count > 0 ? `SPT ${v.version} (${count} mods)` : `SPT ${v.version}`}
+                </option>
+              );
+            })}
           </select>
 
           {/* Category Filter */}

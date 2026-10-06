@@ -138,7 +138,7 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
       },
       {
         id: `sys-${Date.now()}-2`,
-        text: `[Blacksite Launcher] Working Directory: ${sptDirectory}`,
+        text: `[Blacksite Launcher] Resolving executable paths in ${sptDirectory}\\SPT_Runtime and ${sptDirectory}...`,
         level: 'info',
         timestamp: initTime,
       },

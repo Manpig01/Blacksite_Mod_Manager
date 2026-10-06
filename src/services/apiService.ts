@@ -1,6 +1,7 @@
 import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem } from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
 import { getKnownDependencyMeta } from '../data/knownDependencies';
+import { sortSptVersionsByMostRecent, sortModVersionsByMostRecent } from '../utils/versionUtils';
 
 const API_BASE = 'https://sp-mod.com/api/v0';
 
@@ -58,19 +59,58 @@ export const apiService = {
 
   async getSptVersions(): Promise<SptVersionInfo[]> {
     try {
-      const res = await fetch(`${API_BASE}/spt/versions?per_page=50`, {
+      // Query with sort=-created_at to fetch most recent releases first
+      const res = await fetch(`${API_BASE}/spt/versions?sort=-created_at&per_page=50`, {
         signal: AbortSignal.timeout(4000)
       });
       if (res.ok) {
         const json = await res.json();
-        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-          return json.data;
+        let allItems = Array.isArray(json.data) ? [...json.data] : [];
+
+        // If multiple pages exist, retrieve remaining pages to include all releases without missing any
+        const lastPage = json.meta?.last_page || 1;
+        if (lastPage > 1) {
+          try {
+            const pagePromises = [];
+            for (let p = 2; p <= Math.min(lastPage, 3); p++) {
+              pagePromises.push(
+                fetch(`${API_BASE}/spt/versions?sort=-created_at&page=${p}&per_page=50`, {
+                  signal: AbortSignal.timeout(3000)
+                }).then((r) => (r.ok ? r.json() : null))
+              );
+            }
+            const pageResults = await Promise.all(pagePromises);
+            for (const pageData of pageResults) {
+              if (pageData?.data && Array.isArray(pageData.data)) {
+                allItems.push(...pageData.data);
+              }
+            }
+          } catch {
+            // Keep whatever items were already retrieved
+          }
+        }
+
+        if (allItems.length > 0) {
+          const normalized: SptVersionInfo[] = allItems.map((item: any) => ({
+            id: item.id,
+            version: item.version,
+            versionMajor: item.versionMajor ?? item.version_major ?? 0,
+            versionMinor: item.versionMinor ?? item.version_minor ?? 0,
+            versionPatch: item.versionPatch ?? item.version_patch ?? 0,
+            versionLabels: item.versionLabels ?? item.version_labels ?? '',
+            modCount: item.modCount ?? item.mod_count ?? item.mods_count ?? item.count ?? 0,
+            link: item.link,
+            colorClass: item.colorClass ?? item.color_class,
+            createdAt: item.createdAt ?? item.created_at,
+            updatedAt: item.updatedAt ?? item.updated_at
+          }));
+          return sortSptVersionsByMostRecent(normalized);
         }
       }
     } catch {
       // Fallback to fixture
     }
-    return SPT_VERSIONS;
+    return sortSptVersionsByMostRecent(SPT_VERSIONS);
   },
 
   async getModVersions(modId: number): Promise<ModVersion[]> {
@@ -81,19 +121,14 @@ export const apiService = {
       if (res.ok) {
         const json = await res.json();
         if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-          return [...json.data].sort((a, b) => {
-            const dateA = new Date(a.published_at || a.created_at || 0).getTime();
-            const dateB = new Date(b.published_at || b.created_at || 0).getTime();
-            if (dateB !== dateA) return dateB - dateA;
-            return (b.id || 0) - (a.id || 0);
-          });
+          return sortModVersionsByMostRecent(json.data);
         }
       }
     } catch {
       // Fallback to fixture
     }
     const fixtureMod = FIXTURE_MODS.find(m => m.id === modId);
-    return fixtureMod?.versions || [
+    return sortModVersionsByMostRecent(fixtureMod?.versions || [
       {
         id: 9901,
         version: "1.0.0",
@@ -105,7 +140,7 @@ export const apiService = {
         fika_compatibility: "compatible",
         published_at: "2026-08-01T12:00:00Z"
       }
-    ];
+    ]);
   },
 
   async resolveModDependencies(
