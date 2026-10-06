@@ -13,10 +13,11 @@ import {
 } from 'lucide-react';
 import { Mod, ModVersion } from '../types';
 import { apiService } from '../services/apiService';
-import { sortModVersionsByMostRecent } from '../utils/versionUtils';
+import { sortModVersionsByMostRecent, isSptVersionCompatible } from '../utils/versionUtils';
 
 interface VersionSelectionModalProps {
   mod: Mod | null;
+  targetSptVersion?: string | null;
   recoveryNotice?: string | null;
   onClose: () => void;
   onSelectVersion: (mod: Mod, version: ModVersion) => void;
@@ -25,6 +26,7 @@ interface VersionSelectionModalProps {
 
 export const VersionSelectionModal: React.FC<VersionSelectionModalProps> = ({
   mod,
+  targetSptVersion,
   recoveryNotice,
   onClose,
   onSelectVersion,
@@ -127,12 +129,19 @@ export const VersionSelectionModal: React.FC<VersionSelectionModalProps> = ({
                 ? ver.description.replace(/<[^>]+>/g, ' ').trim()
                 : 'Stable release update.';
 
+              const isTargetMatch = Boolean(
+                targetSptVersion &&
+                  targetSptVersion !== 'All' &&
+                  isSptVersionCompatible(ver.spt_version_constraint, targetSptVersion)
+              );
+              const isHighlighted = isTargetMatch || (!targetSptVersion && isLatest);
+
               return (
                 <div
                   key={ver.id || ver.version}
                   className={`border rounded-lg p-3.5 space-y-2.5 transition-all ${
-                    isLatest
-                      ? 'bg-[#161B22] border-[#EA580C]/40 shadow-[0_0_12px_rgba(234,88,12,0.06)]'
+                    isHighlighted
+                      ? 'bg-[#161B22] border-[#EA580C]/50 shadow-[0_0_12px_rgba(234,88,12,0.08)]'
                       : 'bg-[#121418] border-[#23272E] hover:border-[#3A4150]'
                   }`}
                 >
@@ -141,7 +150,13 @@ export const VersionSelectionModal: React.FC<VersionSelectionModalProps> = ({
                       <span className="text-sm font-bold text-[#E8EAEE] font-mono">
                         v{ver.version}
                       </span>
-                      {isLatest && (
+                      {isTargetMatch && (
+                        <span className="bg-[#16A34A]/25 border border-[#16A34A]/60 text-[#4ADE80] text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-[#4ADE80]" />
+                          Matches SPT {targetSptVersion}
+                        </span>
+                      )}
+                      {isLatest && !isTargetMatch && (
                         <span className="bg-[#EA580C]/20 border border-[#EA580C]/50 text-[#EA580C] text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
                           <CheckCircle2 className="w-3 h-3 text-[#EA580C]" /> Latest
                         </span>
@@ -161,14 +176,14 @@ export const VersionSelectionModal: React.FC<VersionSelectionModalProps> = ({
                     <button
                       onClick={() => onSelectVersion(mod, ver)}
                       className={`text-xs font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors shadow-sm cursor-pointer ${
-                        isLatest
+                        isHighlighted
                           ? 'bg-[#16A34A] hover:bg-[#22C55E] text-white'
                           : 'bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] border border-[#2A2F38]'
                       }`}
                       type="button"
                     >
                       <Download className="w-3.5 h-3.5" />
-                      <span>{isLatest ? 'Install Latest' : 'Install Release'}</span>
+                      <span>{isTargetMatch ? `Install for SPT ${targetSptVersion}` : (isLatest ? 'Install Latest' : 'Install Release')}</span>
                     </button>
                   </div>
 

@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, RotateCw, ChevronLeft, ChevronRight, Upload, History, ExternalLink, Download, Check, Sparkles, Heart, Calendar, ThumbsUp } from 'lucide-react';
-import { Mod, ModCategory, SptVersionInfo, CatalogSortOption, InstalledMod } from '../types';
+import { Mod, ModCategory, SptVersionInfo, CatalogSortOption, InstalledMod, ModVersion } from '../types';
 import { apiService, CatalogQueryResult } from '../services/apiService';
 import { storageService } from '../services/storageService';
-import { sortSptVersionsByMostRecent } from '../utils/versionUtils';
+import {
+  sortSptVersionsByMostRecent,
+  getSptBadgeClass,
+  findMatchingModVersion,
+} from '../utils/versionUtils';
 import { ModThumbnail } from './ModThumbnail';
 import { RecommendedModsSection } from './RecommendedModsSection';
 
@@ -39,7 +43,7 @@ interface BrowseModsTabProps {
   categories: ModCategory[];
   sptVersions: SptVersionInfo[];
   installedMods: InstalledMod[];
-  onInstallMod: (mod: Mod, version?: string) => void;
+  onInstallMod: (mod: Mod, version?: string, targetSptVersion?: string) => void;
   onOpenVersions: (mod: Mod) => void;
   onInstallFromFile: (file: File) => void;
   onShowToast: (title: string, message: string, type: 'success' | 'info' | 'warning' | 'error') => void;
@@ -88,6 +92,45 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
 
   // SPT versions sorted strictly in order of most recent releases
   const sortedSptVersions = useMemo(() => sortSptVersionsByMostRecent(sptVersions), [sptVersions]);
+
+  // Active target SPT version: if user selected a specific version from dropdown, use that; otherwise use their installed sptVersion
+  const activeTargetSptVersion = selectedSptVersion !== 'All' ? selectedSptVersion : sptVersion;
+
+  // Cache for mod versions to dynamically display and install the matching release
+  const [modVersionsCache, setModVersionsCache] = useState<Record<number, ModVersion[]>>({});
+
+  // Background fetch versions for visible mods to resolve their exact matching version
+  useEffect(() => {
+    const modsToFetch = queryResult.mods.filter((m) => m.id && !modVersionsCache[m.id]);
+    if (modsToFetch.length === 0) return;
+
+    let isMounted = true;
+    const fetchPromises = modsToFetch.slice(0, 20).map(async (m) => {
+      try {
+        const verList = await apiService.getModVersions(m.id);
+        return { id: m.id, versions: verList };
+      } catch {
+        return null;
+      }
+    });
+
+    Promise.all(fetchPromises).then((results) => {
+      if (!isMounted) return;
+      const newEntries: Record<number, ModVersion[]> = {};
+      for (const res of results) {
+        if (res && res.versions.length > 0) {
+          newEntries[res.id] = res.versions;
+        }
+      }
+      if (Object.keys(newEntries).length > 0) {
+        setModVersionsCache((prev) => ({ ...prev, ...newEntries }));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [queryResult.mods]);
 
   // Debounced search query
   useEffect(() => {
@@ -483,7 +526,7 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
             installedMods={installedMods}
             categories={categories}
             installedGuids={installedGuids}
-            onInstallMod={onInstallMod}
+            onInstallMod={(m, v) => onInstallMod(m, v, activeTargetSptVersion)}
             onOpenVersions={onOpenVersions}
             onHide={() => onToggleShowRecommended?.(false)}
           />
@@ -512,8 +555,14 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
               const isInstalled = mod.guid ? installedGuids.includes(mod.guid) : false;
               const authorName = mod.owner?.name || 'Unknown';
               const isFavorite = Boolean(mod.favorite ?? favoriteIds.has(mod.id));
-              const displayVersion = mod.versions?.[0]?.version || '';
               const formattedDate = formatForgeDate(mod.published_at);
+
+              // Dynamically resolve mod version tailored to selected SPT release
+              const versions = modVersionsCache[mod.id] || mod.versions || [];
+              const matchingRelease = findMatchingModVersion(versions, activeTargetSptVersion);
+              const displayVersion = matchingRelease?.version
+                ? `v${matchingRelease.version.replace(/^v/i, '')}`
+                : (mod.versions?.[0]?.version ? `v${mod.versions[0].version.replace(/^v/i, '')}` : '');
 
               return (
                 <div
@@ -567,8 +616,11 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
 
                       {/* Badges row */}
                       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                        <span className="bg-[#16A34A] text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm">
-                          SPT 4.1.6
+                        <span
+                          className={`${getSptBadgeClass(activeTargetSptVersion)} text-[10px] font-bold px-2 py-0.5 rounded shadow-sm`}
+                          title={`Engineered / compatible with SPT ${activeTargetSptVersion}`}
+                        >
+                          SPT {activeTargetSptVersion}
                         </span>
                         {mod.fika_compatibility && (
                           <span className="bg-[#0E2A18] text-[#4ADE80] border border-[#16A34A]/40 text-[10px] font-semibold px-2 py-0.5 rounded">
@@ -647,9 +699,12 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
                         )}
 
                         <button
-                          onClick={() => onInstallMod(mod)}
+                          onClick={() => {
+                            const ver = matchingRelease?.version || (displayVersion ? displayVersion.replace(/^v/i, '') : undefined);
+                            onInstallMod(mod, ver, activeTargetSptVersion);
+                          }}
                           className="h-6 px-2.5 bg-[#16A34A] hover:bg-[#22C55E] text-white rounded text-[10.5px] font-semibold flex items-center gap-1 transition-colors shadow-sm cursor-pointer"
-                          title="Download and install mod"
+                          title={`Download and install ${mod.name} ${displayVersion} for SPT ${activeTargetSptVersion}`}
                           type="button"
                         >
                           <Download className="w-3 h-3" />

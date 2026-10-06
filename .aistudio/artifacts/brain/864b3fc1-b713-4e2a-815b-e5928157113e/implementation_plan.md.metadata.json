@@ -1,6 +1,6 @@
 {
-  "summary":  "SPT 4.x Runtime Layout Executable Auto-Detection Architecture scanning both SPT_Runtime and root directories, with automated working directory binding to SPT_Runtime for seamless server and launcher execution.",
-  "updatedAt":  "2026-10-06T02:56:01.232645952Z",
+  "summary":  "Implementation plan for Dynamic SPT Version Switching & Compatible Release Installation across mod cards and installer pipeline.",
+  "updatedAt":  "2026-10-06T04:59:22.749143159Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

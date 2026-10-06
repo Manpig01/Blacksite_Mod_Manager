@@ -39,6 +39,7 @@ import { apiService } from './services/apiService';
 import { imageCacheService } from './services/imageCacheService';
 import { errorLogService } from './services/errorLogService';
 import { getKnownDependencyMeta } from './data/knownDependencies';
+import { findMatchingModVersion } from './utils/versionUtils';
 
 export const App: React.FC = () => {
   // App State
@@ -475,7 +476,7 @@ export const App: React.FC = () => {
             thumbnail: thumbnail || extraMeta?.thumbnail,
             categoryTitle: extraMeta?.categoryTitle || (isServer ? 'Overhauls' : 'Tools'),
             teaser: extraMeta?.teaser,
-            sptVersion: settings.sptVersion,
+            sptVersion: (extraMeta as any)?.sptVersion || settings.sptVersion,
             fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
             installDate: new Date().toISOString().split('T')[0],
             serverPath: installResult.serverPath || (isServer ? `${settings.serverModPath}/${modName.replace(/\s+/g, '')}` : undefined),
@@ -633,7 +634,7 @@ export const App: React.FC = () => {
             thumbnail: thumbnail || extraMeta?.thumbnail,
             categoryTitle: extraMeta?.categoryTitle || (isServerMod ? 'Overhauls' : 'Tools'),
             teaser: extraMeta?.teaser,
-            sptVersion: settings.sptVersion,
+            sptVersion: (extraMeta as any)?.sptVersion || settings.sptVersion,
             fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
             installDate: new Date().toISOString().split('T')[0],
             serverPath: `${serverDir}/${modName.replace(/\s+/g, '')}`,
@@ -661,18 +662,24 @@ export const App: React.FC = () => {
     }, tickMs);
   };
 
-  const handleInstallMod = async (mod: Mod, specificVersion?: string, skipDepCheck = false) => {
+  const handleInstallMod = async (
+    mod: Mod,
+    specificVersion?: string,
+    targetSptVersion?: string,
+    skipDepCheck = false
+  ) => {
+    const activeSpt = targetSptVersion || settings.sptVersion || '4.1.6';
     let version = specificVersion;
     let downloadLink = '';
 
-    // If specificVersion or downloadLink not yet determined, fetch sorted versions from Forge API
+    // If specificVersion or downloadLink not yet determined, fetch sorted versions from Forge API and match targetSptVersion
     if (!downloadLink && mod.id) {
       try {
         const verList = await apiService.getModVersions(mod.id);
         if (verList && verList.length > 0) {
           const targetVer = specificVersion
             ? verList.find((v) => v.version === specificVersion) || verList[0]
-            : verList[0];
+            : findMatchingModVersion(verList, activeSpt) || verList[0];
           version = targetVer.version || version;
           downloadLink = targetVer.link || '';
         }
@@ -682,7 +689,7 @@ export const App: React.FC = () => {
     } else if (mod.versions && mod.versions.length > 0) {
       const verObj = specificVersion
         ? mod.versions.find((v) => v.version === specificVersion)
-        : mod.versions[0];
+        : findMatchingModVersion(mod.versions, activeSpt) || mod.versions[0];
       version = verObj?.version || mod.versions[0].version;
       downloadLink = verObj?.link || '';
     }
@@ -692,12 +699,12 @@ export const App: React.FC = () => {
     // Check Forge dependencies if not explicitly skipped
     const modIdentifier = mod.id || mod.guid || mod.slug;
     if (!skipDepCheck && modIdentifier) {
-      setStatusText(`Checking Forge dependencies for ${mod.name}...`);
+      setStatusText(`Checking Forge dependencies for ${mod.name} (SPT ${activeSpt})...`);
       try {
         const resolvedDeps = await apiService.resolveModDependencies(
           modIdentifier,
           finalVer,
-          settings.sptVersion,
+          activeSpt,
           installedMods
         );
 
@@ -728,7 +735,11 @@ export const App: React.FC = () => {
       downloadLink,
       undefined,
       undefined,
-      mod
+      undefined,
+      {
+        ...mod,
+        sptVersion: activeSpt,
+      } as any
     );
   };
 
@@ -752,7 +763,7 @@ export const App: React.FC = () => {
         `Installing ${targetMod.name} v${targetVersion} without dependencies.`,
         'info'
       );
-      handleInstallMod(targetMod, targetVersion, true);
+      handleInstallMod(targetMod, targetVersion, undefined, true);
       return;
     }
 
@@ -799,13 +810,13 @@ export const App: React.FC = () => {
     }
 
     // Now queue the target mod (skipDepCheck = true so it doesn't prompt again)
-    await handleInstallMod(targetMod, targetVersion, true);
+    await handleInstallMod(targetMod, targetVersion, undefined, true);
   };
 
   const handleSelectVersion = (mod: Mod, ver: ModVersion) => {
     setVersionRecoveryNotice(null);
     setSelectedModForVersions(null);
-    handleInstallMod(mod, ver.version);
+    handleInstallMod(mod, ver.version, settings.sptVersion);
   };
 
   const handleInstallFromFile = (file: File) => {
@@ -1447,6 +1458,7 @@ export const App: React.FC = () => {
 
       <VersionSelectionModal
         mod={selectedModForVersions}
+        targetSptVersion={settings.sptVersion}
         recoveryNotice={versionRecoveryNotice}
         onClose={() => {
           setSelectedModForVersions(null);
