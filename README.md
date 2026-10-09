@@ -151,4 +151,4 @@ Contributions from the SPT community are welcome!
 ## 📄 License
 
 Blacksite Mod Manager is open-source software licensed under the **[MIT License](LICENSE)**.
-Single Player Tarkov (SPT) is an independent community project and is not affiliated with Battlestate Games.
+Single Player Tushonka (SPT) is an independent community project and is not affiliated with Battlestate Games.
