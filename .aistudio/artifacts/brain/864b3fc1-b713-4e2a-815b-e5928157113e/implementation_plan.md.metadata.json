@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for Dynamic SPT Version Switching & Compatible Release Installation across mod cards and installer pipeline.",
-  "updatedAt":  "2026-10-06T04:59:22.749143159Z",
+  "summary":  "Implementation plan for removing the Analytics tab, implementing the 1-Click Batch Mod Updater, and fixing Uninstall / Uninstall All to thoroughly remove all folder-based and DLL-based client plugins and server mods.",
+  "updatedAt":  "2026-10-09T02:43:03.772248643Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

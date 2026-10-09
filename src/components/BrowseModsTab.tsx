@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, RotateCw, ChevronLeft, ChevronRight, Upload, History, ExternalLink, Download, Check, Sparkles, Heart, Calendar, ThumbsUp } from 'lucide-react';
 import { Mod, ModCategory, SptVersionInfo, CatalogSortOption, InstalledMod, ModVersion } from '../types';
 import { apiService, CatalogQueryResult } from '../services/apiService';
@@ -98,6 +98,25 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
 
   // Cache for mod versions to dynamically display and install the matching release
   const [modVersionsCache, setModVersionsCache] = useState<Record<number, ModVersion[]>>({});
+
+  // Scroll container ref for smooth scroll-to-top on page change
+  const catalogScrollRef = useRef<HTMLDivElement>(null);
+
+  // Smoothly scroll to the top of the catalog when changing pages
+  useEffect(() => {
+    if (catalogScrollRef.current) {
+      catalogScrollRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  }, [currentPage]);
 
   // Background fetch versions for visible mods to resolve their exact matching version
   useEffect(() => {
@@ -324,24 +343,32 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
             )}
           </div>
 
-          <div className="ml-auto flex items-center gap-4 text-[12.5px] text-[#9AA3AF]">
-            <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE]">
+          <div className="ml-auto flex items-center gap-2 text-[12px] text-[#9AA3AF]">
+            <label className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+              hideFeatured
+                ? 'bg-[#EA580C]/10 border-[#EA580C]/40 text-[#EA580C]'
+                : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+            }`}>
               <input
                 type="checkbox"
                 checked={hideFeatured}
                 onChange={(e) => setHideFeatured(e.target.checked)}
-                className="accent-[#EA580C]"
+                className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EA580C] cursor-pointer"
               />
-              <span>Hide Featured</span>
+              <span className="font-medium">Hide Featured</span>
             </label>
-            <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE]">
+            <label className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+              hideContainsAds
+                ? 'bg-[#EA580C]/10 border-[#EA580C]/40 text-[#EA580C]'
+                : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+            }`}>
               <input
                 type="checkbox"
                 checked={hideContainsAds}
                 onChange={(e) => setHideContainsAds(e.target.checked)}
-                className="accent-[#EA580C]"
+                className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EA580C] cursor-pointer"
               />
-              <span>Hide Contains Ads</span>
+              <span className="font-medium">Hide Contains Ads</span>
             </label>
           </div>
         </div>
@@ -420,46 +447,62 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
           </select>
 
           {/* Additional checkbox toggles */}
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]">
+          <label className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+            hideContainsAi
+              ? 'bg-[#EA580C]/10 border-[#EA580C]/40 text-[#EA580C]'
+              : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+          }`}>
             <input
               type="checkbox"
               checked={hideContainsAi}
               onChange={(e) => setHideContainsAi(e.target.checked)}
-              className="accent-[#EA580C]"
+              className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EA580C] cursor-pointer"
             />
-            <span>Hide Contains AI</span>
+            <span className="font-medium">Hide Contains AI</span>
           </label>
 
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]">
+          <label className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+            hideInstalled
+              ? 'bg-[#EA580C]/10 border-[#EA580C]/40 text-[#EA580C]'
+              : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+          }`}>
             <input
               type="checkbox"
               checked={hideInstalled}
               onChange={(e) => setHideInstalled(e.target.checked)}
-              className="accent-[#EA580C]"
+              className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EA580C] cursor-pointer"
             />
-            <span>Hide Installed</span>
+            <span className="font-medium">Hide Installed</span>
           </label>
 
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]">
+          <label className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+            fikaOnly
+              ? 'bg-[#EA580C]/10 border-[#EA580C]/40 text-[#EA580C]'
+              : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+          }`}>
             <input
               type="checkbox"
               checked={fikaOnly}
               onChange={(e) => setFikaOnly(e.target.checked)}
-              className="accent-[#EA580C]"
+              className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EA580C] cursor-pointer"
             />
-            <span>Fika Comp Only</span>
+            <span className="font-medium">Fika Comp Only</span>
           </label>
 
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]">
+          <label className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+            favoritesOnly
+              ? 'bg-[#EF4444]/10 border-[#EF4444]/40 text-[#EF4444]'
+              : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+          }`}>
             <input
               type="checkbox"
               checked={favoritesOnly}
               onChange={(e) => setFavoritesOnly(e.target.checked)}
-              className="accent-[#EF4444]"
+              className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EF4444] cursor-pointer"
             />
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1.5 font-medium">
               <Heart
-                className={`w-3 h-3 ${
+                className={`w-3.5 h-3.5 ${
                   favoritesOnly || favoriteIds.size > 0 ? 'text-[#EF4444] fill-[#EF4444]' : 'text-[#9AA3AF]'
                 }`}
               />
@@ -467,14 +510,21 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
             </span>
           </label>
 
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-[#E8EAEE] text-[#9AA3AF]" title="Toggle the Recommended For You section above the mod catalog">
+          <label
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-[12px] cursor-pointer transition-all select-none ${
+              showRecommendedMods
+                ? 'bg-[#EA580C]/10 border-[#EA580C]/40 text-[#EA580C]'
+                : 'bg-[#0E1013] border-[#23272E] text-[#9AA3AF] hover:text-[#E8EAEE] hover:border-[#2E343E]'
+            }`}
+            title="Toggle the Recommended For You section above the mod catalog"
+          >
             <input
               type="checkbox"
               checked={showRecommendedMods}
               onChange={(e) => onToggleShowRecommended?.(e.target.checked)}
-              className="accent-[#EA580C]"
+              className="w-3.5 h-3.5 rounded border border-[#2E343E] bg-[#0E1013] accent-[#EA580C] cursor-pointer"
             />
-            <span>Show Recommendations</span>
+            <span className="font-medium">Show Recommendations</span>
           </label>
 
           {/* Pagination controls */}
@@ -519,7 +569,7 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
       </div>
 
       {/* Catalog Mod Grid (Virtualizing 3-column compact 220px cards) */}
-      <div className="flex-1 overflow-y-auto pr-1">
+      <div ref={catalogScrollRef} className="flex-1 overflow-y-auto pr-1">
         {/* Recommended for You Section based on installed mod categories */}
         {showRecommendedMods && (
           <RecommendedModsSection
@@ -716,6 +766,40 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Bottom Pagination Bar */}
+        {queryResult.mods.length > 0 && (queryResult.lastPage || 1) > 1 && (
+          <div className="flex items-center justify-between py-3 px-3 border-t border-[#23272E] my-3 bg-[#181B20]/40 rounded-lg">
+            <span className="text-xs text-[#9AA3AF] font-mono">
+              Page {queryResult.currentPage} of {queryResult.lastPage} ({queryResult.total.toLocaleString()} total mods)
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className="bg-[#20252D] hover:bg-[#2A2F38] disabled:opacity-40 text-[#E8EAEE] px-3 py-1.5 rounded-md border border-[#2A2F38] flex items-center gap-1.5 text-xs font-semibold cursor-pointer disabled:cursor-not-allowed transition-colors"
+                type="button"
+                title="Previous page (smoothly scrolls to top)"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span>Previous Page</span>
+              </button>
+              <span className="text-[#E8EAEE] font-mono text-xs px-2 font-medium">
+                {queryResult.currentPage} / {queryResult.lastPage}
+              </span>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(queryResult.lastPage || 1, p + 1))}
+                disabled={currentPage >= (queryResult.lastPage || 1)}
+                className="bg-[#20252D] hover:bg-[#2A2F38] disabled:opacity-40 text-[#E8EAEE] px-3 py-1.5 rounded-md border border-[#2A2F38] flex items-center gap-1.5 text-xs font-semibold cursor-pointer disabled:cursor-not-allowed transition-colors"
+                type="button"
+                title="Next page (smoothly scrolls to top)"
+              >
+                <span>Next Page</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>

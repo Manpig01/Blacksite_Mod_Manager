@@ -662,25 +662,152 @@ async function installMod({
   }
 }
 
+const PROTECTED_CORE_ITEMS = new Set([
+  'spt',
+  'spt-core',
+  'bepinex',
+  'core',
+  'configurationmanager',
+]);
+
+function isProtectedCoreItem(name) {
+  if (!name) return true;
+  const clean = name.toLowerCase().replace(/\.disabled$/, '').trim();
+  if (PROTECTED_CORE_ITEMS.has(clean)) return true;
+  if (clean.startsWith('spt.') || clean.startsWith('spt-')) return true;
+  return false;
+}
+
 /**
  * Permanently removes mod files from SPT_Runtime/user/mods, user/mods, or BepInEx/plugins
  */
-async function uninstallMod({ sptDirectory, serverPath, clientPath }) {
+async function uninstallMod({ sptDirectory, serverPath, clientPath, modName, clientPaths }) {
   if (!sptDirectory) return { success: false, error: 'SPT Directory not set' };
 
-  if (serverPath) {
-    const fullServer = path.isAbsolute(serverPath) ? serverPath : path.join(sptDirectory, serverPath);
-    if (fs.existsSync(fullServer)) fs.rmSync(fullServer, { recursive: true, force: true });
-    if (fs.existsSync(fullServer + '.disabled')) fs.rmSync(fullServer + '.disabled', { recursive: true, force: true });
+  const deletePath = (relOrAbs) => {
+    if (!relOrAbs) return;
+    const full = path.isAbsolute(relOrAbs) ? relOrAbs : path.join(sptDirectory, relOrAbs);
+    const basename = path.basename(full);
+    if (isProtectedCoreItem(basename)) return; // Never delete protected core files
+
+    if (fs.existsSync(full)) {
+      try {
+        fs.rmSync(full, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`Failed removing ${full}:`, err.message);
+      }
+    }
+    const disabledFull = full.endsWith('.disabled') ? full : full + '.disabled';
+    if (fs.existsSync(disabledFull)) {
+      try {
+        fs.rmSync(disabledFull, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`Failed removing ${disabledFull}:`, err.message);
+      }
+    }
+  };
+
+  if (serverPath) deletePath(serverPath);
+  if (clientPath) deletePath(clientPath);
+
+  if (Array.isArray(clientPaths)) {
+    for (const p of clientPaths) {
+      deletePath(p);
+    }
   }
 
-  if (clientPath) {
-    const fullClient = path.isAbsolute(clientPath) ? clientPath : path.join(sptDirectory, clientPath);
-    if (fs.existsSync(fullClient)) fs.rmSync(fullClient, { recursive: true, force: true });
-    if (fs.existsSync(fullClient + '.disabled')) fs.rmSync(fullClient + '.disabled', { recursive: true, force: true });
+  // Fallback cleanup by modName if folder exists in plugins or user/mods
+  if (modName && typeof modName === 'string') {
+    const cleanModName = modName.trim();
+    if (!isProtectedCoreItem(cleanModName)) {
+      const candidatePaths = [
+        path.join(sptDirectory, 'BepInEx', 'plugins', cleanModName),
+        path.join(sptDirectory, 'BepInEx', 'plugins', cleanModName + '.dll'),
+        path.join(sptDirectory, 'user', 'mods', cleanModName),
+        path.join(sptDirectory, 'SPT_Runtime', 'user', 'mods', cleanModName),
+      ];
+      for (const cand of candidatePaths) {
+        deletePath(cand);
+      }
+    }
   }
 
   return { success: true };
+}
+
+/**
+ * Deep purges all user mods from user/mods, SPT_Runtime/user/mods, and BepInEx/plugins
+ * Strictly safeguards SPT core system files (e.g. BepInEx/plugins/spt/).
+ */
+async function uninstallAllMods({ sptDirectory }) {
+  if (!sptDirectory || !fs.existsSync(sptDirectory)) {
+    return { success: false, error: 'SPT Directory not set or does not exist' };
+  }
+
+  let deletedCount = 0;
+
+  // 1. Clear server mods in both SPT_Runtime and legacy user/mods
+  const candidateUserDirs = [
+    path.join(sptDirectory, 'SPT_Runtime', 'user', 'mods'),
+    path.join(sptDirectory, 'user', 'mods'),
+  ];
+
+  for (const userModsDir of candidateUserDirs) {
+    if (fs.existsSync(userModsDir)) {
+      try {
+        const entries = fs.readdirSync(userModsDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const targetPath = path.join(userModsDir, entry.name);
+            fs.rmSync(targetPath, { recursive: true, force: true });
+            deletedCount++;
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading user mods dir:', err.message);
+      }
+    }
+  }
+
+  // 2. Clear client plugins (excluding protected SPT core files like 'spt' folder)
+  const pluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
+  if (fs.existsSync(pluginsDir)) {
+    try {
+      const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const name = entry.name;
+        if (isProtectedCoreItem(name)) {
+          console.log(`[Blacksite Purge] Safeguarding core SPT item: ${name}`);
+          continue;
+        }
+        const targetPath = path.join(pluginsDir, name);
+        fs.rmSync(targetPath, { recursive: true, force: true });
+        deletedCount++;
+      }
+    } catch (err) {
+      console.warn('Error clearing plugins dir:', err.message);
+    }
+  }
+
+  // 3. Clear non-core client patchers if any
+  const patchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
+  if (fs.existsSync(patchersDir)) {
+    try {
+      const entries = fs.readdirSync(patchersDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const name = entry.name;
+        if (isProtectedCoreItem(name)) continue;
+        const targetPath = path.join(patchersDir, name);
+        fs.rmSync(targetPath, { recursive: true, force: true });
+        deletedCount++;
+      }
+    } catch (err) {
+      console.warn('Error clearing patchers dir:', err.message);
+    }
+  }
+
+  console.log(`[Blacksite Purge] Successfully uninstalled all mods (${deletedCount} items removed).`);
+  return { success: true, deletedCount };
 }
 
 /**
@@ -692,6 +819,9 @@ async function toggleModDisable({ sptDirectory, serverPath, clientPath, disable 
   function handlePath(targetPath) {
     if (!targetPath) return null;
     const full = path.isAbsolute(targetPath) ? targetPath : path.join(sptDirectory, targetPath);
+    const basename = path.basename(full);
+    if (isProtectedCoreItem(basename)) return null;
+
     const disabledFull = full.endsWith('.disabled') ? full : `${full}.disabled`;
     const enabledFull = full.endsWith('.disabled') ? full.slice(0, -9) : full;
 
@@ -714,7 +844,9 @@ async function toggleModDisable({ sptDirectory, serverPath, clientPath, disable 
 }
 
 /**
- * Scans disk in SPT_Runtime/user/mods, user/mods, and BepInEx/plugins for real mods
+ * Scans disk in SPT_Runtime/user/mods, user/mods, and BepInEx/plugins for real mods.
+ * Correctly detects BOTH standalone DLLs and subdirectory client plugins,
+ * while safeguarding core SPT system folders.
  */
 async function scanInstalledMods({ sptDirectory }) {
   if (!sptDirectory || !fs.existsSync(sptDirectory)) {
@@ -776,13 +908,14 @@ async function scanInstalledMods({ sptDirectory }) {
             isDisabled,
             hasUpdate: false,
             latestVersion: version,
+            configFiles: [],
           });
         }
       }
     }
   }
 
-  // 2. Scan client plugins
+  // 2. Scan client plugins (both directories and standalone DLLs)
   if (fs.existsSync(pluginsDir)) {
     const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
@@ -790,11 +923,49 @@ async function scanInstalledMods({ sptDirectory }) {
       const isDisabled = name.endsWith('.disabled');
       const cleanName = isDisabled ? name.slice(0, -9) : name;
 
-      if (!entry.isDirectory() && cleanName.toLowerCase().endsWith('.dll')) {
+      // Exclude core SPT items
+      if (isProtectedCoreItem(cleanName)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        // Folder-based client plugin (e.g. DrakiaXYZ-Waypoints, mpstark-dynamicmaps, UnityToolkit)
+        const folderDir = path.join(pluginsDir, name);
+        let detectedVersion = '1.0.0';
+
+        // Check if there is an inner package.json or version file if any
+        const pkgJson = path.join(folderDir, 'package.json');
+        if (fs.existsSync(pkgJson)) {
+          try {
+            const data = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+            if (data.version) detectedVersion = data.version;
+          } catch {
+            // ignore
+          }
+        }
+
         results.push({
-          id: `disk.client.${cleanName.replace(/\.dll$/i, '').toLowerCase()}`,
-          name: cleanName.replace(/\.dll$/i, ''),
-          author: 'Plugin',
+          id: `disk.client.${cleanName.toLowerCase()}`,
+          name: cleanName,
+          author: 'Client Plugin',
+          version: detectedVersion,
+          kind: 'Client',
+          sptVersion: '4.x',
+          fikaCompatibility: true,
+          installDate: new Date().toISOString().split('T')[0],
+          clientPath: `BepInEx/plugins/${name}`,
+          isDisabled,
+          hasUpdate: false,
+          latestVersion: detectedVersion,
+          configFiles: [],
+        });
+      } else if (cleanName.toLowerCase().endsWith('.dll')) {
+        // Standalone .dll plugin (e.g. Liquidwarp.ArmorExpert.dll)
+        const baseName = cleanName.replace(/\.dll$/i, '');
+        results.push({
+          id: `disk.client.${baseName.toLowerCase()}`,
+          name: baseName,
+          author: 'Client Plugin',
           version: '1.0.0',
           kind: 'Client',
           sptVersion: '4.x',
@@ -804,6 +975,7 @@ async function scanInstalledMods({ sptDirectory }) {
           isDisabled,
           hasUpdate: false,
           latestVersion: '1.0.0',
+          configFiles: [],
         });
       }
     }
@@ -815,6 +987,7 @@ async function scanInstalledMods({ sptDirectory }) {
 module.exports = {
   installMod,
   uninstallMod,
+  uninstallAllMods,
   toggleModDisable,
   scanInstalledMods,
 };

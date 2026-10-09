@@ -5,7 +5,6 @@ import { Header } from './components/Header';
 import { BrowseModsTab } from './components/BrowseModsTab';
 import { InstalledModsTab, InstalledSortField } from './components/InstalledModsTab';
 import { ModpacksTab } from './components/ModpacksTab';
-import { AnalyticsTab } from './components/AnalyticsTab';
 import { SettingsTab } from './components/SettingsTab';
 import { InstallQueueModal } from './components/InstallQueueModal';
 import { VersionSelectionModal } from './components/VersionSelectionModal';
@@ -123,7 +122,7 @@ export const App: React.FC = () => {
   const [sptVersions, setSptVersions] = useState<SptVersionInfo[]>([]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'modpacks' | 'analytics' | 'settings'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'modpacks' | 'settings'>('browse');
 
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -899,12 +898,18 @@ export const App: React.FC = () => {
             sptDirectory: settings.sptDirectory,
             serverPath: mod.serverPath,
             clientPath: mod.clientPath,
+            modName: mod.name,
+            clientPaths: mod.clientPaths,
           });
         } catch (err) {
           console.error('Failed to remove mod files from disk:', err);
         }
       }
-      setInstalledMods((prev) => prev.filter((m) => m.id !== modId));
+      setInstalledMods((prev) => {
+        const next = prev.filter((m) => m.id !== modId);
+        storageService.saveInstalledMods(next);
+        return next;
+      });
       showToast('Mod Uninstalled', `Deleted ${mod.name} from SPT folder.`, 'warning');
     }
   };
@@ -937,7 +942,11 @@ export const App: React.FC = () => {
         }
       }
     }
-    setInstalledMods((prev) => prev.map((m) => ({ ...m, isDisabled: false })));
+    setInstalledMods((prev) => {
+      const next = prev.map((m) => ({ ...m, isDisabled: false }));
+      storageService.saveInstalledMods(next);
+      return next;
+    });
     showToast('All Mods Enabled', 'Removed .disabled suffix from all installed mods.', 'success');
   };
 
@@ -955,24 +964,37 @@ export const App: React.FC = () => {
         }
       }
     }
-    setInstalledMods((prev) => prev.map((m) => ({ ...m, isDisabled: true })));
+    setInstalledMods((prev) => {
+      const next = prev.map((m) => ({ ...m, isDisabled: true }));
+      storageService.saveInstalledMods(next);
+      return next;
+    });
     showToast('All Mods Disabled', 'Renamed all installed mod folders with .disabled suffix.', 'warning');
   };
 
   const handleUninstallAll = async () => {
     if (confirm('Permanently delete ALL installed mods from your SPT folder? This cannot be undone.')) {
       const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
-      if (bridge?.uninstallMod) {
+      if (bridge?.uninstallAllMods && settings.sptDirectory) {
+        try {
+          await bridge.uninstallAllMods({ sptDirectory: settings.sptDirectory });
+        } catch (err) {
+          console.error('Failed deep uninstallAllMods:', err);
+        }
+      } else if (bridge?.uninstallMod) {
         for (const m of installedMods) {
           await bridge.uninstallMod({
             sptDirectory: settings.sptDirectory,
             serverPath: m.serverPath,
             clientPath: m.clientPath,
+            modName: m.name,
+            clientPaths: m.clientPaths,
           }).catch(() => {});
         }
       }
       setInstalledMods([]);
-      showToast('All Mods Uninstalled', 'Removed all mods from SPT directory.', 'warning');
+      storageService.saveInstalledMods([]);
+      showToast('All Mods Uninstalled', 'Removed all community mods from SPT directory.', 'warning');
     }
   };
 
@@ -1052,6 +1074,8 @@ export const App: React.FC = () => {
             sptDirectory: settings.sptDirectory,
             serverPath: m.serverPath,
             clientPath: m.clientPath,
+            modName: m.name,
+            clientPaths: m.clientPaths,
           }).catch(() => {});
         }
       }
@@ -1305,18 +1329,6 @@ export const App: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('analytics')}
-          className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
-            activeTab === 'analytics'
-              ? 'text-[#EA580C] border-[#EA580C]'
-              : 'text-[#9AA3AF] hover:text-[#E8EAEE] border-transparent'
-          }`}
-          type="button"
-        >
-          <span>Analytics</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('settings')}
           className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 cursor-pointer ${
             activeTab === 'settings'
@@ -1350,6 +1362,7 @@ export const App: React.FC = () => {
           <InstalledModsTab
             installedMods={sortedInstalledMods}
             conflicts={conflicts}
+            sptVersion={settings.sptVersion}
             activeSortField={installedSortField}
             activeSortDirection={installedSortDirection}
             onSortChange={handleInstalledSortChange}
@@ -1379,17 +1392,6 @@ export const App: React.FC = () => {
             onApplyLoadout={handleApplyLoadout}
             onShowToast={showToast}
             onNavigateToBrowse={() => setActiveTab('browse')}
-          />
-        )}
-
-        {activeTab === 'analytics' && (
-          <AnalyticsTab
-            installedMods={installedMods}
-            profiles={profiles}
-            activeProfileId={settings.activeProfileId}
-            onSelectProfile={handleSelectProfile}
-            categories={categories}
-            conflicts={conflicts}
           />
         )}
 

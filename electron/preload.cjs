@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     return () => ipcRenderer.removeListener('mod:install-progress', listener);
   },
   uninstallMod: (params) => ipcRenderer.invoke('mod:uninstall', params),
+  uninstallAllMods: (params) => ipcRenderer.invoke('mod:uninstall-all', params),
   toggleDisableMod: (params) => ipcRenderer.invoke('mod:toggle-disable', params),
   scanInstalledMods: (params) => ipcRenderer.invoke('mod:scan-installed', params),
   launchSpt: (params) => ipcRenderer.invoke('spt:launch', params),

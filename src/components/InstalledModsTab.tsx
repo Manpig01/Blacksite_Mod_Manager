@@ -33,6 +33,7 @@ import { TagEditorModal } from './TagEditorModal';
 import { HighlightText } from './HighlightText';
 import { ExportModsModal } from './ExportModsModal';
 import { InstalledModThumbnail } from './InstalledModThumbnail';
+import { BatchModUpdateModal } from './BatchModUpdateModal';
 
 export type InstalledSortField = 'loadOrder' | 'name' | 'date' | 'date-desc' | 'date-asc' | 'category' | 'status' | 'author';
 export type GroupByMode = 'none' | 'category' | 'date';
@@ -40,6 +41,7 @@ export type GroupByMode = 'none' | 'category' | 'date';
 interface InstalledModsTabProps {
   installedMods: InstalledMod[];
   conflicts: ConflictInfo[];
+  sptVersion?: string;
   onToggleMod: (modId: string) => void;
   onUninstallMod: (modId: string) => void;
   onUpdateMod: (mod: InstalledMod) => void;
@@ -91,6 +93,7 @@ const getModFolderPaths = (mod: InstalledMod): string[] => {
 export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
   installedMods,
   conflicts,
+  sptVersion,
   onToggleMod,
   onUninstallMod,
   onUpdateMod,
@@ -143,10 +146,19 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
   // Export mods modal state
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
+  // 1-Click Batch Mod Updater state
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchUpdateMods, setBatchUpdateMods] = useState<InstalledMod[]>([]);
+
   // Active / disabled counts
   const activeCount = installedMods.filter((m) => !m.isDisabled).length;
   const disabledCount = installedMods.filter((m) => m.isDisabled).length;
   const updateCount = installedMods.filter((m) => m.hasUpdate).length;
+
+  const selectedModsWithUpdatesCount = useMemo(
+    () => installedMods.filter((m) => selectedModIds.has(m.id) && m.hasUpdate).length,
+    [installedMods, selectedModIds]
+  );
 
   // Compute all unique tags present across installed mods for filtering
   const allExistingTags = useMemo(() => {
@@ -1237,13 +1249,29 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
 
           <button
             onClick={onCheckUpdates}
-            className="bg-[#EA580C] hover:bg-[#F97316] text-white px-3.5 py-1.5 rounded-md flex items-center gap-1.5 font-medium transition-colors cursor-pointer"
+            className="bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] hover:text-[#EA580C] px-3.5 py-1.5 rounded-md border border-[#2A2F38] flex items-center gap-1.5 font-medium transition-colors cursor-pointer shadow-xs"
             title="Send installed package IDs + versions to sp-mod.com update check"
             type="button"
           >
-            <ArrowUpCircle className="w-3.5 h-3.5" />
+            <RefreshCw className="w-3.5 h-3.5 text-[#EA580C]" />
             <span>Check for Updates</span>
           </button>
+
+          {/* 1-Click Batch Mod Updater Button */}
+          {updateCount > 0 && (
+            <button
+              onClick={() => {
+                setBatchUpdateMods(installedMods.filter((m) => m.hasUpdate));
+                setIsBatchModalOpen(true);
+              }}
+              className="bg-gradient-to-r from-[#EA580C] to-[#F97316] hover:brightness-110 text-white px-3.5 py-1.5 rounded-md flex items-center gap-1.5 font-semibold transition-all cursor-pointer shadow-md animate-pulse"
+              title="1-Click Batch Mod Updater: Update all outdated mods at once"
+              type="button"
+            >
+              <ArrowUpCircle className="w-4 h-4 text-white" />
+              <span>Update All ({updateCount})</span>
+            </button>
+          )}
 
           {/* Export Installed Mods Manifest (JSON / CSV) */}
           <button
@@ -1330,6 +1358,23 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
             </button>
 
             <div className="h-4 w-px bg-[#EA580C]/30 mx-1" />
+
+            {/* Bulk Update Button */}
+            {selectedModsWithUpdatesCount > 0 && (
+              <button
+                onClick={() => {
+                  const toUpdate = installedMods.filter((m) => selectedModIds.has(m.id) && m.hasUpdate);
+                  setBatchUpdateMods(toUpdate);
+                  setIsBatchModalOpen(true);
+                }}
+                className="bg-[#EA580C] hover:bg-[#F97316] text-white px-3 py-1 rounded border border-[#EA580C] flex items-center gap-1.5 font-semibold transition-colors cursor-pointer shadow-xs"
+                type="button"
+                title="Update selected outdated mods"
+              >
+                <ArrowUpCircle className="w-3.5 h-3.5 text-white" />
+                <span>Update Selected ({selectedModsWithUpdatesCount})</span>
+              </button>
+            )}
 
             {/* Bulk Action Buttons */}
             <button
@@ -1813,6 +1858,18 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
         installedMods={installedMods}
         selectedModIds={selectedModIds}
         onShowToast={onShowToast}
+      />
+
+      {/* 1-Click Batch Mod Updater Modal */}
+      <BatchModUpdateModal
+        isOpen={isBatchModalOpen}
+        onClose={() => setIsBatchModalOpen(false)}
+        modsToUpdate={batchUpdateMods}
+        onExecuteUpdateMod={async (mod) => {
+          onUpdateMod(mod);
+        }}
+        onShowToast={onShowToast}
+        sptVersion={sptVersion}
       />
     </div>
   );

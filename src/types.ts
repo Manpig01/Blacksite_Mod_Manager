@@ -95,6 +95,7 @@ export interface InstalledMod {
   installDate: string;
   serverPath?: string; // relative to SPT root, e.g. SPT_Runtime/user/mods/xyz
   clientPath?: string; // relative to SPT root, e.g. BepInEx/plugins/xyz.dll
+  clientPaths?: string[];
   isDisabled: boolean;
   hasUpdate?: boolean;
   latestVersion?: string;

@@ -250,6 +250,15 @@ app.whenReady().then(() => {
     }
   });
 
+  ipcMain.handle('mod:uninstall-all', async (event, params) => {
+    try {
+      return await modInstaller.uninstallAllMods(params);
+    } catch (err) {
+      console.error('mod:uninstall-all error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('mod:toggle-disable', async (event, params) => {
     try {
       return await modInstaller.toggleModDisable(params);
