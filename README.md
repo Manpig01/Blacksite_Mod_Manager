@@ -44,6 +44,7 @@ Head over to the **[Latest GitHub Release](https://github.com/Manpig01/Blacksite
 | Package | File | Description |
 | :--- | :--- | :--- |
 | **Setup Installer** *(Recommended)* | `Blacksite-Mod-Manager-Setup-2.0.0.exe` | Full Windows installer with Start Menu integration, desktop shortcut, and uninstaller. |
+| **Setup Installer (ZIP)** | `Blacksite-Mod-Manager-Setup-2.0.0.zip` | Standalone ZIP archive containing solely `Blacksite-Mod-Manager-Setup-2.0.0.exe` for environments with .exe download restrictions. |
 | **Portable Standalone** | `Blacksite-Mod-Manager-Portable-2.0.0.exe` | Zero-installation executable. Run directly from any folder or USB drive. |
 | **Integrity Checksums** | `SHA256SUMS.txt` | Cryptographic SHA256 hashes for all release artifacts. |
 

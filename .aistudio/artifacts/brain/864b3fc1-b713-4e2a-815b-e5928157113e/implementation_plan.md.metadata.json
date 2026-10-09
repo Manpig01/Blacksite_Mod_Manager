@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to replace all icons and emblems across Blacksite with the exact uploaded octagonal tactical shield patch: featuring the bolted armor plate, hazard stripes, SPT stencil, industrial gear, skull with NVG optics, BLACKSITE orange stencil, and MOD MANAGER rocker banner.",
-  "updatedAt":  "2026-10-09T07:50:15.133508838Z",
+  "summary":  "Implementation plan to bundle Blacksite-Mod-Manager-Setup-2.0.0.exe into a dedicated standalone ZIP archive (Blacksite-Mod-Manager-Setup-2.0.0.zip) in the automated GitHub Actions release workflow, calculate its SHA256 checksum, and publish it as an official release asset.",
+  "updatedAt":  "2026-10-09T09:12:18.398104281Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

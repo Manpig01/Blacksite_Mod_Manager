@@ -47,10 +47,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64
 
+      - name: Create Installer Standalone ZIP Archive
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem -Path release/*Setup*.exe | Select-Object -First 1
+          if ($setupExe) {
+            $zipPath = "release/Blacksite-Mod-Manager-Setup-2.0.0.zip"
+            Write-Host "Creating zip archive containing setup executable: $($setupExe.Name) -> $zipPath"
+            Compress-Archive -Path $setupExe.FullName -DestinationPath $zipPath -Force
+            if (Test-Path $zipPath) {
+              $size = (Get-Item $zipPath).Length
+              Write-Host "Successfully created $zipPath ($size bytes)"
+            } else {
+              Write-Error "Failed to verify $zipPath"
+              exit 1
+            }
+          } else {
+            Write-Error "No Setup executable found in release directory!"
+            exit 1
+          }
+
       - name: Generate Checksums (SHA256)
         shell: pwsh
         run: |
-          Get-ChildItem -Path release/*.exe | ForEach-Object {
+          Get-ChildItem -Path release/*.exe, release/*.zip | ForEach-Object {
             $hash = Get-FileHash -Path $_.FullName -Algorithm SHA256
             "$($hash.Hash)  $($_.Name)" | Out-File -Append -Encoding ascii -FilePath release/SHA256SUMS.txt
           }
@@ -72,10 +92,12 @@ jobs:
             ### 📦 Download Assets
             - **Setup Installer (`Blacksite-Mod-Manager-Setup-2.0.0.exe`)**
               *Recommended for most users. Includes desktop shortcut, Start Menu integration, and clean uninstaller.*
+            - **Setup Installer ZIP Archive (`Blacksite-Mod-Manager-Setup-2.0.0.zip`)**
+              *Standalone ZIP archive containing solely Blacksite-Mod-Manager-Setup-2.0.0.exe. Ideal for network policies, download managers, or environments that restrict direct .exe downloads.*
             - **Portable Standalone (`Blacksite-Mod-Manager-Portable-2.0.0.exe`)**
               *Zero-install standalone binary. Run directly from your SPT folder or external drive.*
             - **`SHA256SUMS.txt`**
-              *Cryptographic integrity hashes for all published binaries.*
+              *Cryptographic integrity hashes for all published binaries and archives.*
 
             ---
 
@@ -98,4 +120,5 @@ jobs:
           generate_release_notes: true
           files: |
             release/*.exe
+            release/*.zip
             release/SHA256SUMS.txt

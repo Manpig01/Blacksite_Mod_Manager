@@ -38,12 +38,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64
 
+      - name: Create Installer Standalone ZIP Archive
+        shell: pwsh
+        run: |
+          $setupExe = Get-ChildItem -Path release/*Setup*.exe | Select-Object -First 1
+          if ($setupExe) {
+            $zipPath = "release/Blacksite-Mod-Manager-Setup-2.0.0.zip"
+            Write-Host "Creating zip archive containing setup executable: $($setupExe.Name) -> $zipPath"
+            Compress-Archive -Path $setupExe.FullName -DestinationPath $zipPath -Force
+            if (Test-Path $zipPath) {
+              $size = (Get-Item $zipPath).Length
+              Write-Host "Successfully created $zipPath ($size bytes)"
+            }
+          }
+
       - name: Upload Windows Binaries Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: blacksite-windows-binaries
           path: |
             release/*.exe
+            release/*.zip
             release/*.blockmap
 
       - name: Publish or Update GitHub Release
@@ -53,7 +68,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v2.0.0-latest
-          name: "Blacksite Mod Manager v2.0.0 - Windows Desktop (.exe)"
+          name: "Blacksite Mod Manager v2.0.0 - Windows Desktop (.exe & .zip)"
           body: |
             ### 🛡️ Blacksite Mod Manager Windows Standalone Release
 
@@ -62,9 +77,11 @@ jobs:
             ---
 
             #### 📦 Available Downloads:
-            - **Setup Installer (`Blacksite-Mod-Manager-Setup-1.8.0.exe`)**
+            - **Setup Installer (`Blacksite-Mod-Manager-Setup-2.0.0.exe`)**
               *Standard Windows installer with Start Menu shortcuts and uninstaller support.*
-            - **Portable Executable (`Blacksite-Mod-Manager-Portable-1.8.0.exe`)**
+            - **Setup Installer ZIP (`Blacksite-Mod-Manager-Setup-2.0.0.zip`)**
+              *Standalone ZIP archive containing solely Blacksite-Mod-Manager-Setup-2.0.0.exe.*
+            - **Portable Executable (`Blacksite-Mod-Manager-Portable-2.0.0.exe`)**
               *Zero-install standalone binary. Run directly from any folder or USB drive.*
 
             ---
@@ -78,3 +95,4 @@ jobs:
           prerelease: false
           files: |
             release/*.exe
+            release/*.zip
