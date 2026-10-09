@@ -52,10 +52,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v1.8.0-latest
-          name: "Blacksite Mod Manager v1.8.0 - Windows Desktop (.exe)"
+          tag_name: v2.0.0-latest
+          name: "Blacksite Mod Manager v2.0.0 - Windows Desktop (.exe)"
           body: |
-            ### 🐉 Blacksite Mod Manager Windows Standalone Release
+            ### 🛡️ Blacksite Mod Manager Windows Standalone Release
 
             Automated build compiled via GitHub Actions for **Windows x64**.
 

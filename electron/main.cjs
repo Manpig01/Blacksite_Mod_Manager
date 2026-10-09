@@ -11,7 +11,8 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 680,
     backgroundColor: '#121418',
-    title: 'Blacksite Mod Manager',
+    title: 'Blacksite Mod Manager - v2.0.0',
+    icon: path.join(__dirname, '../public/app.ico'),
     frame: false, // Frameless window - removes duplicate OS titlebar
     autoHideMenuBar: true,
     webPreferences: {

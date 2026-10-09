@@ -32,10 +32,22 @@ export const Header: React.FC<HeaderProps> = ({
       {/* Title row */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <span className="text-2xl leading-none select-none">🐉</span>
+          <img
+            src="/emblem.svg"
+            alt="Blacksite Patch"
+            className="w-7 h-7 object-contain drop-shadow select-none"
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = '/emblem.png';
+            }}
+          />
           <span className="text-[20px] font-bold text-[#E8EAEE] tracking-tight">Blacksite</span>
           <span className="text-[15px] text-[#9AA3AF] mt-0.5">Mod Manager</span>
-          <div className="bg-[#20252D] rounded px-2 py-0.5 ml-2.5">
+          <div className="bg-[#EA580C]/15 border border-[#EA580C]/35 rounded px-2 py-0.5 ml-2">
+            <span className="text-[11px] text-[#EA580C] font-semibold tracking-wide">
+              v2.0.0
+            </span>
+          </div>
+          <div className="bg-[#20252D] rounded px-2 py-0.5 ml-1">
             <span className="text-[11px] text-[#6B7480] font-medium tracking-wide">
               SPT · sp-mod.com
             </span>

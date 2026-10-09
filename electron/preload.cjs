@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktopBridge', {
   isElectron: true,
   platform: process.platform,
-  version: process.env.npm_package_version || '1.8.0',
+  version: process.env.npm_package_version || '2.0.0',
   cpuCount: require('os').cpus()?.length || 4,
   selectDirectory: (defaultPath) => ipcRenderer.invoke('dialog:select-directory', defaultPath),
   fetchImageDataUrl: (url) => ipcRenderer.invoke('forge:fetch-image-data-url', url),

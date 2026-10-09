@@ -24,7 +24,7 @@ interface WindowsDownloadModalProps {
 export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   isOpen,
   onClose,
-  appVersion = '1.8.0',
+  appVersion = '2.0.0',
 }) => {
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');
   const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager-TEST');

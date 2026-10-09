@@ -1,0 +1,194 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Radial Gradients for Tactical Glow & Shading -->
+    <radialGradient id="patchBg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1A1D24" />
+      <stop offset="70%" stop-color="#0F1115" />
+      <stop offset="100%" stop-color="#08090C" />
+    </radialGradient>
+
+    <radialGradient id="lensGlow1" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FEF08A" stop-opacity="0.9" />
+      <stop offset="40%" stop-color="#F97316" stop-opacity="0.95" />
+      <stop offset="85%" stop-color="#C2410C" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#431407" />
+    </radialGradient>
+
+    <radialGradient id="lensGlow2" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FDE047" stop-opacity="0.8" />
+      <stop offset="45%" stop-color="#EA580C" stop-opacity="0.9" />
+      <stop offset="85%" stop-color="#9A3412" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#270F05" />
+    </radialGradient>
+
+    <linearGradient id="stitchingOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F97316" />
+      <stop offset="50%" stop-color="#EA580C" />
+      <stop offset="100%" stop-color="#C2410C" />
+    </linearGradient>
+
+    <linearGradient id="skullBone" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#E2E8F0" />
+      <stop offset="50%" stop-color="#94A3B8" />
+      <stop offset="100%" stop-color="#475569" />
+    </linearGradient>
+
+    <linearGradient id="helmetMatte" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#2D3440" />
+      <stop offset="60%" stop-color="#1B1F27" />
+      <stop offset="100%" stop-color="#111318" />
+    </linearGradient>
+
+    <filter id="orangeAura" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <!-- Circular Text Paths for Patch Rim -->
+    <!-- Top arc: radius 195 -->
+    <path id="topArcPath" d="M 68,256 A 188,188 0 0,1 444,256" fill="none" />
+    <!-- Bottom arc: radius 195, left-to-right via bottom -->
+    <path id="bottomArcPath" d="M 72,256 A 184,184 0 0,0 440,256" fill="none" />
+  </defs>
+
+  <!-- Outer Morale Patch Stitched Rim (Circular) -->
+  <circle cx="256" cy="256" r="250" fill="#0C0E12" stroke="#EA580C" stroke-width="4" />
+  
+  <!-- Outer Tactical Orange Embroidery Thread (Simulated Stitches) -->
+  <circle cx="256" cy="256" r="244" fill="none" stroke="#F97316" stroke-width="6" stroke-dasharray="8 4" stroke-linecap="round" />
+  <circle cx="256" cy="256" r="236" fill="none" stroke="#9A3412" stroke-width="1.5" />
+
+  <!-- Patch Base Plate -->
+  <circle cx="256" cy="256" r="232" fill="url(#patchBg)" stroke="#23272E" stroke-width="2" />
+  
+  <!-- Subtle Internal Grip Ring -->
+  <circle cx="256" cy="256" r="172" fill="none" stroke="#EA580C" stroke-width="1.5" stroke-opacity="0.35" stroke-dasharray="4 6" />
+
+  <!-- Arced Embroidered Text: BLACKSITE -->
+  <text fill="#F97316" font-family="'JetBrains Mono', 'Segoe UI', monospace, sans-serif" font-weight="900" font-size="34" letter-spacing="9" text-anchor="middle">
+    <textPath href="#topArcPath" startOffset="50%">BLACKSITE</textPath>
+  </text>
+
+  <!-- Flanking Tactical Chevron/Star Insignia -->
+  <g fill="#EA580C">
+    <!-- Left Star -->
+    <polygon points="56,256 61,246 72,246 63,253 66,264 56,258 46,264 49,253 40,246 51,246" transform="translate(14, 0) scale(0.9)" />
+    <!-- Right Star -->
+    <polygon points="456,256 461,246 472,246 463,253 466,264 456,258 446,264 449,253 440,246 451,246" transform="translate(-14, 0) scale(0.9)" />
+  </g>
+
+  <!-- Arced Embroidered Text: MOD MANAGER -->
+  <text fill="#EA580C" font-family="'JetBrains Mono', 'Segoe UI', monospace, sans-serif" font-weight="900" font-size="28" letter-spacing="7" text-anchor="middle">
+    <textPath href="#bottomArcPath" startOffset="50%">MOD MANAGER</textPath>
+  </text>
+
+  <!-- ================= CENTER EMBLEM: TACTICAL OPERATOR SKULL & GPNVG-18 ================= -->
+
+  <!-- FAST Ballistic Tactical Helmet Shell -->
+  <g id="tacticalHelmet">
+    <!-- Helmet Dome -->
+    <path d="M 160 215 C 160 135, 352 135, 352 215 C 352 225, 344 235, 334 238 C 304 246, 208 246, 178 238 C 168 235, 160 225, 160 215 Z" fill="url(#helmetMatte)" stroke="#374151" stroke-width="2.5" />
+    
+    <!-- Helmet Top Ridge / Velcro Patch Area -->
+    <path d="M 210 148 Q 256 142 302 148 L 298 178 Q 256 172 214 178 Z" fill="#171A21" stroke="#EA580C" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="3 3" />
+    <text x="256" y="167" fill="#6B7280" font-family="monospace" font-size="9" font-weight="bold" text-anchor="middle" letter-spacing="2">SPT · 2.0</text>
+
+    <!-- Side ARC Rails (Accessory Rails) -->
+    <!-- Left Rail -->
+    <rect x="150" y="200" width="16" height="28" rx="3" fill="#111318" stroke="#4B5563" stroke-width="1.5" />
+    <line x1="154" y1="208" x2="162" y2="208" stroke="#9CA3AF" stroke-width="1.5" />
+    <line x1="154" y1="218" x2="162" y2="218" stroke="#9CA3AF" stroke-width="1.5" />
+    <!-- Right Rail -->
+    <rect x="346" y="200" width="16" height="28" rx="3" fill="#111318" stroke="#4B5563" stroke-width="1.5" />
+    <line x1="350" y1="208" x2="358" y2="208" stroke="#9CA3AF" stroke-width="1.5" />
+    <line x1="350" y1="218" x2="358" y2="218" stroke="#9CA3AF" stroke-width="1.5" />
+
+    <!-- Wilcox NVG Mount Shroud (Front Center) -->
+    <path d="M 240 186 L 272 186 L 268 212 L 244 212 Z" fill="#1F242D" stroke="#EA580C" stroke-width="1.5" />
+    <circle cx="256" cy="198" r="3" fill="#EA580C" />
+  </g>
+
+  <!-- Skull Head & Jaw Anatomy -->
+  <g id="skullBody">
+    <!-- Skull Cranium / Temples -->
+    <path d="M 180 236 C 172 260, 168 290, 180 320 C 190 345, 206 352, 218 354 L 218 386 C 218 392, 226 398, 236 398 L 276 398 C 286 398, 294 392, 294 386 L 294 354 C 306 352, 322 345, 332 320 C 344 290, 340 260, 332 236 Z" fill="url(#skullBone)" stroke="#1E232B" stroke-width="3" />
+    
+    <!-- Cheekbone Zygomatic Arches -->
+    <path d="M 182 300 Q 206 312 216 338 L 198 340 Q 186 324 182 300 Z" fill="#334155" />
+    <path d="M 330 300 Q 306 312 296 338 L 314 340 Q 326 324 330 300 Z" fill="#334155" />
+
+    <!-- Nasal Cavity (Inverted Heart/Triangle) -->
+    <path d="M 256 318 L 246 342 L 253 346 L 256 336 L 259 346 L 266 342 Z" fill="#0F1115" stroke="#1E232B" stroke-width="1" />
+
+    <!-- Maxilla & Upper Teeth Row -->
+    <rect x="226" y="358" width="60" height="14" rx="2" fill="#1E293B" />
+    <!-- Individual Sharp Teeth -->
+    <rect x="229" y="359" width="8" height="12" rx="1" fill="#F1F5F9" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="239" y="359" width="8" height="12" rx="1" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="248" y="359" width="7" height="13" rx="1" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="257" y="359" width="7" height="13" rx="1" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="265" y="359" width="8" height="12" rx="1" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="275" y="359" width="8" height="12" rx="1" fill="#F1F5F9" stroke="#0F172A" stroke-width="0.8" />
+
+    <!-- Mandible & Lower Teeth Row -->
+    <path d="M 230 376 L 282 376 L 278 392 L 234 392 Z" fill="#1E293B" />
+    <rect x="233" y="375" width="7" height="10" rx="1" fill="#E2E8F0" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="242" y="375" width="7" height="11" rx="1" fill="#F1F5F9" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="251" y="375" width="5" height="11" rx="1" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="256" y="375" width="5" height="11" rx="1" fill="#F8FAFC" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="263" y="375" width="7" height="11" rx="1" fill="#F1F5F9" stroke="#0F172A" stroke-width="0.8" />
+    <rect x="272" y="375" width="7" height="10" rx="1" fill="#E2E8F0" stroke="#0F172A" stroke-width="0.8" />
+  </g>
+
+  <!-- GPNVG-18 QUAD-TUBE NIGHT VISION GOGGLES (GLOWING ORANGE AMBER) -->
+  <g id="gpnvg18">
+    <!-- Bridge & Articulation Arm Mount -->
+    <rect x="248" y="212" width="16" height="24" rx="2" fill="#181B20" stroke="#475569" stroke-width="1.5" />
+    <path d="M 206 230 L 306 230 L 320 242 L 192 242 Z" fill="#111317" stroke="#334155" stroke-width="2" />
+
+    <!-- 4 High-Tech Tube Housings (Outer Left, Inner Left, Inner Right, Outer Right) -->
+    
+    <!-- 1. Outer Left Tube -->
+    <g transform="translate(162, 246) rotate(10 20 20)">
+      <rect x="0" y="0" width="40" height="42" rx="7" fill="#171A21" stroke="#374151" stroke-width="2" />
+      <circle cx="20" cy="21" r="15" fill="#0C0E12" stroke="#EA580C" stroke-width="1.5" />
+      <!-- Glowing Amber Ocular Lens -->
+      <circle cx="20" cy="21" r="12" fill="url(#lensGlow2)" filter="url(#orangeAura)" />
+      <!-- Optical Lens Reflection Arc -->
+      <path d="M 13 15 A 8 8 0 0 1 25 13" fill="none" stroke="#FEF08A" stroke-width="2" stroke-linecap="round" />
+    </g>
+
+    <!-- 2. Inner Left Tube -->
+    <g transform="translate(208, 248) rotate(3 22 22)">
+      <rect x="0" y="0" width="44" height="44" rx="8" fill="#1E232B" stroke="#4B5563" stroke-width="2" />
+      <circle cx="22" cy="22" r="17" fill="#0C0E12" stroke="#F97316" stroke-width="2" />
+      <!-- Glowing Amber Ocular Lens -->
+      <circle cx="22" cy="22" r="14" fill="url(#lensGlow1)" filter="url(#orangeAura)" />
+      <!-- Optical Lens Reflection Arc -->
+      <path d="M 14 16 A 10 10 0 0 1 28 14" fill="none" stroke="#FEF9C3" stroke-width="2.5" stroke-linecap="round" />
+    </g>
+
+    <!-- 3. Inner Right Tube -->
+    <g transform="translate(260, 248) rotate(-3 22 22)">
+      <rect x="0" y="0" width="44" height="44" rx="8" fill="#1E232B" stroke="#4B5563" stroke-width="2" />
+      <circle cx="22" cy="22" r="17" fill="#0C0E12" stroke="#F97316" stroke-width="2" />
+      <!-- Glowing Amber Ocular Lens -->
+      <circle cx="22" cy="22" r="14" fill="url(#lensGlow1)" filter="url(#orangeAura)" />
+      <!-- Optical Lens Reflection Arc -->
+      <path d="M 14 16 A 10 10 0 0 1 28 14" fill="none" stroke="#FEF9C3" stroke-width="2.5" stroke-linecap="round" />
+    </g>
+
+    <!-- 4. Outer Right Tube -->
+    <g transform="translate(310, 246) rotate(-10 20 20)">
+      <rect x="0" y="0" width="40" height="42" rx="7" fill="#171A21" stroke="#374151" stroke-width="2" />
+      <circle cx="20" cy="21" r="15" fill="#0C0E12" stroke="#EA580C" stroke-width="1.5" />
+      <!-- Glowing Amber Ocular Lens -->
+      <circle cx="20" cy="21" r="12" fill="url(#lensGlow2)" filter="url(#orangeAura)" />
+      <!-- Optical Lens Reflection Arc -->
+      <path d="M 13 15 A 8 8 0 0 1 25 13" fill="none" stroke="#FEF08A" stroke-width="2" stroke-linecap="round" />
+    </g>
+
+    <!-- Central Tactical Power Bridge Cable -->
+    <path d="M 190 248 Q 256 242 322 248" fill="none" stroke="#F97316" stroke-width="1.5" stroke-opacity="0.8" />
+  </g>
+</svg>

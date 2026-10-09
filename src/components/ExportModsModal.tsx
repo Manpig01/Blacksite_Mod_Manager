@@ -64,7 +64,7 @@ export const ExportModsModal: React.FC<ExportModsModalProps> = ({
     const data = {
       manifestVersion: '1.0.0',
       exportedAt: new Date().toISOString(),
-      generator: 'Blacksite Mod Manager v1.8.0',
+      generator: 'Blacksite Mod Manager v2.0.0',
       exportScope: scope,
       summary: {
         totalExported: targetMods.length,

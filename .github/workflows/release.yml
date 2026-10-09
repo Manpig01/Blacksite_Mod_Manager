@@ -1,0 +1,101 @@
+name: Public Release (Windows .EXE & Web)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v2.0.0)'
+        required: false
+        default: 'v2.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release Binaries
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        shell: pwsh
+        run: |
+          if (Test-Path package-lock.json) { Remove-Item package-lock.json }
+          npm install --include=optional
+          npm install --no-save @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc @esbuild/win32-x64 @tailwindcss/oxide-win32-x64-msvc
+
+      - name: Validate Codebase & Lint
+        run: npm run lint
+
+      - name: Compile Web Application
+        run: npm run build
+
+      - name: Package Windows Desktop Standalone (.exe)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64
+
+      - name: Generate Checksums (SHA256)
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path release/*.exe | ForEach-Object {
+            $hash = Get-FileHash -Path $_.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($_.Name)" | Out-File -Append -Encoding ascii -FilePath release/SHA256SUMS.txt
+          }
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Create & Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: "Blacksite Mod Manager v2.0.0"
+          tag_name: ${{ github.ref_name || inputs.tag_name }}
+          body: |
+            ## 🛡️ Blacksite Mod Manager — v2.0.0 Public Release
+
+            Official production release of **Blacksite Mod Manager** for **Single Player Tarkov (SPT)** and **Fika**.
+
+            ### 📦 Download Assets
+            - **Setup Installer (`Blacksite-Mod-Manager-Setup-2.0.0.exe`)**
+              *Recommended for most users. Includes desktop shortcut, Start Menu integration, and clean uninstaller.*
+            - **Portable Standalone (`Blacksite-Mod-Manager-Portable-2.0.0.exe`)**
+              *Zero-install standalone binary. Run directly from your SPT folder or external drive.*
+            - **`SHA256SUMS.txt`**
+              *Cryptographic integrity hashes for all published binaries.*
+
+            ---
+
+            ### ⚡ Highlights in v2.0.0
+            - **1-Click Batch Mod Updater**: Automatically checks for outdated mods and updates them in a single queued batch with automatic configuration file preservation.
+            - **Deep Disk Uninstall & Purge**: Complete cleanup of folder-based and standalone BepInEx plugins without leaving orphan DLLs, with strict protection for core SPT system files.
+            - **Real-Time Conflict Detection**: Detects duplicate client DLLs and server package ID collisions with one-click resolution.
+            - **SPT 4.x & Fika Co-op Ready**: Native support for `SPT_Runtime/user/mods` and `BepInEx/plugins`.
+            - **Integrated Server Orchestrator**: Monitors SPT server console output and chains game launcher startup.
+            - **Tactical Dark UI**: High-contrast tactical dark theme with customizable profiles and diagnostic exports.
+
+            ---
+
+            ### 💻 System Requirements
+            - **OS**: Windows 10 / 11 (64-bit)
+            - **SPT Version**: Single Player Tarkov 3.8.x through 4.0.x
+            - **Fika Compatibility**: Full support for Fika Headless and Client plugins
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release/*.exe
+            release/SHA256SUMS.txt

@@ -3,7 +3,7 @@
   "description": "Next-generation mod manager and server orchestrator for Single Player Tarkov",
   "author": "Blacksite Development Team",
   "private": true,
-  "version": "1.8.0",
+  "version": "2.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,7 +11,8 @@
     "build": "tsc -b && vite build",
     "lint": "tsc -b",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
-    "package:win": "tsc -b && vite build && electron-builder --win --x64"
+    "package:win": "tsc -b && vite build && electron-builder --win --x64",
+    "release": "tsc -b && vite build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
     "7zip-bin": "^5.2.0",
@@ -56,6 +57,7 @@
       "**/node_modules/7zip-bin/**/*"
     ],
     "win": {
+      "icon": "public/app.ico",
       "target": [
         {
           "target": "nsis",
