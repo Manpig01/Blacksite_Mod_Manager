@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/emblem.svg" alt="Blacksite Mod Manager Logo" width="160" height="160" />
+<img src="public/emblem.png" alt="Blacksite Mod Manager Logo" width="160" height="160" />
 
 # Blacksite Mod Manager
 

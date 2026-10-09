@@ -5,6 +5,10 @@ const fs = require('fs');
 let mainWindow = null;
 
 function createWindow() {
+  const appIcoPath = path.join(__dirname, '../public/app.ico');
+  const appPngPath = path.join(__dirname, '../public/emblem.png');
+  const windowIcon = process.platform === 'win32' && fs.existsSync(appIcoPath) ? appIcoPath : appPngPath;
+
   mainWindow = new BrowserWindow({
     width: 1360,
     height: 860,
@@ -12,7 +16,7 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#121418',
     title: 'Blacksite Mod Manager - v2.0.0',
-    icon: path.join(__dirname, '../public/app.ico'),
+    icon: windowIcon,
     frame: false, // Frameless window - removes duplicate OS titlebar
     autoHideMenuBar: true,
     webPreferences: {
@@ -22,6 +26,12 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
+
+  if (fs.existsSync(windowIcon)) {
+    try {
+      mainWindow.setIcon(windowIcon);
+    } catch (_) {}
+  }
 
   // Enable dark mode background
   mainWindow.setBackgroundColor('#121418');

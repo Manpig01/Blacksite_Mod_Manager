@@ -33,12 +33,9 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <img
-            src="/emblem.svg"
-            alt="Blacksite Patch"
-            className="w-7 h-7 object-contain drop-shadow select-none"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src = '/emblem.png';
-            }}
+            src="/emblem.png"
+            alt="Blacksite Shield Patch"
+            className="w-8 h-8 object-contain drop-shadow select-none rounded-sm"
           />
           <span className="text-[20px] font-bold text-[#E8EAEE] tracking-tight">Blacksite</span>
           <span className="text-[15px] text-[#9AA3AF] mt-0.5">Mod Manager</span>

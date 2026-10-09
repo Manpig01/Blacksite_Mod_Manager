@@ -64,9 +64,11 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
         {/* Header Bar */}
         <div className="px-5 py-4 border-b border-[#23272E] flex items-center justify-between bg-[#14161B]">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#EA580C]/15 border border-[#EA580C]/30 flex items-center justify-center text-[#EA580C]">
-              <Monitor className="w-5 h-5" />
-            </div>
+            <img
+              src="/emblem.png"
+              alt="Blacksite Shield"
+              className="w-10 h-10 object-contain drop-shadow rounded"
+            />
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-[#E8EAEE] tracking-tight">

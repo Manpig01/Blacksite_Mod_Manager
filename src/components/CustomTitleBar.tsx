@@ -73,12 +73,9 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
       {/* Left branding */}
       <div className="flex items-center gap-2.5 pointer-events-none">
         <img
-          src="/emblem.svg"
+          src="/emblem.png"
           alt="Blacksite Emblem"
-          className="w-[20px] h-[20px] object-contain drop-shadow"
-          onError={(e) => {
-            (e.target as HTMLImageElement).src = '/emblem.png';
-          }}
+          className="w-[22px] h-[22px] object-contain drop-shadow rounded-sm"
         />
         <span className="text-[12.5px] font-semibold text-[#E8EAEE] tracking-tight">
           Blacksite Mod Manager - v2.0.0
