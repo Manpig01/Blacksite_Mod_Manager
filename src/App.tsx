@@ -1519,6 +1519,7 @@ export const App: React.FC = () => {
         isOpen={isDownloadModalOpen}
         onClose={() => setIsDownloadModalOpen(false)}
         appVersion="2.0.0"
+        onShowToast={showToast}
       />
 
       <ExportModsModal

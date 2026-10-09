@@ -15,20 +15,31 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+import { EmblemUploader } from './EmblemUploader';
+
 interface WindowsDownloadModalProps {
   isOpen: boolean;
   onClose: () => void;
   appVersion?: string;
+  onShowToast?: (title: string, message: string, type: 'info' | 'success' | 'warning' | 'error') => void;
 }
 
 export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   isOpen,
   onClose,
   appVersion = '2.0.0',
+  onShowToast,
 }) => {
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');
   const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager-TEST');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
+  const [emblemKey, setEmblemKey] = useState(Date.now());
+
+  useEffect(() => {
+    const handleUpdate = () => setEmblemKey(Date.now());
+    window.addEventListener('emblem-updated', handleUpdate);
+    return () => window.removeEventListener('emblem-updated', handleUpdate);
+  }, []);
 
   // Close on Escape key
   useEffect(() => {
@@ -65,7 +76,7 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
         <div className="px-5 py-4 border-b border-[#23272E] flex items-center justify-between bg-[#14161B]">
           <div className="flex items-center gap-3">
             <img
-              src="/emblem.png"
+              src={`/emblem.png?t=${emblemKey}`}
               alt="Blacksite Shield"
               className="w-10 h-10 object-contain drop-shadow rounded"
             />
@@ -284,6 +295,9 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* Application Icon / Emblem Uploader */}
+              <EmblemUploader onShowToast={onShowToast} />
             </div>
           )}
 

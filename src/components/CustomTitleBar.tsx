@@ -17,6 +17,13 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   onClose,
 }) => {
   const [isMaximized, setIsMaximized] = useState(false);
+  const [emblemKey, setEmblemKey] = useState(Date.now());
+
+  useEffect(() => {
+    const handleUpdate = () => setEmblemKey(Date.now());
+    window.addEventListener('emblem-updated', handleUpdate);
+    return () => window.removeEventListener('emblem-updated', handleUpdate);
+  }, []);
 
   useEffect(() => {
     const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
@@ -73,7 +80,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
       {/* Left branding */}
       <div className="flex items-center gap-2.5 pointer-events-none">
         <img
-          src="/emblem.png"
+          src={`/emblem.png?t=${emblemKey}`}
           alt="Blacksite Emblem"
           className="w-[22px] h-[22px] object-contain drop-shadow rounded-sm"
         />

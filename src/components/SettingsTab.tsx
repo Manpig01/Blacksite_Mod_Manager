@@ -31,6 +31,7 @@ import {
 import { SettingsState, ModProfile, InstalledMod } from '../types';
 import { imageCacheService } from '../services/imageCacheService';
 import { errorLogService, ErrorLogEntry } from '../services/errorLogService';
+import { EmblemUploader } from './EmblemUploader';
 
 interface SettingsTabProps {
   settings: SettingsState;
@@ -233,6 +234,14 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto p-4 max-w-4xl space-y-6">
+      {/* Custom Application Emblem & Taskbar Icon */}
+      <div>
+        <h2 className="text-[15px] font-bold text-[#E8EAEE] mb-2 flex items-center gap-2">
+          <span>Application Branding & Icons</span>
+        </h2>
+        <EmblemUploader onShowToast={onShowToast} />
+      </div>
+
       {/* Appearance & Theme (High-Contrast Light / Dark) */}
       <div>
         <h2 className="text-[15px] font-bold text-[#E8EAEE] mb-2 flex items-center gap-2">

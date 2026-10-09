@@ -83,13 +83,85 @@ function forgeImageProxyPlugin(): Plugin {
     }
   };
 
+}
+
+function emblemUploadPlugin(): Plugin {
   return {
-    name: 'forge-image-proxy',
+    name: 'emblem-upload-handler',
     configureServer(server) {
-      server.middlewares.use(handler);
-    },
-    configurePreviewServer(server) {
-      server.middlewares.use(handler);
+      server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+        if (req.url === '/api/upload-emblem' && req.method === 'POST') {
+          try {
+            const chunks: Buffer[] = [];
+            req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+            req.on('end', async () => {
+              const bodyStr = Buffer.concat(chunks).toString('utf-8');
+              const { dataUrl, imageBase64 } = JSON.parse(bodyStr);
+              const base64Data = (dataUrl || imageBase64 || '').replace(/^data:image\/\w+;base64,/, '');
+              if (!base64Data) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'No image data provided' }));
+                return;
+              }
+
+              const fs = await import('fs');
+              const path = await import('path');
+              const { execSync } = await import('child_process');
+
+              const imageBuffer = Buffer.from(base64Data, 'base64');
+              const emblemPath = path.resolve(__dirname, 'public/emblem.png');
+              const icoPath = path.resolve(__dirname, 'public/app.ico');
+
+              fs.writeFileSync(emblemPath, imageBuffer);
+              try {
+                execSync(`convert ${emblemPath} -define icon:auto-resize=256,128,64,48,32,16 ${icoPath}`);
+              } catch (convErr) {
+                console.warn('ImageMagick convert warning:', convErr);
+              }
+
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ success: true, timestamp: Date.now() }));
+            });
+          } catch (e: any) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: e.message }));
+          }
+          return;
+        }
+
+        // Also check if user uploaded directly to public or uploads with the emblem name
+        if (req.url === '/api/check-uploaded-emblem' && req.method === 'GET') {
+          const fs = await import('fs');
+          const path = await import('path');
+          const { execSync } = await import('child_process');
+
+          const candidates = [
+            path.resolve(__dirname, 'public/Blacksite Mod Manager Emblem.png'),
+            path.resolve(__dirname, 'uploads/Blacksite Mod Manager Emblem.png'),
+            path.resolve(__dirname, 'Blacksite Mod Manager Emblem.png'),
+          ];
+
+          let found = false;
+          for (const cand of candidates) {
+            if (fs.existsSync(cand)) {
+              const emblemPath = path.resolve(__dirname, 'public/emblem.png');
+              const icoPath = path.resolve(__dirname, 'public/app.ico');
+              fs.copyFileSync(cand, emblemPath);
+              try {
+                execSync(`convert ${emblemPath} -define icon:auto-resize=256,128,64,48,32,16 ${icoPath}`);
+              } catch (_) {}
+              found = true;
+              break;
+            }
+          }
+
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ found }));
+          return;
+        }
+
+        next();
+      });
     },
   };
 }
@@ -97,7 +169,7 @@ function forgeImageProxyPlugin(): Plugin {
 // https://vitejs.dev/config/
 export default defineConfig({
   base: './',
-  plugins: [react(), tailwindcss(), forgeImageProxyPlugin()],
+  plugins: [react(), tailwindcss(), forgeImageProxyPlugin(), emblemUploadPlugin()],
   server: {
     host: '0.0.0.0',
     port: 3000,
