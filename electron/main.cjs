@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, dialog, session } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, session, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -136,6 +136,39 @@ app.whenReady().then(() => {
   ipcMain.handle('window:is-maximized', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       return mainWindow.isMaximized();
+    }
+    return false;
+  });
+
+  // Dynamic native window and taskbar icon update
+  ipcMain.handle('app:set-custom-emblem', async (_event, dataUrl) => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed() && dataUrl) {
+        const icon = nativeImage.createFromDataURL(dataUrl);
+        if (!icon.isEmpty()) {
+          mainWindow.setIcon(icon);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not set custom window icon:', e);
+    }
+    return false;
+  });
+
+  ipcMain.handle('app:reset-custom-emblem', async () => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const appIcoPath = path.join(__dirname, '../public/app.ico');
+        const appPngPath = path.join(__dirname, '../public/emblem.png');
+        const iconPath = process.platform === 'win32' && fs.existsSync(appIcoPath) ? appIcoPath : appPngPath;
+        if (fs.existsSync(iconPath)) {
+          mainWindow.setIcon(iconPath);
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not reset window icon:', e);
     }
     return false;
   });

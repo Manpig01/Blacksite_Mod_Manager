@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     ipcRenderer.on('spt:server-exit', listener);
     return () => ipcRenderer.removeListener('spt:server-exit', listener);
   },
+  setCustomEmblem: (dataUrl) => ipcRenderer.invoke('app:set-custom-emblem', dataUrl),
+  resetCustomEmblem: () => ipcRenderer.invoke('app:reset-custom-emblem'),
   windowControl: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),

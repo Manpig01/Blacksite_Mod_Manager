@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Folder, Play, Layers, Download } from 'lucide-react';
 import { SettingsState, ModProfile } from '../types';
+import { useAppEmblem } from '../hooks/useAppEmblem';
 
 interface HeaderProps {
   settings: SettingsState;
@@ -27,29 +28,18 @@ export const Header: React.FC<HeaderProps> = ({
   isLaunching = false,
   isServerRunning = false,
 }) => {
-  const [emblemKey, setEmblemKey] = useState(Date.now());
+  const { emblemSrc, setCustomEmblem } = useAppEmblem();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const handleUpdate = () => setEmblemKey(Date.now());
-    window.addEventListener('emblem-updated', handleUpdate);
-    return () => window.removeEventListener('emblem-updated', handleUpdate);
-  }, []);
-
-  const handleEmblemFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleEmblemFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async () => {
+    reader.onload = () => {
       const dataUrl = reader.result as string;
-      try {
-        await fetch('/api/upload-emblem', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dataUrl }),
-        });
-        window.dispatchEvent(new CustomEvent('emblem-updated'));
-      } catch (_) {}
+      if (dataUrl) {
+        setCustomEmblem(dataUrl);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -72,7 +62,7 @@ export const Header: React.FC<HeaderProps> = ({
             title="Click to apply custom emblem image (.png)"
           >
             <img
-              src={`/emblem.png?t=${emblemKey}`}
+              src={emblemSrc}
               alt="Blacksite Shield Patch"
               className="w-8 h-8 object-contain drop-shadow select-none rounded-sm transition-transform group-hover:scale-105"
             />

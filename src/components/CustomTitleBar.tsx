@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Minus, Square, Copy, X, Sun, Moon } from 'lucide-react';
+import { useAppEmblem } from '../hooks/useAppEmblem';
 
 interface CustomTitleBarProps {
   theme?: 'dark' | 'light';
@@ -17,13 +18,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   onClose,
 }) => {
   const [isMaximized, setIsMaximized] = useState(false);
-  const [emblemKey, setEmblemKey] = useState(Date.now());
-
-  useEffect(() => {
-    const handleUpdate = () => setEmblemKey(Date.now());
-    window.addEventListener('emblem-updated', handleUpdate);
-    return () => window.removeEventListener('emblem-updated', handleUpdate);
-  }, []);
+  const { emblemSrc } = useAppEmblem();
 
   useEffect(() => {
     const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
@@ -80,7 +75,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
       {/* Left branding */}
       <div className="flex items-center gap-2.5 pointer-events-none">
         <img
-          src={`/emblem.png?t=${emblemKey}`}
+          src={emblemSrc}
           alt="Blacksite Emblem"
           className="w-[22px] h-[22px] object-contain drop-shadow rounded-sm"
         />

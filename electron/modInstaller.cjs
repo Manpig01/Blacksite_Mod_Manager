@@ -25,123 +25,224 @@ function getExtractionThreadCount(performanceMode = 'balanced') {
 }
 
 /**
- * Resolves 7za binary path safely inside or outside Electron ASAR and ensures execution permissions
+ * Resolves 7za binary path safely across dev, unpacked ASAR, and portable execution
  */
-function get7zaPath() {
-  let bin = sevenZip.path7za;
-  if (bin && bin.includes('app.asar')) {
-    bin = bin.replace('app.asar', 'app.asar.unpacked');
+function resolve7zaBinary() {
+  const candidates = [];
+  if (sevenZip && sevenZip.path7za) {
+    candidates.push(sevenZip.path7za);
+    if (sevenZip.path7za.includes('app.asar')) {
+      candidates.push(sevenZip.path7za.replace('app.asar', 'app.asar.unpacked'));
+    }
   }
-  if (bin && fs.existsSync(bin) && process.platform !== 'win32') {
-    try {
-      fs.chmodSync(bin, 0o755);
-    } catch {}
+
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
+    candidates.push(path.join(process.resourcesPath, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
+    candidates.push(path.join(process.resourcesPath, '7za.exe'));
   }
-  return bin;
+
+  candidates.push(path.join(__dirname, '../node_modules/7zip-bin/win/x64/7za.exe'));
+  candidates.push(path.join(__dirname, 'node_modules/7zip-bin/win/x64/7za.exe'));
+
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) {
+      if (process.platform !== 'win32') {
+        try { fs.chmodSync(c, 0o755); } catch {}
+      }
+      return c;
+    }
+  }
+  return null;
 }
 
 /**
- * Robust archive extraction using 7za-first with CPU priority tuning and multithreading
+ * Resolves Windows native tar.exe (built into all Windows 10 & 11 installations)
  */
-async function extractArchive(archivePath, destinationDir, performanceMode = 'balanced') {
+function resolveWindowsTar() {
+  if (process.platform !== 'win32') return null;
+  const sysRoot = process.env.SystemRoot || 'C:\\Windows';
+  const cand = path.join(sysRoot, 'System32', 'tar.exe');
+  if (fs.existsSync(cand)) return cand;
+  return 'tar.exe';
+}
+
+/**
+ * Robust non-blocking archive extraction with live percentage progress streaming.
+ * Uses Windows 10/11 native multi-threaded tar.exe or 7za child processes,
+ * ensuring the Electron main thread event loop never locks or freezes the UI.
+ */
+async function extractArchive(archivePath, destinationDir, performanceMode = 'balanced', onProgress = null) {
   fs.mkdirSync(destinationDir, { recursive: true });
 
-  // 1. Try precompiled 7za binary with large buffer, quiet stdout flags, and CPU priority tuning
-  const bin7za = get7zaPath();
-  if (bin7za && fs.existsSync(bin7za)) {
-    try {
-      const threadCount = getExtractionThreadCount(performanceMode);
-      await new Promise((resolve, reject) => {
-        // -bso0 -bsp0 suppresses file-by-file output, avoiding Node.js child_process maxBuffer overflows
-        // -mmt={threadCount} uses multithreading; in Turbo mode all CPU cores are utilized
-        const child = execFile(
-          bin7za,
-          ['x', '-y', `-mmt=${threadCount}`, '-bso0', '-bsp0', `-o${destinationDir}`, archivePath],
-          { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
-          (error) => {
-            if (error) reject(error);
-            else resolve();
-          }
-        );
+  let extractionProgress = 5;
+  let heartbeatTimer = null;
+  const startTime = Date.now();
 
-        // Adjust process priority on OS scheduler: High priority for Turbo Max, BelowNormal for Balanced, Low for Smooth
-        if (child.pid && typeof os.setPriority === 'function') {
-          try {
-            let prio;
-            if (performanceMode === 'turbo') {
-              prio = os.constants?.priority?.PRIORITY_HIGH || -10;
-            } else if (performanceMode === 'smooth') {
-              prio = os.constants?.priority?.PRIORITY_LOW || 19;
-            } else {
-              prio = os.constants?.priority?.PRIORITY_BELOW_NORMAL || 10;
-            }
-            os.setPriority(child.pid, prio);
-          } catch {
-            // Ignore if OS does not allow adjusting priority
-          }
-        }
+  const reportProgress = (pct, customMsg) => {
+    extractionProgress = Math.min(99, Math.max(extractionProgress, Math.round(pct)));
+    if (onProgress) {
+      const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+      onProgress({
+        stage: 'extracting',
+        percent: extractionProgress,
+        downloadSpeed: customMsg || `Extracting (Multi-threaded) ${extractionProgress}% (${elapsedSec}s)...`,
       });
-      return true;
-    } catch (err) {
-      console.warn('7za extraction failed, attempting fallback...', err.message);
     }
-  }
+  };
 
-  // 2. Try AdmZip for standard zip files (skip if file is huge > 1GB to prevent V8 memory crashes)
-  try {
-    const stat = fs.statSync(archivePath);
-    if (stat.size < 1024 * 1024 * 1024) {
-      const zip = new AdmZip(archivePath);
-      zip.extractAllTo(destinationDir, true);
-      return true;
+  // Start active heartbeat timer to guarantee continuous UI updates during multi-second decompression
+  heartbeatTimer = setInterval(() => {
+    const elapsed = (Date.now() - startTime) / 1000;
+    // Smoothly curve progress towards 95% based on elapsed decompression time
+    const targetPct = Math.min(95, 10 + Math.floor(85 * (1 - Math.exp(-elapsed / 8))));
+    if (targetPct > extractionProgress) {
+      reportProgress(targetPct);
     }
-  } catch (zipErr) {
-    console.warn('AdmZip extraction failed, trying system tools...', zipErr.message);
-  }
+  }, 300);
 
-  // 3. Try Windows built-in tar.exe or system tar
+  const cleanupTimer = () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
   try {
-    await new Promise((resolve, reject) => {
-      execFile('tar', ['-xf', archivePath, '-C', destinationDir], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-    return true;
-  } catch (tarErr) {
-    console.warn('System tar failed...', tarErr.message);
-  }
-
-  // 4. Try PowerShell Expand-Archive on Windows
-  if (process.platform === 'win32') {
-    let psZipPath = archivePath;
-    if (!archivePath.toLowerCase().endsWith('.zip')) {
-      const renamedZip = `${archivePath}.zip`;
+    // 1. Try Windows Native System32\tar.exe (Fastest & natively available on Windows 10 & 11)
+    const winTar = resolveWindowsTar();
+    if (winTar) {
       try {
-        fs.copyFileSync(archivePath, renamedZip);
-        psZipPath = renamedZip;
-      } catch {
-        try {
-          fs.renameSync(archivePath, renamedZip);
-          psZipPath = renamedZip;
-        } catch {}
+        await new Promise((resolve, reject) => {
+          execFile(
+            winTar,
+            ['-xf', archivePath, '-C', destinationDir],
+            { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
+            (error) => {
+              if (error) reject(error);
+              else resolve();
+            }
+          );
+        });
+        cleanupTimer();
+        reportProgress(100, 'Extraction complete');
+        return true;
+      } catch (tarErr) {
+        console.warn('[Blacksite Installer] Windows tar.exe failed, falling back to 7za...', tarErr.message);
       }
     }
 
-    await new Promise((resolve, reject) => {
-      const psCmd = `Expand-Archive -LiteralPath '${psZipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
-      execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
-        if (psZipPath !== archivePath) {
-          try { fs.rmSync(psZipPath, { force: true }); } catch {}
-        }
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-    return true;
-  }
+    // 2. Try precompiled 7za binary with multi-threading
+    const bin7za = resolve7zaBinary();
+    if (bin7za) {
+      try {
+        const threadCount = getExtractionThreadCount(performanceMode);
+        await new Promise((resolve, reject) => {
+          const child = execFile(
+            bin7za,
+            ['x', '-y', `-mmt=${threadCount}`, `-o${destinationDir}`, archivePath],
+            { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
+            (error) => {
+              if (error) reject(error);
+              else resolve();
+            }
+          );
 
-  throw new Error('Unable to extract archive with any available decompression engine.');
+          if (child.stdout) {
+            child.stdout.on('data', (chunk) => {
+              const str = chunk.toString();
+              const match = str.match(/(\d+)%/);
+              if (match) {
+                const parsed = parseInt(match[1], 10);
+                if (!isNaN(parsed) && parsed > extractionProgress) {
+                  reportProgress(parsed);
+                }
+              }
+            });
+          }
+        });
+        cleanupTimer();
+        reportProgress(100, 'Extraction complete');
+        return true;
+      } catch (err) {
+        console.warn('[Blacksite Installer] 7za extraction failed, attempting system tar...', err.message);
+      }
+    }
+
+    // 3. Try standard system tar (macOS / Linux)
+    try {
+      await new Promise((resolve, reject) => {
+        execFile('tar', ['-xf', archivePath, '-C', destinationDir], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      cleanupTimer();
+      reportProgress(100, 'Extraction complete');
+      return true;
+    } catch (tarErr) {
+      console.warn('[Blacksite Installer] System tar failed...', tarErr.message);
+    }
+
+    // 4. Try PowerShell Expand-Archive on Windows
+    if (process.platform === 'win32') {
+      let psZipPath = archivePath;
+      if (!archivePath.toLowerCase().endsWith('.zip')) {
+        const renamedZip = `${archivePath}.zip`;
+        try {
+          fs.copyFileSync(archivePath, renamedZip);
+          psZipPath = renamedZip;
+        } catch {
+          try {
+            fs.renameSync(archivePath, renamedZip);
+            psZipPath = renamedZip;
+          } catch {}
+        }
+      }
+
+      try {
+        await new Promise((resolve, reject) => {
+          const psCmd = `Expand-Archive -LiteralPath '${psZipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
+          execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
+            if (psZipPath !== archivePath) {
+              try { fs.rmSync(psZipPath, { force: true }); } catch {}
+            }
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+        cleanupTimer();
+        reportProgress(100, 'Extraction complete');
+        return true;
+      } catch (psErr) {
+        console.warn('[Blacksite Installer] PowerShell Expand-Archive failed...', psErr.message);
+      }
+    }
+
+    // 5. Non-blocking chunked AdmZip fallback (Yields on entries so UI event loop never freezes)
+    const stat = fs.statSync(archivePath);
+    if (stat.size < 1024 * 1024 * 1024) {
+      const zip = new AdmZip(archivePath);
+      const entries = zip.getEntries();
+      const totalEntries = entries.length;
+      for (let i = 0; i < totalEntries; i++) {
+        const entry = entries[i];
+        zip.extractEntryTo(entry, destinationDir, true, true);
+        if (i % 20 === 0) {
+          reportProgress(Math.floor((i / totalEntries) * 95));
+          // Crucial: yield to event loop so IPC and window messages stay responsive
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      }
+      cleanupTimer();
+      reportProgress(100, 'Extraction complete');
+      return true;
+    }
+
+    throw new Error('Unable to extract archive with any available decompression engine.');
+  } finally {
+    cleanupTimer();
+  }
 }
 
 /**
@@ -614,18 +715,18 @@ async function installMod({
     if (onProgress) {
       onProgress({
         stage: 'extracting',
-        percent: 100,
-        downloadSpeed: `Extracting (${performanceMode} mode)...`,
+        percent: 5,
+        downloadSpeed: `Starting decompression (${performanceMode} mode)...`,
       });
     }
-    await extractArchive(tempArchiveFile, tempExtractDir, performanceMode);
+    await extractArchive(tempArchiveFile, tempExtractDir, performanceMode, onProgress);
 
     // Routing stage
     console.log(`[Blacksite Installer] Routing files into SPT: ${sptDirectory}...`);
     if (onProgress) {
       onProgress({
         stage: 'routing',
-        percent: 100,
+        percent: 98,
         downloadSpeed: isSameDriveStaging ? 'Atomic same-drive moving...' : 'Routing to SPT_Runtime...',
       });
     }

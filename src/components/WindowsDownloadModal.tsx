@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAppEmblem } from '../hooks/useAppEmblem';
 import {
   X,
   Download,
@@ -33,13 +34,7 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');
   const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager-TEST');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
-  const [emblemKey, setEmblemKey] = useState(Date.now());
-
-  useEffect(() => {
-    const handleUpdate = () => setEmblemKey(Date.now());
-    window.addEventListener('emblem-updated', handleUpdate);
-    return () => window.removeEventListener('emblem-updated', handleUpdate);
-  }, []);
+  const { emblemSrc } = useAppEmblem();
 
   // Close on Escape key
   useEffect(() => {
@@ -76,7 +71,7 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
         <div className="px-5 py-4 border-b border-[#23272E] flex items-center justify-between bg-[#14161B]">
           <div className="flex items-center gap-3">
             <img
-              src={`/emblem.png?t=${emblemKey}`}
+              src={emblemSrc}
               alt="Blacksite Shield"
               className="w-10 h-10 object-contain drop-shadow rounded"
             />

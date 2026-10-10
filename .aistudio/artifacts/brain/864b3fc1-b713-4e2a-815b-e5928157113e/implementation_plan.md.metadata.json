@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to bundle Blacksite-Mod-Manager-Setup-2.0.0.exe into a dedicated standalone ZIP archive (Blacksite-Mod-Manager-Setup-2.0.0.zip) in the automated GitHub Actions release workflow, calculate its SHA256 checksum, and publish it as an official release asset.",
-  "updatedAt":  "2026-10-09T09:12:18.398104281Z",
+  "summary":  "Implementation plan to fix broken app emblem images in Electron via bundled assets and local storage persistence, and resolve mod extraction UI freezes by executing non-blocking background worker extraction with live progress streaming.",
+  "updatedAt":  "2026-10-09T10:18:06.042354493Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
