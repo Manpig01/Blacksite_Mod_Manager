@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan and completion summary for fixing broken application emblem images across desktop title bar, header, and settings with bundled assets, resilient SVG fallbacks, and local storage offline persistence; and eliminating large mod extraction freezes with 7za multi-threading, live -bsp1 percentage progress parsing, format detection, and non-blocking routing.",
-  "updatedAt":  "2026-10-10T06:17:07.168578979Z",
+  "summary":  "Implementation plan and diagnosis summary resolving HTTP 403: Forbidden errors on external git releases and mirrors (Codeberg, GitHub, GitLab, S3). Identified root cause as Codeberg/Forgejo blocking spoofed Chrome User-Agents without browser TLS fingerprints on redirected requests. Implemented authentic application client identifier (BlacksiteModManager/2.0.0), manual redirect chain resolution, and multi-tier curl fallback.",
+  "updatedAt":  "2026-10-10T06:22:53.205200032Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

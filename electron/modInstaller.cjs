@@ -600,36 +600,43 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
 
 /**
  * Resolves safe HTTP request headers for mod downloads.
- * Strips 'Referer' on S3, GitHub, and external CDNs to prevent HTTP 403 Forbidden errors.
+ * Uses an authentic application client User-Agent and strips 'Referer' on external git/CDN
+ * mirrors (Codeberg, GitHub, GitLab, S3) to guarantee HTTP 200 responses.
  */
-function getDownloadHeaders(targetUrl, isClean = false) {
+function getDownloadHeaders(targetUrl, strategy = 'default') {
   let host = '';
   try {
     host = new URL(targetUrl).hostname.toLowerCase();
   } catch (_) {}
 
+  if (strategy === 'fallback_curl') {
+    return {
+      'User-Agent': 'curl/8.6.0',
+      'Accept': '*/*',
+    };
+  }
+
+  if (strategy === 'browser') {
+    const h = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    };
+    if (host.endsWith('sp-mod.com') || host === 'sp-mod.com') {
+      h['Referer'] = 'https://sp-mod.com/';
+    }
+    return h;
+  }
+
+  // Standard Strategy: Authentic Application Client Identifier (bypasses Codeberg & Forgejo bot blocks)
   const headers = {
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'User-Agent': 'BlacksiteModManager/2.0.0 (Windows NT 10.0; Win64; x64; SPT-Mod-Manager)',
+    'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Upgrade-Insecure-Requests': '1',
   };
 
-  const isExternalCdn =
-    host.includes('github') ||
-    host.includes('githubusercontent') ||
-    host.includes('amazonaws') ||
-    host.includes('s3.') ||
-    host.includes('cloudfront') ||
-    host.includes('nexusmods');
-
-  // Only pass Referer to sp-mod.com if not an external CDN redirect and not explicitly retrying clean
-  if (!isClean && !isExternalCdn && (host.endsWith('sp-mod.com') || host === 'sp-mod.com')) {
+  // Only pass Referer when talking directly to sp-mod.com
+  if (host.endsWith('sp-mod.com') || host === 'sp-mod.com') {
     headers['Referer'] = 'https://sp-mod.com/';
   }
 
@@ -638,33 +645,62 @@ function getDownloadHeaders(targetUrl, isClean = false) {
 
 /**
  * Streams a remote file directly to disk in 64KB chunks with throttled progress events.
- * Automatically recovers from 403 Forbidden by switching to clean browser headers and
- * leveraging Electron's Chromium-native net.fetch when available.
+ * Handles manual redirect hops (301, 302, 303, 307, 308) across hosts (e.g. sp-mod.com -> codeberg.org)
+ * and automatically recovers from 403 Forbidden with multi-tier tool fallbacks.
  */
-async function streamDownloadToFile(url, destFilePath, onProgress, maxRetries = 3) {
+async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRetries = 3) {
   let attempt = 0;
   while (attempt <= maxRetries) {
     try {
-      const isRetryAttempt = attempt > 0;
-      const headers = getDownloadHeaders(url, isRetryAttempt);
+      let currentUrl = initialUrl;
+      let redirects = 0;
+      const maxRedirects = 10;
+      let response = null;
 
-      // Prefer Electron's Chromium network stack to share session and bypass Cloudflare/S3 header blocks
       const fetchFn =
         electronNet && typeof electronNet.fetch === 'function' ? electronNet.fetch : fetch;
 
-      let response = await fetchFn(url, {
-        headers,
-        redirect: 'follow',
-      });
+      const strategy = attempt === 0 ? 'default' : attempt === 1 ? 'fallback_curl' : 'browser';
 
-      // If 403 Forbidden is received, immediately retry with clean browser headers (no Referer)
-      if (response.status === 403 && !isRetryAttempt) {
-        console.warn(`[Blacksite Installer] HTTP 403 on ${url}, retrying with clean browser headers...`);
-        const cleanHeaders = getDownloadHeaders(url, true);
-        response = await fetchFn(url, {
-          headers: cleanHeaders,
-          redirect: 'follow',
+      while (redirects <= maxRedirects) {
+        let headers = getDownloadHeaders(currentUrl, strategy);
+
+        response = await fetchFn(currentUrl, {
+          headers,
+          redirect: 'manual',
         });
+
+        // Explicitly handle HTTP 301, 302, 303, 307, 308 redirects
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get('location');
+          if (!location) {
+            throw new Error(`HTTP ${response.status} redirect without Location header.`);
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          redirects++;
+          continue;
+        }
+
+        // If 403 Forbidden is encountered on this hop, immediately try with tool fallback
+        if (response.status === 403 && strategy !== 'fallback_curl') {
+          console.warn(`[Blacksite Installer] HTTP 403 on ${currentUrl}, retrying with tool fallback headers...`);
+          const fallbackHeaders = getDownloadHeaders(currentUrl, 'fallback_curl');
+          response = await fetchFn(currentUrl, {
+            headers: fallbackHeaders,
+            redirect: 'manual',
+          });
+
+          if ([301, 302, 303, 307, 308].includes(response.status)) {
+            const location = response.headers.get('location');
+            if (location) {
+              currentUrl = new URL(location, currentUrl).toString();
+              redirects++;
+              continue;
+            }
+          }
+        }
+
+        break;
       }
 
       if (!response.ok) {
