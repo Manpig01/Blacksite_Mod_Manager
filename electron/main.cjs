@@ -211,6 +211,21 @@ app.whenReady().then(() => {
     }
   });
 
+  // Highlight specific file in native OS File Explorer
+  ipcMain.handle('shell:show-item-in-folder', async (event, fullPath) => {
+    if (!fullPath || typeof fullPath !== 'string') return false;
+    try {
+      if (fs.existsSync(fullPath)) {
+        shell.showItemInFolder(fullPath);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('shell.showItemInFolder error:', err);
+      return false;
+    }
+  });
+
   // Native directory picker dialog for SPT folder
   ipcMain.handle('dialog:select-directory', async (event, defaultPath) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
@@ -291,6 +306,9 @@ app.whenReady().then(() => {
         error: err.message,
         stack: err.stack,
         statusCode: err.statusCode || 500,
+        canManualExtract: Boolean(err.canManualExtract),
+        archivePath: err.archivePath || null,
+        format: err.format || null,
       };
     }
   });

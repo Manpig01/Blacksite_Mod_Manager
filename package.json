@@ -54,7 +54,14 @@
       "public/**/*",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "electron/bin",
+        "to": "bin"
+      }
+    ],
     "asarUnpack": [
+      "**/electron/bin/**/*",
       "**/node_modules/7zip-bin/**/*"
     ],
     "win": {

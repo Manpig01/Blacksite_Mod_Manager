@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   selectDirectory: (defaultPath) => ipcRenderer.invoke('dialog:select-directory', defaultPath),
   fetchImageDataUrl: (url) => ipcRenderer.invoke('forge:fetch-image-data-url', url),
   openFolder: (targetPath) => ipcRenderer.invoke('shell:open-folder', targetPath),
+  showItemInFolder: (targetPath) => ipcRenderer.invoke('shell:show-item-in-folder', targetPath),
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   installMod: (params) => ipcRenderer.invoke('mod:install', params),
   onInstallProgress: (callback) => {

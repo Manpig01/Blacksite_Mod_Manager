@@ -26,41 +26,123 @@ function getExtractionThreadCount(performanceMode = 'balanced') {
 }
 
 /**
- * Resolves 7za binary path safely across dev, unpacked ASAR, portable execution, and OS installs
+ * Extracts executable binary from inside Electron .asar package to OS temporary directory
+ * if running from a virtual ASAR filesystem where child_process cannot execute directly.
+ */
+function extractBinaryFromAsarIfNeeded(binPath) {
+  if (!binPath) return null;
+  // If not inside an asar archive, and exists on disk, it can be executed directly
+  if (!binPath.includes('.asar') && fs.existsSync(binPath)) {
+    return binPath;
+  }
+
+  // If inside .asar or virtual asar path, extract to temp disk location
+  try {
+    const isWin = process.platform === 'win32';
+    const binName = isWin ? '7za.exe' : '7za';
+    const tempBinDir = path.join(os.tmpdir(), 'blacksite-bin');
+    fs.mkdirSync(tempBinDir, { recursive: true });
+    const targetDiskBin = path.join(tempBinDir, binName);
+
+    // Read buffer (Electron fs reads from inside app.asar seamlessly)
+    if (fs.existsSync(binPath)) {
+      const binBuffer = fs.readFileSync(binPath);
+      if (!fs.existsSync(targetDiskBin) || fs.statSync(targetDiskBin).size !== binBuffer.length) {
+        fs.writeFileSync(targetDiskBin, binBuffer);
+      }
+      if (!isWin) {
+        try { fs.chmodSync(targetDiskBin, 0o755); } catch {}
+      }
+      return targetDiskBin;
+    }
+  } catch (err) {
+    console.warn('[Blacksite Installer] Failed to unpack 7za binary from ASAR to temp directory:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Resolves 7za binary path safely across dev, unpacked ASAR, portable execution, extraResources, and OS installs
  */
 function resolve7zaBinary() {
+  const isWin = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
+  const binSubdir = isWin ? 'win' : isMac ? 'mac' : 'linux';
+  const exeName = isWin ? '7za.exe' : '7za';
+
   const candidates = [];
+
+  // 1. Check unpacked extraResources in packaged Electron (from electron-builder extraResources)
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'bin', binSubdir, exeName));
+    candidates.push(path.join(process.resourcesPath, 'bin', exeName));
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'bin', binSubdir, exeName));
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
+    candidates.push(path.join(process.resourcesPath, exeName));
+  }
+
+  // 2. Check bundled electron/bin relative to __dirname
+  candidates.push(path.join(__dirname, 'bin', binSubdir, exeName));
+  candidates.push(path.join(__dirname, '../electron/bin', binSubdir, exeName));
+  candidates.push(path.join(process.cwd(), 'electron/bin', binSubdir, exeName));
+
+  // 3. Check node_modules/7zip-bin
   if (sevenZip && sevenZip.path7za) {
     candidates.push(sevenZip.path7za);
     if (sevenZip.path7za.includes('app.asar')) {
       candidates.push(sevenZip.path7za.replace('app.asar', 'app.asar.unpacked'));
     }
   }
-
-  if (process.resourcesPath) {
-    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
-    candidates.push(path.join(process.resourcesPath, 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
-    candidates.push(path.join(process.resourcesPath, '7za.exe'));
-  }
-
   candidates.push(path.join(__dirname, '../node_modules/7zip-bin/win/x64/7za.exe'));
   candidates.push(path.join(__dirname, 'node_modules/7zip-bin/win/x64/7za.exe'));
   candidates.push(path.join(process.cwd(), 'node_modules/7zip-bin/win/x64/7za.exe'));
 
-  // Standard Windows system 7-Zip installations if present
-  if (process.platform === 'win32') {
+  // 4. Check already unpacked temp binary
+  const tempBin = path.join(os.tmpdir(), 'blacksite-bin', exeName);
+  if (fs.existsSync(tempBin)) {
+    candidates.unshift(tempBin);
+  }
+
+  // 5. Standard Windows system 7-Zip installations if present
+  if (isWin) {
     candidates.push('C:\\Program Files\\7-Zip\\7z.exe');
     candidates.push('C:\\Program Files (x86)\\7-Zip\\7z.exe');
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', '7-Zip', '7z.exe'));
+    }
   }
 
   for (const c of candidates) {
     if (c && fs.existsSync(c)) {
-      if (process.platform !== 'win32') {
-        try { fs.chmodSync(c, 0o755); } catch {}
+      // If path is inside an ASAR container, extract it to temp disk first
+      if (c.includes('.asar')) {
+        const extracted = extractBinaryFromAsarIfNeeded(c);
+        if (extracted && fs.existsSync(extracted)) {
+          return extracted;
+        }
+      } else {
+        if (!isWin) {
+          try { fs.chmodSync(c, 0o755); } catch {}
+        }
+        return c;
       }
-      return c;
     }
   }
+
+  // 6. Last-ditch check: test if 7za or 7z is globally in system PATH
+  try {
+    const testCmd = isWin ? 'where 7za' : 'which 7za';
+    const out = require('child_process').execSync(testCmd, { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
+    if (out && fs.existsSync(out)) return out;
+  } catch (_) {}
+
+  if (isWin) {
+    try {
+      const out = require('child_process').execSync('where 7z', { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
+      if (out && fs.existsSync(out)) return out;
+    } catch (_) {}
+  }
+
   return null;
 }
 
@@ -257,27 +339,41 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
       }
     }
 
-    // 5. Non-blocking chunked AdmZip fallback (Yields on entries so UI event loop never freezes)
-    const stat = fs.statSync(archivePath);
-    if (stat.size < 1024 * 1024 * 1024) {
-      await new Promise((r) => setImmediate(r));
-      const zip = new AdmZip(archivePath);
-      const entries = zip.getEntries();
-      const totalEntries = entries.length;
-      for (let i = 0; i < totalEntries; i++) {
-        const entry = entries[i];
-        zip.extractEntryTo(entry, destinationDir, true, true);
-        if (i % 10 === 0) {
-          reportProgress(Math.floor((i / totalEntries) * 95));
-          await new Promise((resolve) => setImmediate(resolve));
+    // 5. Non-blocking chunked AdmZip fallback (ZIP only, yields on entries so UI event loop never freezes)
+    if (format === 'zip' || !format) {
+      try {
+        const stat = fs.statSync(archivePath);
+        if (stat.size < 1024 * 1024 * 1024) {
+          await new Promise((r) => setImmediate(r));
+          const zip = new AdmZip(archivePath);
+          const entries = zip.getEntries();
+          const totalEntries = entries.length;
+          for (let i = 0; i < totalEntries; i++) {
+            const entry = entries[i];
+            zip.extractEntryTo(entry, destinationDir, true, true);
+            if (i % 10 === 0) {
+              reportProgress(Math.floor((i / totalEntries) * 95));
+              await new Promise((resolve) => setImmediate(resolve));
+            }
+          }
+          cleanupTimer();
+          reportProgress(100, 'Extraction complete');
+          return true;
         }
+      } catch (admErr) {
+        console.warn('[Blacksite Installer] AdmZip fallback failed...', admErr.message);
       }
-      cleanupTimer();
-      reportProgress(100, 'Extraction complete');
-      return true;
     }
 
-    throw new Error('Unable to extract archive with any available decompression engine.');
+    const stat = fs.existsSync(archivePath) ? fs.statSync(archivePath) : { size: 0 };
+    const err = new Error(
+      `Unable to extract archive with any available decompression engine. Format: ${format || 'unknown'}, Size: ${(stat.size / (1024 * 1024)).toFixed(1)} MB`
+    );
+    err.canManualExtract = true;
+    err.archivePath = archivePath;
+    err.destinationDir = destinationDir;
+    err.format = format;
+    throw err;
   } finally {
     cleanupTimer();
   }
@@ -953,6 +1049,20 @@ async function installMod({
 
     console.log(`[Blacksite Installer] Installation completed successfully!`, routeResult);
     return routeResult;
+  } catch (err) {
+    if (err.canManualExtract && finalArchiveFile && fs.existsSync(finalArchiveFile)) {
+      try {
+        const downloadsDir = path.join(sptDirectory, 'Downloads');
+        fs.mkdirSync(downloadsDir, { recursive: true });
+        const preservedTarget = path.join(downloadsDir, path.basename(finalArchiveFile));
+        fs.copyFileSync(finalArchiveFile, preservedTarget);
+        err.archivePath = preservedTarget;
+        console.log(`[Blacksite Installer] Preserved downloaded archive for manual extraction at: ${preservedTarget}`);
+      } catch (copyErr) {
+        console.warn('[Blacksite Installer] Could not copy archive to Downloads folder:', copyErr.message);
+      }
+    }
+    throw err;
   } finally {
     // Cleanup temporary workspace
     try {

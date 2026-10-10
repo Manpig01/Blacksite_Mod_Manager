@@ -14,6 +14,7 @@ import { DependencyInstallModal } from './components/DependencyInstallModal';
 import { SptLauncherModal } from './components/SptLauncherModal';
 import { WindowsDownloadModal } from './components/WindowsDownloadModal';
 import { ExportModsModal } from './components/ExportModsModal';
+import { ManualExtractModal, ManualExtractInfo } from './components/ManualExtractModal';
 import { StatusBar } from './components/StatusBar';
 import { ToastContainer } from './components/ToastContainer';
 
@@ -146,6 +147,7 @@ export const App: React.FC = () => {
   const [isSptServerRunning, setIsSptServerRunning] = useState(false);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [isExportModsModalOpen, setIsExportModsModalOpen] = useState(false);
+  const [manualExtractInfo, setManualExtractInfo] = useState<ManualExtractInfo | null>(null);
 
   // Queue & Progress
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -442,6 +444,9 @@ export const App: React.FC = () => {
           const errObj: any = new Error(installResult?.error || 'Installation failed during extraction or folder placement.');
           if (installResult?.statusCode) errObj.statusCode = installResult.statusCode;
           if (installResult?.stack) errObj.stack = installResult.stack;
+          if (installResult?.canManualExtract) errObj.canManualExtract = installResult.canManualExtract;
+          if (installResult?.archivePath) errObj.archivePath = installResult.archivePath;
+          if (installResult?.format) errObj.format = installResult.format;
           throw errObj;
         }
 
@@ -518,6 +523,22 @@ export const App: React.FC = () => {
         );
         setStatusText(`Error installing ${modName}`);
         showToast('Installation Failed', err.message || 'Error writing files to SPT directory.', 'error');
+
+        // Automatic Decompression Recovery: Prompt Manual Extraction Modal with archive location
+        if (
+          err.canManualExtract ||
+          err.message?.includes('decompression engine') ||
+          err.message?.toLowerCase().includes('unable to extract archive')
+        ) {
+          setManualExtractInfo({
+            modName,
+            version,
+            archivePath: err.archivePath || null,
+            format: err.format || null,
+            errorMessage: err.message,
+            sourceMod,
+          });
+        }
 
         // Automatic 404 Recovery: Prompt Version Selection Modal with status notice
         if (
@@ -1527,6 +1548,22 @@ export const App: React.FC = () => {
         onClose={() => setIsExportModsModalOpen(false)}
         installedMods={sortedInstalledMods}
         onShowToast={showToast}
+      />
+
+      <ManualExtractModal
+        isOpen={Boolean(manualExtractInfo)}
+        onClose={() => setManualExtractInfo(null)}
+        info={manualExtractInfo}
+        sptDirectory={settings.sptDirectory}
+        onRetry={
+          manualExtractInfo?.sourceMod
+            ? () => {
+                if (manualExtractInfo?.sourceMod) {
+                  handleInstallMod(manualExtractInfo.sourceMod, manualExtractInfo.version);
+                }
+              }
+            : undefined
+        }
       />
 
       {/* Toasts */}
