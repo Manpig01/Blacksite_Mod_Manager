@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan and diagnosis summary resolving HTTP 403: Forbidden errors on external git releases and mirrors (Codeberg, GitHub, GitLab, S3). Identified root cause as Codeberg/Forgejo blocking spoofed Chrome User-Agents without browser TLS fingerprints on redirected requests. Implemented authentic application client identifier (BlacksiteModManager/2.0.0), manual redirect chain resolution, and multi-tier curl fallback.",
-  "updatedAt":  "2026-10-10T06:22:53.205200032Z",
+  "summary":  "Implementation plan and resolution summary for fixing the Electron 'Error: Redirect was cancelled at SimpleURLLoaderWrapper' runtime exception. Decoupled mod archive downloading from Chromium's URL loader (electron.net.fetch) and migrated to pure Node.js native fetch with manual redirect resolution and host header isolation.",
+  "updatedAt":  "2026-10-10T06:34:15.544003090Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

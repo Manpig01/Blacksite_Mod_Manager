@@ -6,13 +6,6 @@ const { Readable } = require('stream');
 const sevenZip = require('7zip-bin');
 const AdmZip = require('adm-zip');
 
-let electronNet = null;
-try {
-  const electron = require('electron');
-  if (electron && electron.net) {
-    electronNet = electron.net;
-  }
-} catch (_) {}
 
 /**
  * Resolves optimal 7-Zip decompression thread count based on performance mode
@@ -657,8 +650,12 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
       const maxRedirects = 10;
       let response = null;
 
+      // Pure Node.js native fetch engine: operates on Node libuv sockets, completely
+      // bypassing Chromium's SimpleURLLoaderWrapper which cancels redirects on manual mode
       const fetchFn =
-        electronNet && typeof electronNet.fetch === 'function' ? electronNet.fetch : fetch;
+        typeof globalThis !== 'undefined' && typeof globalThis.fetch === 'function'
+          ? globalThis.fetch
+          : fetch;
 
       const strategy = attempt === 0 ? 'default' : attempt === 1 ? 'fallback_curl' : 'browser';
 
