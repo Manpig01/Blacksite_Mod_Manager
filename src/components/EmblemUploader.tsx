@@ -11,7 +11,7 @@ export const EmblemUploader: React.FC<EmblemUploaderProps> = ({ onShowToast, com
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { emblemSrc, hasCustomEmblem, setCustomEmblem, resetCustomEmblem } = useAppEmblem();
+  const { emblemSrc, hasCustomEmblem, setCustomEmblem, resetCustomEmblem, defaultEmblem, fallbackEmblem } = useAppEmblem();
 
   const handleFileProcess = async (file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -110,6 +110,13 @@ export const EmblemUploader: React.FC<EmblemUploaderProps> = ({ onShowToast, com
         />
         <img
           src={emblemSrc}
+          onError={(e) => {
+            if (e.currentTarget.src !== defaultEmblem) {
+              e.currentTarget.src = defaultEmblem;
+            } else if (e.currentTarget.src !== fallbackEmblem) {
+              e.currentTarget.src = fallbackEmblem;
+            }
+          }}
           alt="Emblem Preview"
           className="w-10 h-10 object-contain drop-shadow rounded bg-[#101215] p-1 border border-[#2B303C]"
         />
@@ -187,6 +194,13 @@ export const EmblemUploader: React.FC<EmblemUploaderProps> = ({ onShowToast, com
           <div className="relative group mb-2">
             <img
               src={emblemSrc}
+              onError={(e) => {
+                if (e.currentTarget.src !== defaultEmblem) {
+                  e.currentTarget.src = defaultEmblem;
+                } else if (e.currentTarget.src !== fallbackEmblem) {
+                  e.currentTarget.src = fallbackEmblem;
+                }
+              }}
               alt="Active Blacksite Emblem"
               className="w-20 h-20 object-contain drop-shadow rounded transition-transform group-hover:scale-105"
             />

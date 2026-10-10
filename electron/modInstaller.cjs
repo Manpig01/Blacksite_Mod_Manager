@@ -33,7 +33,7 @@ function getExtractionThreadCount(performanceMode = 'balanced') {
 }
 
 /**
- * Resolves 7za binary path safely across dev, unpacked ASAR, and portable execution
+ * Resolves 7za binary path safely across dev, unpacked ASAR, portable execution, and OS installs
  */
 function resolve7zaBinary() {
   const candidates = [];
@@ -52,6 +52,13 @@ function resolve7zaBinary() {
 
   candidates.push(path.join(__dirname, '../node_modules/7zip-bin/win/x64/7za.exe'));
   candidates.push(path.join(__dirname, 'node_modules/7zip-bin/win/x64/7za.exe'));
+  candidates.push(path.join(process.cwd(), 'node_modules/7zip-bin/win/x64/7za.exe'));
+
+  // Standard Windows system 7-Zip installations if present
+  if (process.platform === 'win32') {
+    candidates.push('C:\\Program Files\\7-Zip\\7z.exe');
+    candidates.push('C:\\Program Files (x86)\\7-Zip\\7z.exe');
+  }
 
   for (const c of candidates) {
     if (c && fs.existsSync(c)) {
@@ -61,6 +68,29 @@ function resolve7zaBinary() {
       return c;
     }
   }
+  return null;
+}
+
+/**
+ * Detects archive format from file magic bytes (ZIP, 7Z, RAR, TAR.GZ)
+ */
+function detectArchiveFormat(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(8);
+    fs.readSync(fd, buf, 0, 8, 0);
+    fs.closeSync(fd);
+
+    // 0x50, 0x4B (PK..) -> ZIP
+    if (buf[0] === 0x50 && buf[1] === 0x4b) return 'zip';
+    // 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C -> 7Z
+    if (buf[0] === 0x37 && buf[1] === 0x7a && buf[2] === 0xbc && buf[3] === 0xaf) return '7z';
+    // 0x52, 0x61, 0x72, 0x21 -> RAR
+    if (buf[0] === 0x52 && buf[1] === 0x61 && buf[2] === 0x72 && buf[3] === 0x21) return 'rar';
+    // 0x1F, 0x8B -> GZIP
+    if (buf[0] === 0x1f && buf[1] === 0x8b) return 'tar.gz';
+  } catch (_) {}
   return null;
 }
 
@@ -77,12 +107,14 @@ function resolveWindowsTar() {
 
 /**
  * Robust non-blocking archive extraction with live percentage progress streaming.
- * Uses Windows 10/11 native multi-threaded tar.exe or 7za child processes,
- * ensuring the Electron main thread event loop never locks or freezes the UI.
+ * Prioritizes high-speed multi-threaded 7za with -bsp1 live progress streaming,
+ * falls back cleanly to native Windows bsdtar for ZIP/TAR, PowerShell without file copy lag,
+ * and chunked non-blocking AdmZip, ensuring the Electron UI event loop never freezes.
  */
 async function extractArchive(archivePath, destinationDir, performanceMode = 'balanced', onProgress = null) {
   fs.mkdirSync(destinationDir, { recursive: true });
 
+  const format = detectArchiveFormat(archivePath);
   let extractionProgress = 5;
   let heartbeatTimer = null;
   const startTime = Date.now();
@@ -99,15 +131,14 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
     }
   };
 
-  // Start active heartbeat timer to guarantee continuous UI updates during multi-second decompression
+  // Start active heartbeat timer to guarantee continuous UI updates during decompression
   heartbeatTimer = setInterval(() => {
     const elapsed = (Date.now() - startTime) / 1000;
-    // Smoothly curve progress towards 95% based on elapsed decompression time
-    const targetPct = Math.min(95, 10 + Math.floor(85 * (1 - Math.exp(-elapsed / 8))));
+    const targetPct = Math.min(95, 10 + Math.floor(85 * (1 - Math.exp(-elapsed / 6))));
     if (targetPct > extractionProgress) {
       reportProgress(targetPct);
     }
-  }, 300);
+  }, 250);
 
   const cleanupTimer = () => {
     if (heartbeatTimer) {
@@ -117,38 +148,16 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
   };
 
   try {
-    // 1. Try Windows Native System32\tar.exe (Fastest & natively available on Windows 10 & 11)
-    const winTar = resolveWindowsTar();
-    if (winTar) {
-      try {
-        await new Promise((resolve, reject) => {
-          execFile(
-            winTar,
-            ['-xf', archivePath, '-C', destinationDir],
-            { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
-            (error) => {
-              if (error) reject(error);
-              else resolve();
-            }
-          );
-        });
-        cleanupTimer();
-        reportProgress(100, 'Extraction complete');
-        return true;
-      } catch (tarErr) {
-        console.warn('[Blacksite Installer] Windows tar.exe failed, falling back to 7za...', tarErr.message);
-      }
-    }
-
-    // 2. Try precompiled 7za binary with multi-threading
+    // 1. Try precompiled 7za binary FIRST (Multi-threaded, supports .zip, .7z, .rar, .tar.gz, LZMA, Deflate64)
     const bin7za = resolve7zaBinary();
     if (bin7za) {
       try {
         const threadCount = getExtractionThreadCount(performanceMode);
         await new Promise((resolve, reject) => {
+          // -bsp1: redirects live progress updates to stdout so child.stdout receives real-time XX% progress
           const child = execFile(
             bin7za,
-            ['x', '-y', `-mmt=${threadCount}`, `-o${destinationDir}`, archivePath],
+            ['x', '-y', '-bsp1', `-mmt=${threadCount}`, `-o${destinationDir}`, archivePath],
             { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
             (error) => {
               if (error) reject(error);
@@ -159,11 +168,11 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           if (child.stdout) {
             child.stdout.on('data', (chunk) => {
               const str = chunk.toString();
-              const match = str.match(/(\d+)%/);
-              if (match) {
-                const parsed = parseInt(match[1], 10);
+              const matches = str.matchAll(/(\d+)%/g);
+              for (const m of matches) {
+                const parsed = parseInt(m[1], 10);
                 if (!isNaN(parsed) && parsed > extractionProgress) {
-                  reportProgress(parsed);
+                  reportProgress(parsed, `Extracting (7-Zip Multi-core) ${parsed}%...`);
                 }
               }
             });
@@ -173,48 +182,41 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
         reportProgress(100, 'Extraction complete');
         return true;
       } catch (err) {
-        console.warn('[Blacksite Installer] 7za extraction failed, attempting system tar...', err.message);
+        console.warn('[Blacksite Installer] 7za extraction failed, falling back to system engines...', err.message);
+      }
+    }
+
+    // 2. Try Windows Native System32\tar.exe (bsdtar)
+    // Note: Windows tar.exe natively handles .zip and .tar.gz, but CANNOT extract .7z or .rar!
+    if (format !== '7z' && format !== 'rar') {
+      const winTar = resolveWindowsTar();
+      if (winTar) {
+        try {
+          await new Promise((resolve, reject) => {
+            execFile(
+              winTar,
+              ['-xf', archivePath, '-C', destinationDir],
+              { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
+              (error) => {
+                if (error) reject(error);
+                else resolve();
+              }
+            );
+          });
+          cleanupTimer();
+          reportProgress(100, 'Extraction complete');
+          return true;
+        } catch (tarErr) {
+          console.warn('[Blacksite Installer] Windows tar.exe failed, falling back to next engine...', tarErr.message);
+        }
       }
     }
 
     // 3. Try standard system tar (macOS / Linux)
-    try {
-      await new Promise((resolve, reject) => {
-        execFile('tar', ['-xf', archivePath, '-C', destinationDir], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
-          if (error) reject(error);
-          else resolve();
-        });
-      });
-      cleanupTimer();
-      reportProgress(100, 'Extraction complete');
-      return true;
-    } catch (tarErr) {
-      console.warn('[Blacksite Installer] System tar failed...', tarErr.message);
-    }
-
-    // 4. Try PowerShell Expand-Archive on Windows
-    if (process.platform === 'win32') {
-      let psZipPath = archivePath;
-      if (!archivePath.toLowerCase().endsWith('.zip')) {
-        const renamedZip = `${archivePath}.zip`;
-        try {
-          fs.copyFileSync(archivePath, renamedZip);
-          psZipPath = renamedZip;
-        } catch {
-          try {
-            fs.renameSync(archivePath, renamedZip);
-            psZipPath = renamedZip;
-          } catch {}
-        }
-      }
-
+    if (process.platform !== 'win32' && format !== '7z' && format !== 'rar') {
       try {
         await new Promise((resolve, reject) => {
-          const psCmd = `Expand-Archive -LiteralPath '${psZipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
-          execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
-            if (psZipPath !== archivePath) {
-              try { fs.rmSync(psZipPath, { force: true }); } catch {}
-            }
+          execFile('tar', ['-xf', archivePath, '-C', destinationDir], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
             if (error) reject(error);
             else resolve();
           });
@@ -222,7 +224,42 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
         cleanupTimer();
         reportProgress(100, 'Extraction complete');
         return true;
+      } catch (tarErr) {
+        console.warn('[Blacksite Installer] System tar failed...', tarErr.message);
+      }
+    }
+
+    // 4. Try PowerShell Expand-Archive on Windows (ZIP only)
+    if (process.platform === 'win32' && (format === 'zip' || !format)) {
+      let psZipPath = archivePath;
+      let didRename = false;
+      if (!archivePath.toLowerCase().endsWith('.zip')) {
+        const renamedZip = `${archivePath}.zip`;
+        try {
+          fs.renameSync(archivePath, renamedZip);
+          psZipPath = renamedZip;
+          didRename = true;
+        } catch {}
+      }
+
+      try {
+        await new Promise((resolve, reject) => {
+          const psCmd = `Expand-Archive -LiteralPath '${psZipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
+          execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+        if (didRename) {
+          try { fs.renameSync(psZipPath, archivePath); } catch {}
+        }
+        cleanupTimer();
+        reportProgress(100, 'Extraction complete');
+        return true;
       } catch (psErr) {
+        if (didRename) {
+          try { fs.renameSync(psZipPath, archivePath); } catch {}
+        }
         console.warn('[Blacksite Installer] PowerShell Expand-Archive failed...', psErr.message);
       }
     }
@@ -230,15 +267,15 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
     // 5. Non-blocking chunked AdmZip fallback (Yields on entries so UI event loop never freezes)
     const stat = fs.statSync(archivePath);
     if (stat.size < 1024 * 1024 * 1024) {
+      await new Promise((r) => setImmediate(r));
       const zip = new AdmZip(archivePath);
       const entries = zip.getEntries();
       const totalEntries = entries.length;
       for (let i = 0; i < totalEntries; i++) {
         const entry = entries[i];
         zip.extractEntryTo(entry, destinationDir, true, true);
-        if (i % 20 === 0) {
+        if (i % 10 === 0) {
           reportProgress(Math.floor((i / totalEntries) * 95));
-          // Crucial: yield to event loop so IPC and window messages stay responsive
           await new Promise((resolve) => setImmediate(resolve));
         }
       }
@@ -303,7 +340,7 @@ function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
  * Analyzes extracted archive directories and places server mods into SPT_Runtime/user/mods (or user/mods)
  * and client files strictly into root BepInEx/plugins and BepInEx/patchers without locking Electron event loop.
  */
-async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6', performanceMode = 'balanced') {
+async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6', performanceMode = 'balanced', onProgress = null) {
   const { serverModsDir, serverModsRelDir } = resolveSptPaths(sptDirectory, sptVersion);
   const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
   const targetClientPatchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
@@ -311,6 +348,16 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
   const cleanFallback = (fallbackModName || 'Mod').replace(/[^\w.-]/g, '');
   let detectedServerPath = null;
   let detectedClientPath = null;
+
+  const notifyRoute = (pct, msg) => {
+    if (onProgress) {
+      onProgress({
+        stage: 'routing',
+        percent: pct,
+        downloadSpeed: msg,
+      });
+    }
+  };
 
   // Atomic same-drive move helper: tries instant O(1) fs.promises.rename (1-2ms pointer reassignment)
   // Gracefully falls back to parallel copy if cross-device or locked
@@ -400,6 +447,7 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
 
   // 1. Locate and route SERVER MODS
   // Check for SPT_Runtime/user/mods/* or user/mods/*
+  notifyRoute(92, 'Routing server mod files...');
   const userModsDirs = [
     ...findDirectoriesByName(extractedDir, 'mods').filter((d) => {
       const parent = path.basename(path.dirname(d)).toLowerCase();
@@ -457,6 +505,7 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
   }
 
   // 2. Locate and route CLIENT PLUGINS (BepInEx/plugins)
+  notifyRoute(95, 'Routing BepInEx client plugins...');
   const pluginsDirs = findDirectoriesByName(extractedDir, 'plugins').filter((d) => {
     const parent = path.basename(path.dirname(d)).toLowerCase();
     return parent === 'bepinex';
@@ -473,6 +522,7 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
   }
 
   // 3. Locate and route CLIENT PATCHERS (BepInEx/patchers)
+  notifyRoute(97, 'Routing BepInEx client patchers...');
   const patchersDirs = findDirectoriesByName(extractedDir, 'patchers').filter((d) => {
     const parent = path.basename(path.dirname(d)).toLowerCase();
     return parent === 'bepinex';
@@ -489,6 +539,7 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
   }
 
   // 4. Locate standalone client .dll plugins not wrapped in BepInEx
+  notifyRoute(98, 'Verifying client plugins...');
   if (!detectedClientPath && !detectedServerPath) {
     function findDlls(dir, depth = 0) {
       const dlls = [];
@@ -828,18 +879,36 @@ async function installMod({
         downloadSpeed: `Starting decompression (${performanceMode} mode)...`,
       });
     }
-    await extractArchive(tempArchiveFile, tempExtractDir, performanceMode, onProgress);
+
+    let finalArchiveFile = tempArchiveFile;
+    const detectedFmt = detectArchiveFormat(tempArchiveFile);
+    if (detectedFmt && !tempArchiveFile.toLowerCase().endsWith(`.${detectedFmt}`)) {
+      const properArchiveFile = `${tempArchiveFile}.${detectedFmt}`;
+      try {
+        fs.renameSync(tempArchiveFile, properArchiveFile);
+        finalArchiveFile = properArchiveFile;
+      } catch (_) {}
+    }
+
+    await extractArchive(finalArchiveFile, tempExtractDir, performanceMode, onProgress);
 
     // Routing stage
     console.log(`[Blacksite Installer] Routing files into SPT: ${sptDirectory}...`);
     if (onProgress) {
       onProgress({
         stage: 'routing',
-        percent: 98,
+        percent: 90,
         downloadSpeed: isSameDriveStaging ? 'Atomic same-drive moving...' : 'Routing to SPT_Runtime...',
       });
     }
-    const routeResult = await routeExtractedModToSpt(tempExtractDir, sptDirectory, modName, sptVersion, performanceMode);
+    const routeResult = await routeExtractedModToSpt(
+      tempExtractDir,
+      sptDirectory,
+      modName,
+      sptVersion,
+      performanceMode,
+      onProgress
+    );
 
     if (onProgress) {
       onProgress({

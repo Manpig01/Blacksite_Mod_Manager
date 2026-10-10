@@ -4,10 +4,22 @@ const fs = require('fs');
 
 let mainWindow = null;
 
+function resolveDefaultAppIcon() {
+  const candidates = [
+    path.join(__dirname, '../public/app.ico'),
+    path.join(__dirname, '../public/emblem.png'),
+    path.join(__dirname, '../dist/emblem.png'),
+    path.join(__dirname, 'emblem.png'),
+  ];
+  if (process.platform === 'win32') {
+    const ico = candidates.find((c) => c.endsWith('.ico') && fs.existsSync(c));
+    if (ico) return ico;
+  }
+  return candidates.find((c) => fs.existsSync(c)) || null;
+}
+
 function createWindow() {
-  const appIcoPath = path.join(__dirname, '../public/app.ico');
-  const appPngPath = path.join(__dirname, '../public/emblem.png');
-  const windowIcon = process.platform === 'win32' && fs.existsSync(appIcoPath) ? appIcoPath : appPngPath;
+  const windowIcon = resolveDefaultAppIcon();
 
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -159,10 +171,8 @@ app.whenReady().then(() => {
   ipcMain.handle('app:reset-custom-emblem', async () => {
     try {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        const appIcoPath = path.join(__dirname, '../public/app.ico');
-        const appPngPath = path.join(__dirname, '../public/emblem.png');
-        const iconPath = process.platform === 'win32' && fs.existsSync(appIcoPath) ? appIcoPath : appPngPath;
-        if (fs.existsSync(iconPath)) {
+        const iconPath = resolveDefaultAppIcon();
+        if (iconPath && fs.existsSync(iconPath)) {
           mainWindow.setIcon(iconPath);
           return true;
         }

@@ -18,7 +18,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   onClose,
 }) => {
   const [isMaximized, setIsMaximized] = useState(false);
-  const { emblemSrc } = useAppEmblem();
+  const { emblemSrc, defaultEmblem, fallbackEmblem } = useAppEmblem();
 
   useEffect(() => {
     const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
@@ -76,6 +76,13 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
       <div className="flex items-center gap-2.5 pointer-events-none">
         <img
           src={emblemSrc}
+          onError={(e) => {
+            if (e.currentTarget.src !== defaultEmblem) {
+              e.currentTarget.src = defaultEmblem;
+            } else if (e.currentTarget.src !== fallbackEmblem) {
+              e.currentTarget.src = fallbackEmblem;
+            }
+          }}
           alt="Blacksite Emblem"
           className="w-[22px] h-[22px] object-contain drop-shadow rounded-sm"
         />

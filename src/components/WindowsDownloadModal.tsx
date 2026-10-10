@@ -34,7 +34,7 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');
   const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager-TEST');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
-  const { emblemSrc } = useAppEmblem();
+  const { emblemSrc, defaultEmblem, fallbackEmblem } = useAppEmblem();
 
   // Close on Escape key
   useEffect(() => {
@@ -72,6 +72,13 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
           <div className="flex items-center gap-3">
             <img
               src={emblemSrc}
+              onError={(e) => {
+                if (e.currentTarget.src !== defaultEmblem) {
+                  e.currentTarget.src = defaultEmblem;
+                } else if (e.currentTarget.src !== fallbackEmblem) {
+                  e.currentTarget.src = fallbackEmblem;
+                }
+              }}
               alt="Blacksite Shield"
               className="w-10 h-10 object-contain drop-shadow rounded"
             />

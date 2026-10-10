@@ -51,6 +51,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "public/**/*",
       "package.json"
     ],
     "asarUnpack": [

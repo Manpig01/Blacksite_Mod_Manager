@@ -28,7 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
   isLaunching = false,
   isServerRunning = false,
 }) => {
-  const { emblemSrc, setCustomEmblem } = useAppEmblem();
+  const { emblemSrc, setCustomEmblem, defaultEmblem, fallbackEmblem } = useAppEmblem();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleEmblemFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,6 +63,13 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <img
               src={emblemSrc}
+              onError={(e) => {
+                if (e.currentTarget.src !== defaultEmblem) {
+                  e.currentTarget.src = defaultEmblem;
+                } else if (e.currentTarget.src !== fallbackEmblem) {
+                  e.currentTarget.src = fallbackEmblem;
+                }
+              }}
               alt="Blacksite Shield Patch"
               className="w-8 h-8 object-contain drop-shadow select-none rounded-sm transition-transform group-hover:scale-105"
             />
