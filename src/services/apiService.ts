@@ -193,21 +193,6 @@ export const apiService = {
         seenIds.add(nodeKey);
 
         const targetVerObj = node.latest_compatible_version;
-        const depVer = targetVerObj?.version || '1.0.0';
-        const downloadUrl =
-          targetVerObj?.link ||
-          `https://sp-mod.com/mod/download/${nodeId}/${node.slug || 'mod'}/${depVer}`;
-
-        const isInstalled =
-          installedMap.has(nodeGuid.toLowerCase()) ||
-          installedMap.has(String(nodeId)) ||
-          installedMap.has(node.name.toLowerCase());
-
-        const existingInstalled =
-          installedMap.get(nodeGuid.toLowerCase()) ||
-          installedMap.get(String(nodeId)) ||
-          installedMap.get(node.name.toLowerCase());
-
         const knownMeta =
           getKnownDependencyMeta(nodeGuid) ||
           getKnownDependencyMeta(node.name) ||
@@ -218,6 +203,34 @@ export const apiService = {
             (m.guid && m.guid.toLowerCase() === nodeGuid.toLowerCase()) ||
             m.name.toLowerCase() === node.name.toLowerCase()
         );
+
+        const depVer =
+          targetVerObj?.version ||
+          (node as any).version ||
+          knownMeta?.version ||
+          fixtureMatch?.versions?.[0]?.version ||
+          '1.0.0';
+
+        let downloadUrl: string | undefined = targetVerObj?.link || undefined;
+        if (!downloadUrl && (node as any).versions && Array.isArray((node as any).versions) && (node as any).versions.length > 0) {
+          downloadUrl = (node as any).versions[0].link || undefined;
+        }
+        if (!downloadUrl && fixtureMatch && fixtureMatch.versions && fixtureMatch.versions.length > 0) {
+          downloadUrl = fixtureMatch.versions[0].link || undefined;
+        }
+        if (!downloadUrl) {
+          downloadUrl = `https://sp-mod.com/mod/download/${nodeId}/${node.slug || 'mod'}/${depVer}`;
+        }
+
+        const isInstalled =
+          installedMap.has(nodeGuid.toLowerCase()) ||
+          installedMap.has(String(nodeId)) ||
+          installedMap.has(node.name.toLowerCase());
+
+        const existingInstalled =
+          installedMap.get(nodeGuid.toLowerCase()) ||
+          installedMap.get(String(nodeId)) ||
+          installedMap.get(node.name.toLowerCase());
 
         const thumbnail =
           (node as any).thumbnail ||

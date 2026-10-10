@@ -6,6 +6,14 @@ const { Readable } = require('stream');
 const sevenZip = require('7zip-bin');
 const AdmZip = require('adm-zip');
 
+let electronNet = null;
+try {
+  const electron = require('electron');
+  if (electron && electron.net) {
+    electronNet = electron.net;
+  }
+} catch (_) {}
+
 /**
  * Resolves optimal 7-Zip decompression thread count based on performance mode
  * - 'balanced' (default): os.cpus().length - 2 (reserves 2 cores for Windows OS/compositor/mouse)
@@ -540,25 +548,78 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
 }
 
 /**
- * Streams a remote file directly to disk in 64KB chunks with throttled progress events
+ * Resolves safe HTTP request headers for mod downloads.
+ * Strips 'Referer' on S3, GitHub, and external CDNs to prevent HTTP 403 Forbidden errors.
  */
-async function streamDownloadToFile(url, destFilePath, onProgress, maxRetries = 2) {
+function getDownloadHeaders(targetUrl, isClean = false) {
+  let host = '';
+  try {
+    host = new URL(targetUrl).hostname.toLowerCase();
+  } catch (_) {}
+
+  const headers = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+  };
+
+  const isExternalCdn =
+    host.includes('github') ||
+    host.includes('githubusercontent') ||
+    host.includes('amazonaws') ||
+    host.includes('s3.') ||
+    host.includes('cloudfront') ||
+    host.includes('nexusmods');
+
+  // Only pass Referer to sp-mod.com if not an external CDN redirect and not explicitly retrying clean
+  if (!isClean && !isExternalCdn && (host.endsWith('sp-mod.com') || host === 'sp-mod.com')) {
+    headers['Referer'] = 'https://sp-mod.com/';
+  }
+
+  return headers;
+}
+
+/**
+ * Streams a remote file directly to disk in 64KB chunks with throttled progress events.
+ * Automatically recovers from 403 Forbidden by switching to clean browser headers and
+ * leveraging Electron's Chromium-native net.fetch when available.
+ */
+async function streamDownloadToFile(url, destFilePath, onProgress, maxRetries = 3) {
   let attempt = 0;
   while (attempt <= maxRetries) {
     try {
-      const response = await fetch(url, {
-        headers: {
-          'Referer': 'https://sp-mod.com/',
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': '*/*',
-        },
+      const isRetryAttempt = attempt > 0;
+      const headers = getDownloadHeaders(url, isRetryAttempt);
+
+      // Prefer Electron's Chromium network stack to share session and bypass Cloudflare/S3 header blocks
+      const fetchFn =
+        electronNet && typeof electronNet.fetch === 'function' ? electronNet.fetch : fetch;
+
+      let response = await fetchFn(url, {
+        headers,
+        redirect: 'follow',
       });
+
+      // If 403 Forbidden is received, immediately retry with clean browser headers (no Referer)
+      if (response.status === 403 && !isRetryAttempt) {
+        console.warn(`[Blacksite Installer] HTTP 403 on ${url}, retrying with clean browser headers...`);
+        const cleanHeaders = getDownloadHeaders(url, true);
+        response = await fetchFn(url, {
+          headers: cleanHeaders,
+          redirect: 'follow',
+        });
+      }
 
       if (!response.ok) {
         const httpErr = new Error(
           `Download failed with HTTP status ${response.status}: ${
-            response.statusText || (response.status === 404 ? 'Not Found' : 'Download Error')
+            response.statusText || (response.status === 404 ? 'Not Found' : response.status === 403 ? 'Forbidden' : 'Download Error')
           }`
         );
         httpErr.statusCode = response.status;
@@ -708,6 +769,54 @@ async function installMod({
       fs.writeFileSync(tempArchiveFile, Buffer.from(archiveBase64, 'base64'));
     } else {
       throw new Error('Neither downloadUrl nor archiveBase64 was provided.');
+    }
+
+    // Check if downloaded payload is directly a standalone Windows DLL (e.g. BepInEx plugin)
+    let isStandaloneDll = false;
+    if (archiveFileName && archiveFileName.toLowerCase().endsWith('.dll')) {
+      isStandaloneDll = true;
+    } else if (fs.existsSync(tempArchiveFile)) {
+      try {
+        const fd = fs.openSync(tempArchiveFile, 'r');
+        const buffer = Buffer.alloc(4);
+        fs.readSync(fd, buffer, 0, 4, 0);
+        fs.closeSync(fd);
+        // 'MZ' header (0x4D, 0x5A) indicating Windows executable/DLL, not zip (0x50, 0x4B)
+        if (buffer[0] === 0x4d && buffer[1] === 0x5a) {
+          isStandaloneDll = true;
+        }
+      } catch (_) {}
+    }
+
+    if (isStandaloneDll) {
+      console.log(`[Blacksite Installer] Detected standalone client DLL plugin: ${modName}`);
+      const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
+      fs.mkdirSync(targetClientPluginsDir, { recursive: true });
+
+      const cleanDllName =
+        archiveFileName && archiveFileName.toLowerCase().endsWith('.dll')
+          ? path.basename(archiveFileName)
+          : `${(modName || 'Plugin').replace(/[^\w.-]/g, '')}.dll`;
+
+      const destDllPath = path.join(targetClientPluginsDir, cleanDllName);
+      fs.copyFileSync(tempArchiveFile, destDllPath);
+
+      if (onProgress) {
+        onProgress({
+          stage: 'installed',
+          percent: 100,
+          downloadSpeed: 'Complete',
+        });
+      }
+
+      const routeResult = {
+        success: true,
+        serverPath: null,
+        clientPath: `BepInEx/plugins/${cleanDllName}`,
+        kind: 'Client',
+      };
+      console.log(`[Blacksite Installer] Standalone DLL placed into BepInEx/plugins:`, routeResult);
+      return routeResult;
     }
 
     // Extraction stage
