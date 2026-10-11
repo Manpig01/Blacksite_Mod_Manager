@@ -130,12 +130,23 @@ function resolve7zaBinary() {
   candidates.push(path.join(__dirname, 'node_modules/7zip-bin/win/x64/7za.exe'));
   candidates.push(path.join(process.cwd(), 'node_modules/7zip-bin/win/x64/7za.exe'));
 
-  // 6. Standard Windows system 7-Zip installations if present
+  // 6. Check DragonDen-style tools/7zip directory (relative to app directory, cwd, and root)
+  candidates.push(path.join(__dirname, '..', 'tools', '7zip', 'win', '7za.exe'));
+  candidates.push(path.join(__dirname, 'tools', '7zip', 'win', '7za.exe'));
+  candidates.push(path.join(process.cwd(), 'tools', '7zip', 'win', '7za.exe'));
+  candidates.push(path.join(process.cwd(), 'tools', '7zip', '7za.exe'));
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'tools', '7zip', 'win', '7za.exe'));
+    candidates.push(path.join(process.resourcesPath, 'tools', '7zip', '7za.exe'));
+  }
+
+  // 7. Standard Windows system 7-Zip installations if present
   if (isWin) {
     candidates.push('C:\\Program Files\\7-Zip\\7z.exe');
     candidates.push('C:\\Program Files (x86)\\7-Zip\\7z.exe');
     candidates.push('C:\\ProgramData\\chocolatey\\bin\\7z.exe');
     candidates.push('C:\\tools\\7z\\7z.exe');
+    candidates.push('C:\\tools\\7zip\\win\\7za.exe');
     if (process.env.LOCALAPPDATA) {
       candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', '7-Zip', '7z.exe'));
     }
@@ -313,6 +324,7 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
 
   try {
     // 1. Try precompiled 7za binary FIRST (Multi-threaded, supports .zip, .7z, .rar, .tar.gz, LZMA, Deflate64)
+    // Modeled with DragonDen-ModManager flags (-aoa overwrite all, -spf preserve full paths, -y assume yes)
     let bin7za = resolve7zaBinary();
     if (!bin7za && (format === '7z' || format === 'rar' || !format)) {
       bin7za = await ensure7zaBinary(onProgress);
@@ -322,10 +334,11 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
       try {
         const threadCount = getExtractionThreadCount(performanceMode);
         await new Promise((resolve, reject) => {
-          // -bsp1: redirects live progress updates to stdout so child.stdout receives real-time XX% progress
+          // DragonDen flags: 'x', archivePath, '-y', '-aoa', '-spf', `-o${destinationDir}`
+          // Plus Blacksite multi-threading and live progress capture:
           const child = execFile(
             bin7za,
-            ['x', '-y', '-bsp1', `-mmt=${threadCount}`, `-o${destinationDir}`, archivePath],
+            ['x', archivePath, '-y', '-aoa', '-spf', `-o${destinationDir}`, '-bsp1', `-mmt=${threadCount}`],
             { maxBuffer: 500 * 1024 * 1024, windowsHide: true },
             (error, stdout, stderr) => {
               if (error) {
