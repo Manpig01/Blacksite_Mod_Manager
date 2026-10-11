@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for integrating the official Forge Addons catalog into a dedicated top navigation tab in Blacksite Mod Manager, complete with search, parent mod dependency verification, and 1-click desktop installation.",
-  "updatedAt":  "2026-10-11T08:50:33.595638728Z",
+  "summary":  "Comprehensive implementation plan to fix decompression failures, TLS fetch errors, and CDN 404 errors across the Electron bridge and React UI. Includes runtime 7-Zip auto-provisioning, resilient HTTPS fallback for broken server TLS, automatic Forge URL recovery with Version Picker for 404s, and fixing sourceMod tracking in the installation queue.",
+  "updatedAt":  "2026-10-11T10:21:06.050152379Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

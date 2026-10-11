@@ -431,6 +431,8 @@ export const App: React.FC = () => {
       totalBytes,
       downloadSpeed: 'Initiating...',
       archiveName: archiveFileName || `${targetGuid}-${version}.archive`,
+      downloadUrl,
+      sourceMod,
     };
 
     setQueue((prev) => [newQueueItem, ...prev]);
@@ -457,11 +459,13 @@ export const App: React.FC = () => {
 
         if (!installResult || !installResult.success) {
           const errObj: any = new Error(installResult?.error || 'Installation failed during extraction or folder placement.');
+          if (installResult?.errorCode) errObj.code = installResult.errorCode;
           if (installResult?.statusCode) errObj.statusCode = installResult.statusCode;
           if (installResult?.stack) errObj.stack = installResult.stack;
           if (installResult?.canManualExtract) errObj.canManualExtract = installResult.canManualExtract;
           if (installResult?.archivePath) errObj.archivePath = installResult.archivePath;
           if (installResult?.format) errObj.format = installResult.format;
+          if (installResult?.destinationDir) errObj.destinationDir = installResult.destinationDir;
           throw errObj;
         }
 
@@ -539,9 +543,44 @@ export const App: React.FC = () => {
         setStatusText(`Error installing ${modName}`);
         showToast('Installation Failed', err.message || 'Error writing files to SPT directory.', 'error');
 
+        // Resolve or construct target mod metadata for error recovery flows
+        const resolvedMod: Mod = sourceMod || (modId ? {
+          id: modId,
+          name: modName,
+          slug: modName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          owner: { name: author || 'Community Author' },
+          thumbnail: thumbnail || '',
+          teaser: extraMeta?.teaser || '',
+          downloads: 0,
+          versions: [
+            {
+              id: Date.now(),
+              version: version,
+              link: downloadUrl || '',
+              spt_version: settings.sptVersion,
+            } as any,
+          ],
+        } as Mod : {
+          id: Date.now(),
+          name: modName,
+          slug: modName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          owner: { name: author || 'Community Author' },
+          thumbnail: thumbnail || '',
+          downloads: 0,
+          versions: [
+            {
+              id: Date.now(),
+              version: version,
+              link: downloadUrl || '',
+              spt_version: settings.sptVersion,
+            } as any,
+          ],
+        } as Mod);
+
         // Automatic Decompression Recovery: Prompt Manual Extraction Modal with archive location
         if (
           err.canManualExtract ||
+          err.code === 'ERR_EXTRACTION_FAILED' ||
           err.message?.includes('decompression engine') ||
           err.message?.toLowerCase().includes('unable to extract archive')
         ) {
@@ -551,22 +590,31 @@ export const App: React.FC = () => {
             archivePath: err.archivePath || null,
             format: err.format || null,
             errorMessage: err.message,
-            sourceMod,
+            sourceMod: resolvedMod,
           });
+          showToast(
+            'Decompression Recovery',
+            `Archive could not be unpacked automatically. Manual extraction dialog opened.`,
+            'warning'
+          );
         }
 
         // Automatic 404 Recovery: Prompt Version Selection Modal with status notice
         if (
+          err.statusCode === 404 ||
+          err.code === 'ERR_NOT_FOUND_404' ||
           err.message?.includes('404') ||
-          err.message?.toLowerCase().includes('not found') ||
-          err.statusCode === 404
+          err.message?.toLowerCase().includes('not found')
         ) {
-          if (sourceMod) {
-            setVersionRecoveryNotice(
-              `The download link for ${modName} v${version} returned HTTP 404 Not Found. Please select another release below or download directly from Forge.`
-            );
-            setSelectedModForVersions(sourceMod);
-          }
+          setVersionRecoveryNotice(
+            `The download link for ${modName} v${version} returned HTTP 404 Not Found. This build may have been retired or moved by its author. Please select an active release below.`
+          );
+          setSelectedModForVersions(resolvedMod);
+          showToast(
+            'Download Retired (404)',
+            `Link for ${modName} v${version} returned 404. Select an alternate release.`,
+            'warning'
+          );
         }
         return;
       }
@@ -770,7 +818,7 @@ export const App: React.FC = () => {
       downloadLink,
       undefined,
       undefined,
-      undefined,
+      mod,
       {
         ...mod,
         sptVersion: activeSpt,
@@ -819,9 +867,23 @@ export const App: React.FC = () => {
       const categoryTitle = dep.categoryTitle || known?.categoryTitle || (kind === 'Server' ? 'Overhauls' : 'Tools');
       const teaser = dep.teaser || known?.teaser || '';
 
-      if (thumbnail) {
-        imageCacheService.fetchAndCache(thumbnail).catch(() => {});
-      }
+      const depModObj: Mod = (dep as any).sourceMod || {
+        id: dep.id || Date.now(),
+        name: dep.name,
+        slug: dep.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        owner: { name: author },
+        thumbnail,
+        teaser,
+        downloads: 0,
+        versions: [
+          {
+            id: Date.now(),
+            version: dep.version,
+            link: dep.downloadUrl || '',
+            spt_version: settings.sptVersion,
+          } as any,
+        ],
+      } as Mod;
 
       await queueInstall(
         dep.name,
@@ -833,7 +895,7 @@ export const App: React.FC = () => {
         dep.downloadUrl,
         undefined,
         undefined,
-        undefined,
+        depModObj,
         {
           kind,
           categoryTitle,
@@ -898,6 +960,24 @@ export const App: React.FC = () => {
     const downloadUrl = version.link || `https://sp-mod.com/addon/download/${addon.id}/${addon.slug}/${version.version}`;
     const targetGuid = `addon.${addon.slug || addon.name.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
 
+    const addonModObj: Mod = {
+      id: addon.id,
+      name: addon.name,
+      slug: addon.slug || addon.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      owner: { name: addon.authors?.[0]?.name || 'Addon Author' },
+      thumbnail: addon.thumbnail || addon.mod?.thumbnail || '',
+      teaser: addon.teaser || addon.description || `Addon for ${addon.mod?.name || 'SPT'}`,
+      downloads: addon.downloads || 0,
+      versions: [
+        {
+          id: version.id,
+          version: version.version,
+          link: downloadUrl,
+          spt_version: settings.sptVersion,
+        } as any,
+      ],
+    } as any;
+
     await queueInstall(
       addon.name,
       addon.authors?.[0]?.name || 'Addon Author',
@@ -908,7 +988,7 @@ export const App: React.FC = () => {
       downloadUrl,
       undefined,
       undefined,
-      undefined,
+      addonModObj,
       {
         id: targetGuid,
         name: addon.name,
@@ -1665,7 +1745,18 @@ export const App: React.FC = () => {
         onRetryItem={(id) => {
           const item = queue.find((q) => q.id === id);
           if (item) {
-            queueInstall(item.modName, item.author, item.version, item.thumbnail, undefined, item.modId);
+            queueInstall(
+              item.modName,
+              item.author,
+              item.version,
+              item.thumbnail,
+              undefined,
+              item.modId,
+              item.downloadUrl,
+              undefined,
+              item.archiveName,
+              item.sourceMod
+            );
           }
         }}
         onClearCompleted={() =>

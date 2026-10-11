@@ -149,6 +149,8 @@ export interface QueueItem {
   errorMessage?: string;
   archiveName?: string;
   targetFolder?: string;
+  downloadUrl?: string;
+  sourceMod?: any;
 }
 
 export interface ModProfile {

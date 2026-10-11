@@ -83,8 +83,21 @@ export const ManualExtractModal: React.FC<ManualExtractModalProps> = ({
               <div className="font-semibold text-zinc-100 text-base">{info.modName}</div>
               <div className="text-xs text-zinc-400 mt-0.5">Version: v{info.version}</div>
             </div>
-            <div className="px-2.5 py-1 text-[11px] font-mono font-bold uppercase rounded bg-amber-950/40 text-amber-300 border border-amber-500/30">
-              {formatBadge} ARCHIVE
+            <div className="flex items-center gap-2">
+              {bridge?.openExternal && (
+                <button
+                  type="button"
+                  onClick={() => bridge.openExternal('https://www.7-zip.org/')}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700/50 rounded transition-colors"
+                  title="Download 7-Zip for Windows"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  Get 7-Zip
+                </button>
+              )}
+              <div className="px-2.5 py-1 text-[11px] font-mono font-bold uppercase rounded bg-amber-950/40 text-amber-300 border border-amber-500/30">
+                {formatBadge} ARCHIVE
+              </div>
             </div>
           </div>
 

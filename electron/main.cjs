@@ -304,11 +304,14 @@ app.whenReady().then(() => {
       return {
         success: false,
         error: err.message,
+        errorCode: err.code || (err.statusCode === 404 ? 'ERR_NOT_FOUND_404' : err.canManualExtract ? 'ERR_EXTRACTION_FAILED' : 'ERR_INSTALL_FAILED'),
         stack: err.stack,
-        statusCode: err.statusCode || 500,
-        canManualExtract: Boolean(err.canManualExtract),
+        statusCode: err.statusCode || (err.code === 'ERR_NOT_FOUND_404' ? 404 : 500),
+        canManualExtract: Boolean(err.canManualExtract || err.code === 'ERR_EXTRACTION_FAILED'),
         archivePath: err.archivePath || null,
+        destinationDir: err.destinationDir || null,
         format: err.format || null,
+        archiveSizeMb: err.archiveSizeMb || null,
       };
     }
   });

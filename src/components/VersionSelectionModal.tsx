@@ -41,7 +41,20 @@ export const VersionSelectionModal: React.FC<VersionSelectionModalProps> = ({
     apiService
       .getModVersions(mod.id)
       .then((res) => {
-        setVersions(sortModVersionsByMostRecent(res));
+        if (res && res.length > 0) {
+          setVersions(sortModVersionsByMostRecent(res));
+        } else if (mod.versions && mod.versions.length > 0) {
+          setVersions(sortModVersionsByMostRecent(mod.versions));
+        } else {
+          setVersions([]);
+        }
+      })
+      .catch(() => {
+        if (mod.versions && mod.versions.length > 0) {
+          setVersions(sortModVersionsByMostRecent(mod.versions));
+        } else {
+          setVersions([]);
+        }
       })
       .finally(() => setLoading(false));
   }, [mod]);

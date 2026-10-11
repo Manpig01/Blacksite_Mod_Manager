@@ -3,9 +3,32 @@ const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
 const { Readable } = require('stream');
+const https = require('https');
+const http = require('http');
 const sevenZip = require('7zip-bin');
 const AdmZip = require('adm-zip');
 
+let electronApp = null;
+try {
+  const electron = require('electron');
+  electronApp = electron.app;
+} catch (_) {}
+
+/**
+ * Resolves persistent application user data directory
+ */
+function getUserDataDir() {
+  if (electronApp && typeof electronApp.getPath === 'function') {
+    try {
+      return electronApp.getPath('userData');
+    } catch (_) {}
+  }
+  const home = os.homedir();
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Blacksite Mod Manager');
+  }
+  return path.join(home, '.config', 'blacksite-mod-manager');
+}
 
 /**
  * Resolves optimal 7-Zip decompression thread count based on performance mode
@@ -72,21 +95,31 @@ function resolve7zaBinary() {
 
   const candidates = [];
 
-  // 1. Check unpacked extraResources in packaged Electron (from electron-builder extraResources)
+  // 1. Persistent cached binary in app userData/bin
+  const userDataBin = path.join(getUserDataDir(), 'bin', exeName);
+  candidates.push(userDataBin);
+
+  // 2. Temp directory binary
+  const tempBin = path.join(os.tmpdir(), 'blacksite-bin', exeName);
+  candidates.push(tempBin);
+
+  // 3. Check unpacked extraResources in packaged Electron (from electron-builder extraResources)
   if (process.resourcesPath) {
     candidates.push(path.join(process.resourcesPath, 'bin', binSubdir, exeName));
     candidates.push(path.join(process.resourcesPath, 'bin', exeName));
     candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'bin', binSubdir, exeName));
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'bin', exeName));
     candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
     candidates.push(path.join(process.resourcesPath, exeName));
   }
 
-  // 2. Check bundled electron/bin relative to __dirname
+  // 4. Check bundled electron/bin relative to __dirname and process.cwd()
   candidates.push(path.join(__dirname, 'bin', binSubdir, exeName));
+  candidates.push(path.join(__dirname, 'bin', exeName));
   candidates.push(path.join(__dirname, '../electron/bin', binSubdir, exeName));
   candidates.push(path.join(process.cwd(), 'electron/bin', binSubdir, exeName));
 
-  // 3. Check node_modules/7zip-bin
+  // 5. Check node_modules/7zip-bin
   if (sevenZip && sevenZip.path7za) {
     candidates.push(sevenZip.path7za);
     if (sevenZip.path7za.includes('app.asar')) {
@@ -97,19 +130,18 @@ function resolve7zaBinary() {
   candidates.push(path.join(__dirname, 'node_modules/7zip-bin/win/x64/7za.exe'));
   candidates.push(path.join(process.cwd(), 'node_modules/7zip-bin/win/x64/7za.exe'));
 
-  // 4. Check already unpacked temp binary
-  const tempBin = path.join(os.tmpdir(), 'blacksite-bin', exeName);
-  if (fs.existsSync(tempBin)) {
-    candidates.unshift(tempBin);
-  }
-
-  // 5. Standard Windows system 7-Zip installations if present
+  // 6. Standard Windows system 7-Zip installations if present
   if (isWin) {
     candidates.push('C:\\Program Files\\7-Zip\\7z.exe');
     candidates.push('C:\\Program Files (x86)\\7-Zip\\7z.exe');
+    candidates.push('C:\\ProgramData\\chocolatey\\bin\\7z.exe');
+    candidates.push('C:\\tools\\7z\\7z.exe');
     if (process.env.LOCALAPPDATA) {
       candidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', '7-Zip', '7z.exe'));
     }
+    const home = os.homedir();
+    candidates.push(path.join(home, 'scoop', 'shims', '7z.exe'));
+    candidates.push(path.join(home, 'scoop', 'apps', '7zip', 'current', '7z.exe'));
   }
 
   for (const c of candidates) {
@@ -129,7 +161,7 @@ function resolve7zaBinary() {
     }
   }
 
-  // 6. Last-ditch check: test if 7za or 7z is globally in system PATH
+  // 7. Last-ditch check: test if 7za or 7z is globally in system PATH
   try {
     const testCmd = isWin ? 'where 7za' : 'which 7za';
     const out = require('child_process').execSync(testCmd, { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
@@ -141,6 +173,63 @@ function resolve7zaBinary() {
       const out = require('child_process').execSync('where 7z', { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
       if (out && fs.existsSync(out)) return out;
     } catch (_) {}
+  }
+
+  return null;
+}
+
+/**
+ * Ensures a working 7za binary exists, auto-downloading verified standalone 7za if missing
+ */
+async function ensure7zaBinary(onProgress = null) {
+  const existing = resolve7zaBinary();
+  if (existing) return existing;
+
+  const isWin = process.platform === 'win32';
+  if (!isWin) return null;
+
+  const targetDir = path.join(getUserDataDir(), 'bin');
+  fs.mkdirSync(targetDir, { recursive: true });
+  const targetPath = path.join(targetDir, '7za.exe');
+  const tempPath = path.join(targetDir, `7za.exe.${Date.now()}.tmp`);
+
+  const downloadUrls = [
+    'https://raw.githubusercontent.com/develar/7zip-bin/master/win/x64/7za.exe',
+    'https://github.com/develar/7zip-bin/raw/master/win/x64/7za.exe',
+    'https://www.7-zip.org/a/7zr.exe',
+  ];
+
+  console.log('[Blacksite Installer] 7-Zip engine missing. Auto-provisioning standalone 7za runtime...');
+  if (onProgress) {
+    onProgress({
+      stage: 'extracting',
+      percent: 5,
+      downloadSpeed: 'Auto-provisioning 7-Zip engine (standalone runtime)...',
+    });
+  }
+
+  for (const dlUrl of downloadUrls) {
+    try {
+      await streamDownloadToFile(dlUrl, tempPath, null, 1);
+      if (fs.existsSync(tempPath)) {
+        const stat = fs.statSync(tempPath);
+        if (stat.size > 200 * 1024) {
+          try {
+            if (fs.existsSync(targetPath)) fs.unlinkSync(targetPath);
+          } catch (_) {}
+          fs.renameSync(tempPath, targetPath);
+          console.log(`[Blacksite Installer] Successfully auto-provisioned 7za to: ${targetPath}`);
+          return targetPath;
+        } else {
+          try { fs.unlinkSync(tempPath); } catch (_) {}
+        }
+      }
+    } catch (dlErr) {
+      console.warn(`[Blacksite Installer] Failed auto-downloading 7za from ${dlUrl}:`, dlErr.message);
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch (_) {}
+    }
   }
 
   return null;
@@ -224,7 +313,11 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
 
   try {
     // 1. Try precompiled 7za binary FIRST (Multi-threaded, supports .zip, .7z, .rar, .tar.gz, LZMA, Deflate64)
-    const bin7za = resolve7zaBinary();
+    let bin7za = resolve7zaBinary();
+    if (!bin7za && (format === '7z' || format === 'rar' || !format)) {
+      bin7za = await ensure7zaBinary(onProgress);
+    }
+
     if (bin7za) {
       try {
         const threadCount = getExtractionThreadCount(performanceMode);
@@ -233,10 +326,14 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           const child = execFile(
             bin7za,
             ['x', '-y', '-bsp1', `-mmt=${threadCount}`, `-o${destinationDir}`, archivePath],
-            { maxBuffer: 100 * 1024 * 1024, windowsHide: true },
-            (error) => {
-              if (error) reject(error);
-              else resolve();
+            { maxBuffer: 500 * 1024 * 1024, windowsHide: true },
+            (error, stdout, stderr) => {
+              if (error) {
+                console.error('[Blacksite Installer] 7za extraction error:', error.message, stderr ? stderr.toString() : '');
+                reject(error);
+              } else {
+                resolve();
+              }
             }
           );
 
@@ -369,10 +466,12 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
     const err = new Error(
       `Unable to extract archive with any available decompression engine. Format: ${format || 'unknown'}, Size: ${(stat.size / (1024 * 1024)).toFixed(1)} MB`
     );
+    err.code = 'ERR_EXTRACTION_FAILED';
     err.canManualExtract = true;
     err.archivePath = archivePath;
     err.destinationDir = destinationDir;
     err.format = format;
+    err.archiveSizeMb = (stat.size / (1024 * 1024)).toFixed(1);
     throw err;
   } finally {
     cleanupTimer();
@@ -733,21 +832,174 @@ function getDownloadHeaders(targetUrl, strategy = 'default') {
 }
 
 /**
+ * Native Node.js HTTP/HTTPS streaming downloader with permissive TLS agent.
+ * Handles broken SSL certificates (e.g. author external hosts), redirects,
+ * and throttles live download progress.
+ */
+function downloadViaNodeHttp(requestUrl, destFilePath, headers = {}, onProgress = null, redirectDepth = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectDepth > 10) {
+      return reject(new Error('Too many HTTP redirects (exceeded 10 hops).'));
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(requestUrl);
+    } catch (urlErr) {
+      return reject(urlErr);
+    }
+
+    const isHttps = parsed.protocol === 'https:';
+    const client = isHttps ? https : http;
+
+    const reqOptions = {
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port || (isHttps ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'GET',
+      headers: {
+        ...headers,
+        Host: parsed.hostname,
+      },
+      timeout: 45000,
+    };
+
+    if (isHttps) {
+      reqOptions.agent = new https.Agent({
+        rejectUnauthorized: false,
+        keepAlive: true,
+        checkServerIdentity: () => undefined,
+      });
+    }
+
+    const req = client.request(reqOptions, (res) => {
+      // Follow 301, 302, 303, 307, 308 redirects
+      if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+        const location = res.headers['location'];
+        if (!location) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode} redirect without Location header.`));
+        }
+        res.resume();
+        const nextUrl = new URL(location, requestUrl).toString();
+        return downloadViaNodeHttp(nextUrl, destFilePath, headers, onProgress, redirectDepth + 1)
+          .then(resolve)
+          .catch(reject);
+      }
+
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        const httpErr = new Error(
+          `Download failed with HTTP status ${res.statusCode}: ${res.statusMessage || (res.statusCode === 404 ? 'Not Found' : 'Download Error')}`
+        );
+        httpErr.statusCode = res.statusCode;
+        if (res.statusCode === 404) httpErr.code = 'ERR_NOT_FOUND_404';
+        return reject(httpErr);
+      }
+
+      const contentType = res.headers['content-type'] || '';
+      // Guard against HTML error pages masquerading as archives
+      if (contentType.includes('text/html') && !requestUrl.includes('github') && !requestUrl.includes('codeberg')) {
+        res.resume();
+        const htmlErr = new Error('Download failed: remote host returned an HTML web page instead of a mod archive file.');
+        htmlErr.statusCode = 404;
+        htmlErr.code = 'ERR_NOT_FOUND_404';
+        return reject(htmlErr);
+      }
+
+      const contentLengthHeader = res.headers['content-length'];
+      const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+      const fileStream = fs.createWriteStream(destFilePath);
+
+      let receivedBytes = 0;
+      let lastProgressTime = Date.now();
+      let lastBytesInWindow = 0;
+
+      res.on('data', (chunk) => {
+        receivedBytes += chunk.length;
+        fileStream.write(chunk);
+
+        const now = Date.now();
+        if (now - lastProgressTime >= 120) {
+          const elapsedSec = (now - lastProgressTime) / 1000;
+          const bytesInInterval = receivedBytes - lastBytesInWindow;
+          let downloadSpeed = 'Calculating...';
+          if (elapsedSec > 0) {
+            const speedBytesPerSec = bytesInInterval / elapsedSec;
+            const speedMBps = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
+            const remainingBytes = totalBytes > receivedBytes ? totalBytes - receivedBytes : 0;
+            const etaSec = speedBytesPerSec > 0 && remainingBytes > 0 ? Math.ceil(remainingBytes / speedBytesPerSec) : 0;
+            const etaStr = etaSec > 60 ? `${Math.floor(etaSec / 60)}m ${etaSec % 60}s` : `${etaSec}s`;
+            downloadSpeed = remainingBytes > 0 && etaSec > 0 ? `${speedMBps} MB/s · ETA: ${etaStr}` : `${speedMBps} MB/s`;
+          }
+
+          const percent = totalBytes > 0 ? Math.min(99, Math.round((receivedBytes / totalBytes) * 100)) : 0;
+          if (onProgress) {
+            onProgress({
+              stage: 'downloading',
+              percent,
+              bytesReceived: receivedBytes,
+              totalBytes,
+              downloadSpeed,
+            });
+          }
+          lastProgressTime = now;
+          lastBytesInWindow = receivedBytes;
+        }
+      });
+
+      res.on('end', () => {
+        fileStream.end();
+        if (onProgress) {
+          onProgress({
+            stage: 'downloading',
+            percent: 100,
+            bytesReceived: receivedBytes,
+            totalBytes: totalBytes || receivedBytes,
+            downloadSpeed: 'Complete',
+          });
+        }
+        resolve({ totalBytes: totalBytes || receivedBytes });
+      });
+
+      res.on('error', (err) => {
+        fileStream.destroy();
+        reject(err);
+      });
+
+      fileStream.on('error', (err) => {
+        reject(err);
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy(new Error('Download connection timed out after 45 seconds.'));
+    });
+
+    req.on('error', (err) => {
+      reject(err);
+    });
+
+    req.end();
+  });
+}
+
+/**
  * Streams a remote file directly to disk in 64KB chunks with throttled progress events.
- * Handles manual redirect hops (301, 302, 303, 307, 308) across hosts (e.g. sp-mod.com -> codeberg.org)
- * and automatically recovers from 403 Forbidden with multi-tier tool fallbacks.
+ * Handles manual redirect hops across hosts, automatically recovers from broken TLS,
+ * and handles 404 fallbacks.
  */
 async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRetries = 3) {
   let attempt = 0;
+  let currentUrl = initialUrl;
+
   while (attempt <= maxRetries) {
     try {
-      let currentUrl = initialUrl;
       let redirects = 0;
       const maxRedirects = 10;
       let response = null;
 
-      // Pure Node.js native fetch engine: operates on Node libuv sockets, completely
-      // bypassing Chromium's SimpleURLLoaderWrapper which cancels redirects on manual mode
       const fetchFn =
         typeof globalThis !== 'undefined' && typeof globalThis.fetch === 'function'
           ? globalThis.fetch
@@ -758,10 +1010,15 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
       while (redirects <= maxRedirects) {
         let headers = getDownloadHeaders(currentUrl, strategy);
 
-        response = await fetchFn(currentUrl, {
-          headers,
-          redirect: 'manual',
-        });
+        try {
+          response = await fetchFn(currentUrl, {
+            headers,
+            redirect: 'manual',
+          });
+        } catch (fetchErr) {
+          console.warn(`[Blacksite Installer] Fetch engine threw error on ${currentUrl} (${fetchErr.message}). Switching to native HTTPS agent...`);
+          return await downloadViaNodeHttp(currentUrl, destFilePath, headers, onProgress);
+        }
 
         // Explicitly handle HTTP 301, 302, 303, 307, 308 redirects
         if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -778,10 +1035,14 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
         if (response.status === 403 && strategy !== 'fallback_curl') {
           console.warn(`[Blacksite Installer] HTTP 403 on ${currentUrl}, retrying with tool fallback headers...`);
           const fallbackHeaders = getDownloadHeaders(currentUrl, 'fallback_curl');
-          response = await fetchFn(currentUrl, {
-            headers: fallbackHeaders,
-            redirect: 'manual',
-          });
+          try {
+            response = await fetchFn(currentUrl, {
+              headers: fallbackHeaders,
+              redirect: 'manual',
+            });
+          } catch (fetchErr) {
+            return await downloadViaNodeHttp(currentUrl, destFilePath, fallbackHeaders, onProgress);
+          }
 
           if ([301, 302, 303, 307, 308].includes(response.status)) {
             const location = response.headers.get('location');
@@ -797,12 +1058,28 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
       }
 
       if (!response.ok) {
+        // Automatic 404 Recovery: If direct CDN link files.sp-mod.com/mods/{id}.zip returns 404,
+        // try the Forge gateway route: https://sp-mod.com/mod/download/{id}
+        if (response.status === 404 && currentUrl.includes('files.sp-mod.com/mods/')) {
+          const modIdMatch = currentUrl.match(/mods\/(\d+)\.zip/);
+          if (modIdMatch && modIdMatch[1]) {
+            const fallbackForgeUrl = `https://sp-mod.com/mod/download/${modIdMatch[1]}`;
+            console.log(`[Blacksite Installer] Direct CDN returned 404. Attempting Forge download fallback: ${fallbackForgeUrl}`);
+            try {
+              return await streamDownloadToFile(fallbackForgeUrl, destFilePath, onProgress, 1);
+            } catch (fbErr) {
+              // Let original 404 error propagate if fallback also failed
+            }
+          }
+        }
+
         const httpErr = new Error(
           `Download failed with HTTP status ${response.status}: ${
             response.statusText || (response.status === 404 ? 'Not Found' : response.status === 403 ? 'Forbidden' : 'Download Error')
           }`
         );
         httpErr.statusCode = response.status;
+        if (response.status === 404) httpErr.code = 'ERR_NOT_FOUND_404';
         throw httpErr;
       }
 
@@ -878,8 +1155,17 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
 
       return { totalBytes: totalBytes || receivedBytes };
     } catch (err) {
+      if (err.message && (err.message.includes('fetch failed') || err.message.includes('SSL') || err.message.includes('CERT_'))) {
+        try {
+          console.warn(`[Blacksite Installer] Fetch failed on attempt ${attempt + 1}. Retrying via Node native HTTPS agent...`);
+          return await downloadViaNodeHttp(currentUrl, destFilePath, getDownloadHeaders(currentUrl, 'default'), onProgress);
+        } catch (nodeHttpErr) {
+          err = nodeHttpErr;
+        }
+      }
+
       attempt++;
-      if (attempt > maxRetries || err.statusCode === 404) {
+      if (attempt > maxRetries || err.statusCode === 404 || err.code === 'ERR_NOT_FOUND_404') {
         throw err;
       }
       console.warn(`[Blacksite Installer] Download attempt ${attempt} failed, retrying in 1.2s...`, err.message);
@@ -929,6 +1215,7 @@ async function installMod({
   }
   const tempArchiveFile = path.join(tempWorkDir, archiveFileName || 'mod-download.archive');
   const tempExtractDir = path.join(tempWorkDir, 'extracted');
+  let finalArchiveFile = tempArchiveFile;
 
   try {
     if (downloadUrl) {
@@ -1009,7 +1296,6 @@ async function installMod({
       });
     }
 
-    let finalArchiveFile = tempArchiveFile;
     const detectedFmt = detectArchiveFormat(tempArchiveFile);
     if (detectedFmt && !tempArchiveFile.toLowerCase().endsWith(`.${detectedFmt}`)) {
       const properArchiveFile = `${tempArchiveFile}.${detectedFmt}`;
