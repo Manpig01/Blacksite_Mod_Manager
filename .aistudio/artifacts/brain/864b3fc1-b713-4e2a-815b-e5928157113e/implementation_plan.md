@@ -1,61 +1,71 @@
-# Dedicated 7-Zip Engine Bundling & Archive Decompression Resilience
+# Addons Tab & Parent Mod Dependency Integration
 
-Fix the desktop mod extraction failure `Error: Unable to extract archive with any available decompression engine` occurring on `.7z` and `.rar` format mods (such as *ISB Aishi* v2.0.2) by embedding a dedicated 7-Zip binary directly into packaged builds, enabling automatic runtime binary extraction from ASAR, and providing clear manual extraction recovery in the UI.
-
----
+Add a dedicated **Addons** top-level navigation tab to Blacksite Mod Manager powered by the official Forge API (`/api/v0/addons`), featuring live search, sort, parent base mod verification, and one-click desktop installation with automatic parent mod companion prompts.
 
 ### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions have been confirmed via clarifying questions:
+> The following architectural decisions were confirmed in Phase 1 interactive clarification:
 
-- **Confirmed Decision 1 (Decompression Packaging)**: Blacksite will use a **Dedicated bundled binary with auto-extraction fallback**. The 7za executable will be bundled directly into application resources and `electron/bin/`, with automatic extraction to `%TEMP%/blacksite-bin/` if executed from inside an ASAR container.
-- **Confirmed Decision 2 (Corrupt / Unsupported Archive Handling)**: Blacksite will **Show clear error notification with manual extract option**. If decompression fails due to corruption or password protection, Blacksite will display an informative error modal with direct options to open the downloaded archive folder in Windows Explorer and manually place files into the SPT directory.
+- **Confirmed Decision 1 (Navigation Structure)**: Dedicated top navigation tab alongside "Browse Mods", "Installed Mods", "Modpack Tools", and "Settings".
+- **Confirmed Decision 2 (Dependency Resolution)**: When installing an addon, Blacksite verifies whether the parent mod is installed. If missing, a clear companion prompt presents the option to install both the parent mod and addon in a single operation or install the addon standalone.
 
 ---
 
 ### 1. Overview & Core Concept
 
-- **What It Does**:
-  - Ensures Blacksite Mod Manager can extract all Single Player Tarkov mod archives (`.7z`, `.rar`, `.zip`, `.tar.gz`) across both development environments and packaged Windows distributions (`.exe` / `.asar`).
-  - Solves the problem where mods distributed in 7-Zip format fail when Windows `tar.exe` (bsdtar) and `AdmZip` reject non-ZIP headers.
-  - Automatically verifies and prepares executable decompression binaries before running extraction commands.
-- **Target Audience**: Single Player Tarkov players installing complex weapon, audio, and gameplay mods formatted in `.7z` or `.rar`.
-- **Key Value**: 100% install reliability regardless of archive compression format, with no external software prerequisites required from the player.
+- **What It Does**: Adds an **Addons** tab directly accessible from the main header. Players can explore, search, filter, and sort addons published on Forge (`sp-mod.com`), inspect version constraints, see parent mod associations (such as Questing Bots, SAIN, Realism), and install them directly into their SPT directory.
+- **Target Audience / Persona**: SPT (Single Player Tarkov) players who want companion sub-mods, voice packs, translations, AI compatibility patches, and config expansions without having to manually search the web or track parent mod prerequisites by hand.
+- **Key Value**: Eliminates broken mod setups caused by installing companion addons without their required parent base mods, while giving addons a prominent, dedicated catalog experience.
 
 ---
 
 ### 2. User Experience & Visual Design
 
-- **Extraction Progress & Live Decompression**:
-  - Decompression maintains real-time percentage feedback (`Extracting (7-Zip Multi-core) 45%...`) streamed via stdout without freezing the UI thread.
-- **Error Recovery & Manual Extraction Modal**:
-  - If an archive cannot be decompressed (e.g., password-protected or corrupt download):
-    - Replaces generic error toast with a high-contrast tactical error dialog.
-    - Displays: Mod name, file format (`.7z`), file size, and exact error reason.
-    - Action buttons:
-      - **"Open Download Folder"**: Invokes Electron bridge to open Windows File Explorer directly to the downloaded archive.
-      - **"Open SPT Mods Folder"**: Opens `SPT/user/mods` or `SPT/BepInEx/plugins`.
-      - **"Retry Download"**: Clears cache and restarts download from mirror.
-      - **"Dismiss"**: Closes modal and resets install queue state.
-- **Design Tokens & Tactical Aesthetic**:
-  - Uses Blacksite dark tactical styling (`bg-zinc-950`, border `border-amber-500/30`, badge `text-amber-400`, buttons with sharp corners and subtle hover glow).
+#### Key User Flows
+1. **Catalog Browsing**: The player clicks **Addons** in the top navigation bar. A responsive grid of addon cards displays thumbnails, titles, authors, download counters, release dates, and parent mod badges.
+2. **Search & Filter**: Players can filter addons by search query, sort order (Latest Release, Most Downloaded, Alphabetical), and filter by specific parent mods or favorites.
+3. **Parent Mod Verification & Installation**:
+   - The player clicks **Install** on an addon (e.g. *Questing Bots Fika Sync*).
+   - If the parent mod (*Questing Bots*) is already present in `installedMods`, Blacksite queues the addon installation immediately with real progress tracking.
+   - If the parent mod is missing, Blacksite displays a tactical confirmation modal:
+     - Prominently showcases the parent mod name, thumbnail, and author.
+     - Option 1: **Install Both (Recommended)** — queues the parent mod first, then queues the addon.
+     - Option 2: **Install Addon Standalone** — proceeds with just the addon.
+     - Option 3: **Cancel**.
+4. **Detail & Version Inspection**: Clicking version history opens a version selection modal specific to the addon, allowing players to pick historical versions or check mod version constraints.
+
+#### Visual Identity & Theme
+- **Aesthetic Direction**: Tactical military HUD styling consistent with Blacksite's dark slate and amber industrial aesthetic.
+- **Color Palette & Mood**:
+  - Background Canvas: `#121418` (deep matte graphite)
+  - Surface Containers: `#181B20` and `#20252D` with subtle borders (`#2B303C` / `#23272E`)
+  - Accent / Primary Action: Tactical Amber (`#EA580C`)
+  - Parent Mod Relation Link: Subtle Cyan/Sky accent (`#38BDF8`) for parent mod references
+  - Text: Clean high-contrast whites (`#E8EAEE`) and muted steel grays (`#9AA3AF`)
+- **Typography & Hierarchy**:
+  - Clean font pairing with tabular monospace numbers for download metrics and version strings.
+  - Zero-pill metadata discipline: dates, authors, and download counts formatted with clean typographical separators (`·`) without boxed badges.
+- **Interactive Feedback**:
+  - Smooth card hover lift with subtle amber accent boundary.
+  - Installation button transitions from amber "Install" to green checkmark "Installed" when already present in the active SPT directory.
 
 ---
 
 ### 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Direct Binary Bundling vs. Relying on System 7-Zip**
-  - *Chosen Approach*: Copy standalone Windows `7za.exe` directly into `electron/bin/win/7za.exe`, include in `package.json` `"files"` and `extraResources`, and unpack on-demand if loaded from `.asar`.
-  - *Why*: End users cannot be expected to install standalone 7-Zip or add it to Windows PATH. The self-contained binary is only ~1.2 MB and eliminates 100% of missing decompression engine failures.
-  - *Alternatives Considered*: Direct system PATH fallback only (fails on clean Windows installations without 7-Zip).
+- **Decision 1: Dedicated Tab vs. Browse Sub-Filter**
+  - *Chosen Approach*: Dedicated top navigation tab (`AddonsTab.tsx`).
+  - *Why*: Addons have distinct metadata relationships (specifically `mod_id`, parent mod association, and `mod_version_constraint`) that benefit from dedicated filtering and distinct parent companion cards.
+  - *Alternatives Considered*: Sub-filter inside Browse Mods was rejected because it clutters the main category filter and obscures addon-specific relationships.
 
-- **Decision 2: ASAR Unpack & Temp Fallback**
-  - *Chosen Approach*: Multi-tier path resolver:
-    1. Check `process.resourcesPath/bin/7za.exe` (extraResources).
-    2. Check `process.resourcesPath/app.asar.unpacked/...`.
-    3. If binary is only accessible inside `app.asar`, read buffer via `fs.readFileSync` and write to `%TEMP%/blacksite-bin/7za.exe` once on startup, then execute.
-  - *Why*: `child_process.execFile` cannot execute binary executables located inside an Electron ASAR virtual archive. Extracting to temporary storage guarantees native Windows execution permissions.
+- **Decision 2: Companion Detection & 1-Click Dual Queue**
+  - *Chosen Approach*: Inspect `installedMods` for the parent mod by `modId`, `guid`, or slug. If missing, fetch the parent mod details from `/api/v0/mod/{modId}` and offer a 1-click dual install.
+  - *Why*: Seamless user experience preventing broken runtime states without locking advanced users out of manual or custom setups.
+
+- **Decision 3: Forge Addons API Client Architecture**
+  - *Chosen Approach*: Add `getAddons` and `getAddonDetails` to `src/services/apiService.ts` utilizing `https://sp-mod.com/api/v0/addons` with query parameters (`query`, `sort`, `include=versions,mod`, pagination) and resilient error fallbacks.
+  - *Why*: Matches existing API patterns, supports network timeout abort signals, and handles rate limiting smoothly.
 
 ---
 
@@ -63,50 +73,80 @@ Fix the desktop mod extraction failure `Error: Unable to extract archive with an
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Blacksite Mod Manager                           │
-│                                                                        │
-│   Download Stream: https://sp-mod.com/mod/download/2478/isb-aishi/...  │
-│                                 │                                      │
-│                                 ▼                                      │
-│               Download Archive to Staging Directory                    │
-│                    (e.g., ISB-Aishi-v2.0.2.7z)                         │
-└─────────────────────────────────┬──────────────────────────────────────┘
-                                  │
-                                  ▼
-           ┌──────────────────────────────────────────────┐
-           │        Decompression Engine Resolver         │
-           │                                              │
-           │  1. Check extraResources / app.asar.unpacked  │
-           │  2. Check %TEMP%/blacksite-bin/7za.exe       │
-           │  3. Auto-extract 7za.exe from ASAR buffer    │
-           │  4. Fallback to System 7-Zip / PATH          │
-           └──────────────────────┬───────────────────────┘
-                                  │
-                 ┌────────────────┴────────────────┐
-                 ▼                                 ▼
-      [Format is .7z / .rar]              [Format is .zip / .tar]
-                 │                                 │
-                 ▼                                 ▼
-         Run 7za.exe -bsp1                 Run 7za.exe / bsdtar /
-         Multi-threaded (-mmt)             chunked AdmZip
-                 │                                 │
-                 └────────────────┬────────────────┘
-                                  ▼
-                 ┌─────────────────────────────────┐
-                 │    routeExtractedModToSpt()     │
-                 │                                 │
-                 │  • Server mod -> user/mods      │
-                 │  • Client mod -> BepInEx/plugins│
-                 └─────────────────────────────────┘
+│                        Blacksite Navigation Header                     │
+│  [Browse Mods]      [Addons] *NEW*      [Installed]      [Modpacks]    │
+└───────────────────────────┬────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                          AddonsTab Component                           │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Search & Sort Controls (Query, Sort by Downloads/Recent, Reset)  │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Addons Card Grid                                                 │  │
+│  │   - Addon Thumbnail & Author                                     │  │
+│  │   - Parent Mod Reference & Status ("Parent: Questing Bots ✓")    │  │
+│  │   - Version Constraint & Download Metrics                        │  │
+│  │   - One-Click Install & Version Picker Actions                   │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Pagination Bar (Page numbers, Per Page selector)                 │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────┬────────────────────────────────────────────┘
+                            │
+               ┌────────────┴────────────┐
+               ▼                         ▼
+┌───────────────────────────────┐ ┌──────────────────────────────────────┐
+│       Parent Mod Check        │ │         apiService.getAddons         │
+│ Installed? ──► Queue Addon    │ │ Endpoint: /api/v0/addons             │
+│ Missing?   ──► CompanionModal │ │ Include:  versions,mod               │
+└───────────────────────────────┘ └──────────────────────────────────────┘
 ```
 
-#### File Changes Planned:
-1. **`electron/bin/win/7za.exe`**: Place the tested x64 `7za.exe` executable into dedicated electron binary store.
-2. **`package.json`**:
-   - Add `"electron/bin/**/*"` to `build.files`.
-   - Add `extraResources: [{ "from": "electron/bin", "to": "bin" }]` to guarantee uncompressed physical files outside ASAR.
-3. **`electron/modInstaller.cjs`**:
-   - Upgrade `resolve7zaBinary()` to look in `extraResources/bin/`, unpack from ASAR to `%TEMP%/blacksite-bin/7za.exe` if needed, and verify execution rights.
-   - Enhance `extractArchive()` error messaging with explicit format diagnostic details and actionable recovery data.
-4. **`src/components/ManualExtractModal.tsx` & `src/App.tsx`**:
-   - Provide visual recovery modal when decompression cannot proceed, with "Open Download Folder" and "Open SPT Folder" buttons.
+#### Data Model Additions (`src/types.ts`)
+```ts
+export interface AddonVersion {
+  id: number;
+  version: string;
+  link: string;
+  content_length?: number;
+  mod_version_constraint?: string;
+  downloads: number;
+  published_at?: string;
+  created_at?: string;
+}
+
+export interface Addon {
+  id: number;
+  name: string;
+  slug: string;
+  teaser?: string;
+  thumbnail: string;
+  downloads: number;
+  detail_url?: string;
+  contains_ads?: boolean;
+  mod_id: number;
+  is_detached?: boolean;
+  published_at?: string;
+  created_at?: string;
+  owner?: ModOwner;
+  additional_authors?: ModOwner[];
+  mod?: Mod;
+  versions?: AddonVersion[];
+}
+
+export interface AddonQueryResult {
+  addons: Addon[];
+  total: number;
+  currentPage: number;
+  lastPage: number;
+}
+```
+
+#### Interactive Component & State Mapping
+- **`src/types.ts`**: Define `Addon`, `AddonVersion`, `AddonQueryResult`, and update navigation state (`activeTab: 'browse' | 'addons' | 'installed' | 'modpacks' | 'settings'`).
+- **`src/services/apiService.ts`**: Implement `getAddons` and `getAddonDetails` querying `https://sp-mod.com/api/v0/addons` with parameters (`include=versions,mod`, `sort`, `query`, `page`, `per_page`).
+- **`src/components/AddonsTab.tsx`**: New component rendering the responsive addons grid, search bar, parent mod link buttons, download counts, and install triggers.
+- **`src/components/AddonCompanionModal.tsx`**: Tactical prompt displayed when installing an addon whose parent mod is not yet installed.
+- **`src/App.tsx`**: Wire the `addons` tab into the navigation bar, state routing, and queue install pipeline.

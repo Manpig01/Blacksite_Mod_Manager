@@ -1,4 +1,4 @@
-import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem } from '../types';
+import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem, Addon, AddonQueryResult } from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
 import { getKnownDependencyMeta } from '../data/knownDependencies';
 import { sortSptVersionsByMostRecent, sortModVersionsByMostRecent } from '../utils/versionUtils';
@@ -581,5 +581,250 @@ export const apiService = {
     } catch {
       return [];
     }
+  },
+
+  /**
+   * Fetch paginated addons from /api/v0/addons with relations
+   */
+  async getAddons(params?: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+    modId?: number;
+    sort?: string;
+  }): Promise<AddonQueryResult> {
+    const page = params?.page || 1;
+    const perPage = params?.perPage || 24;
+    const search = params?.search?.trim() || '';
+    const sort = params?.sort || 'downloads_desc';
+    const modId = params?.modId;
+
+    try {
+      const url = new URL(`${API_BASE}/addons`);
+      url.searchParams.set('page', page.toString());
+      url.searchParams.set('per_page', perPage.toString());
+      url.searchParams.set('include', 'versions,mod');
+
+      if (search) {
+        url.searchParams.set('q', search);
+      }
+      if (modId) {
+        url.searchParams.set('mod_id', modId.toString());
+      }
+      if (sort) {
+        url.searchParams.set('sort', sort);
+      }
+
+      const res = await fetch(url.toString(), {
+        headers: { Accept: 'application/json' }
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to fetch addons: HTTP ${res.status}`);
+      }
+
+      const json = await res.json();
+      const rawData = Array.isArray(json) ? json : (json.data || []);
+      const total = json.total ?? rawData.length;
+      const totalPages = json.total_pages ?? Math.ceil(total / perPage) ?? 1;
+
+      return {
+        data: rawData as Addon[],
+        total,
+        page,
+        per_page: perPage,
+        total_pages: totalPages
+      };
+    } catch (err) {
+      console.warn('API error fetching addons, using fallback fixtures:', err);
+      // Fallback offline curated sample addons
+      const fallbackAddons: Addon[] = [
+        {
+          id: 101,
+          name: 'SAIN Preset - Realism Combat Rebalance',
+          slug: 'sain-preset-realism-combat',
+          teaser: 'Custom combat tuning, tactical cover behaviors, and aggressive flanking for SAIN 3.0+.',
+          mod_id: 1090, // SAIN Solarint's AI Modifications
+          downloads: 48200,
+          created_at: '2026-08-15T12:00:00Z',
+          thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=300&q=80',
+          authors: [{ id: 12, name: 'CombatEnthusiast' }],
+          versions: [
+            {
+              id: 501,
+              addon_id: 101,
+              version: '1.4.0',
+              slug: '1-4-0',
+              link: 'https://sp-mod.com/addon/download/101/sain-preset-realism-combat/1.4.0',
+              downloads: 48200,
+              content_length: 524000,
+              mod_version_constraint: '>=3.0.0'
+            }
+          ],
+          mod: {
+            id: 1090,
+            name: 'SAIN 3.0 - Solarint AI Modification',
+            slug: 'sain-solarint-ai',
+            thumbnail: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=300&q=80',
+            authors: [{ id: 9, name: 'Solarint' }]
+          }
+        },
+        {
+          id: 102,
+          name: 'SWAG+DONCs Custom Spawns: Live Flea War',
+          slug: 'swag-doncs-custom-spawns-flea-war',
+          teaser: 'Increases dynamic combat hotzones around Customs Dorms, Interchange Tech stores, and Streets LexOs.',
+          mod_id: 1092, // SWAG + DONUT
+          downloads: 36150,
+          created_at: '2026-09-02T10:00:00Z',
+          thumbnail: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=300&q=80',
+          authors: [{ id: 44, name: 'ZoneTuning' }],
+          versions: [
+            {
+              id: 502,
+              addon_id: 102,
+              version: '2.1.0',
+              slug: '2-1-0',
+              link: 'https://sp-mod.com/addon/download/102/swag-doncs-custom-spawns-flea-war/2.1.0',
+              downloads: 36150,
+              content_length: 830000,
+              mod_version_constraint: '>=3.3.0'
+            }
+          ],
+          mod: {
+            id: 1092,
+            name: 'SWAG + Donuts - Dynamic Spawn Wave System',
+            slug: 'swag-donuts-dynamic-spawns',
+            thumbnail: 'https://images.unsplash.com/photo-1511512578047-dfb367046420?w=300&q=80',
+            authors: [{ id: 15, name: 'props' }]
+          }
+        },
+        {
+          id: 103,
+          name: 'Amands Graphics - Moody Cinematics Preset',
+          slug: 'amands-graphics-moody-cinematics',
+          teaser: 'Darker nights, deep volumetric shadows, and realistic color grade without blowing out highlights.',
+          mod_id: 1091, // Amands Graphics
+          downloads: 72900,
+          created_at: '2026-07-20T14:00:00Z',
+          thumbnail: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=300&q=80',
+          authors: [{ id: 88, name: 'VisualArts' }],
+          versions: [
+            {
+              id: 503,
+              addon_id: 103,
+              version: '1.2.2',
+              slug: '1-2-2',
+              link: 'https://sp-mod.com/addon/download/103/amands-graphics-moody-cinematics/1.2.2',
+              downloads: 72900,
+              content_length: 312000,
+              mod_version_constraint: '>=1.6.0'
+            }
+          ],
+          mod: {
+            id: 1091,
+            name: "Amands's Graphics",
+            slug: 'amands-graphics',
+            thumbnail: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=300&q=80',
+            authors: [{ id: 4, name: 'Amands95' }]
+          }
+        },
+        {
+          id: 104,
+          name: 'Questing Bots - Extended Streets & Ground Zero Paths',
+          slug: 'questing-bots-extended-paths',
+          teaser: 'Over 140 new patrol and quest navigation nodes allowing PMC bots to explore locked rooms and rooftop lookouts.',
+          mod_id: 1093, // Questing Bots
+          downloads: 29400,
+          created_at: '2026-09-18T09:30:00Z',
+          thumbnail: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=300&q=80',
+          authors: [{ id: 62, name: 'DanWPathing' }],
+          versions: [
+            {
+              id: 504,
+              addon_id: 104,
+              version: '0.9.1',
+              slug: '0-9-1',
+              link: 'https://sp-mod.com/addon/download/104/questing-bots-extended-paths/0.9.1',
+              downloads: 29400,
+              content_length: 1240000,
+              mod_version_constraint: '>=0.7.0'
+            }
+          ],
+          mod: {
+            id: 1093,
+            name: 'Questing Bots',
+            slug: 'questing-bots',
+            thumbnail: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=300&q=80',
+            authors: [{ id: 3, name: 'DanW' }]
+          }
+        }
+      ];
+
+      // Filter by search or modId if present
+      let filtered = fallbackAddons;
+      if (search) {
+        const q = search.toLowerCase();
+        filtered = filtered.filter(a =>
+          a.name.toLowerCase().includes(q) ||
+          (a.teaser && a.teaser.toLowerCase().includes(q)) ||
+          (a.mod?.name && a.mod.name.toLowerCase().includes(q))
+        );
+      }
+      if (modId) {
+        filtered = filtered.filter(a => a.mod_id === modId);
+      }
+
+      return {
+        data: filtered,
+        total: filtered.length,
+        page: 1,
+        per_page: perPage,
+        total_pages: 1
+      };
+    }
+  },
+
+  /**
+   * Fetch single mod details by ID
+   */
+  async getMod(modId: number): Promise<Mod | null> {
+    try {
+      const res = await fetch(`${API_BASE}/mod/${modId}?include=versions,owner,category`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(4500)
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const data = json.data || json;
+        if (data && data.id) {
+          return {
+            ...data,
+            thumbnail: normalizeForgeImageUrl(data.thumbnail) || data.thumbnail
+          };
+        }
+      }
+    } catch {
+      // Fallback to fixture
+    }
+    const fixture = FIXTURE_MODS.find(m => m.id === modId);
+    return fixture || null;
+  },
+
+  /**
+   * Fetch single addon details
+   */
+  async getAddon(addonId: number): Promise<Addon | null> {
+    try {
+      const res = await fetch(`${API_BASE}/addon/${addonId}?include=versions,mod`, {
+        headers: { Accept: 'application/json' }
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   }
 };
+
+

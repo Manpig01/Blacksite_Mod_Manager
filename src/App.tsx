@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Boxes } from 'lucide-react';
+import { Boxes, Puzzle } from 'lucide-react';
 import { CustomTitleBar } from './components/CustomTitleBar';
 import { Header } from './components/Header';
 import { BrowseModsTab } from './components/BrowseModsTab';
+import { AddonsTab } from './components/AddonsTab';
 import { InstalledModsTab, InstalledSortField } from './components/InstalledModsTab';
 import { ModpacksTab } from './components/ModpacksTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -11,6 +12,7 @@ import { VersionSelectionModal } from './components/VersionSelectionModal';
 import { ConfigEditorModal } from './components/ConfigEditorModal';
 import { ConflictResolverModal } from './components/ConflictResolverModal';
 import { DependencyInstallModal } from './components/DependencyInstallModal';
+import { AddonDependencyPromptModal } from './components/AddonDependencyPromptModal';
 import { SptLauncherModal } from './components/SptLauncherModal';
 import { WindowsDownloadModal } from './components/WindowsDownloadModal';
 import { ExportModsModal } from './components/ExportModsModal';
@@ -33,6 +35,8 @@ import {
   ModVersion,
   ModTag,
   ResolvedDependencyItem,
+  Addon,
+  AddonVersion,
 } from './types';
 import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
@@ -123,7 +127,7 @@ export const App: React.FC = () => {
   const [sptVersions, setSptVersions] = useState<SptVersionInfo[]>([]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'browse' | 'installed' | 'modpacks' | 'settings'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'addons' | 'installed' | 'modpacks' | 'settings'>('browse');
 
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -140,6 +144,17 @@ export const App: React.FC = () => {
     targetMod: null,
     targetVersion: '',
     dependencies: [],
+  });
+  const [addonPromptState, setAddonPromptState] = useState<{
+    isOpen: boolean;
+    addon: Addon | null;
+    addonVersion: AddonVersion | null;
+    parentMod: Mod | null;
+  }>({
+    isOpen: false,
+    addon: null,
+    addonVersion: null,
+    parentMod: null,
   });
   const [selectedModForConfig, setSelectedModForConfig] = useState<InstalledMod | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<ConflictInfo | null>(null);
@@ -833,6 +848,160 @@ export const App: React.FC = () => {
     await handleInstallMod(targetMod, targetVersion, undefined, true);
   };
 
+  /**
+   * Handle Addon installation flow with parent mod verification
+   */
+  const handleInstallAddon = async (addon: Addon, version: AddonVersion) => {
+    // 1. Check if parent mod exists and is installed
+    if (addon.mod_id && addon.mod) {
+      const parentName = addon.mod.name.toLowerCase().trim();
+      const parentSlug = addon.mod.slug?.toLowerCase().trim();
+
+      const isParentInstalled = installedMods.some((m) => {
+        const idLower = m.id.toLowerCase().trim();
+        const nameLower = m.name.toLowerCase().trim();
+        return (
+          idLower === parentName ||
+          nameLower === parentName ||
+          (parentSlug && (idLower.includes(parentSlug) || nameLower.includes(parentSlug)))
+        );
+      });
+
+      if (!isParentInstalled) {
+        // Parent mod is missing, fetch full parent mod details if possible or create stub
+        let fullParentMod: Mod | null = null;
+        try {
+          fullParentMod = await apiService.getMod(addon.mod_id);
+        } catch {
+          fullParentMod = null;
+        }
+
+        // Open Addon Dependency Warning Modal
+        setAddonPromptState({
+          isOpen: true,
+          addon,
+          addonVersion: version,
+          parentMod: fullParentMod,
+        });
+        return;
+      }
+    }
+
+    // Parent is either already installed or addon is standalone, proceed directly
+    executeAddonInstall(addon, version);
+  };
+
+  /**
+   * Executes the raw addon download and queue registration
+   */
+  const executeAddonInstall = async (addon: Addon, version: AddonVersion) => {
+    const downloadUrl = version.link || `https://sp-mod.com/addon/download/${addon.id}/${addon.slug}/${version.version}`;
+    const targetGuid = `addon.${addon.slug || addon.name.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+
+    await queueInstall(
+      addon.name,
+      addon.authors?.[0]?.name || 'Addon Author',
+      version.version,
+      addon.thumbnail || addon.mod?.thumbnail || '',
+      targetGuid,
+      addon.id,
+      downloadUrl,
+      undefined,
+      undefined,
+      undefined,
+      {
+        id: targetGuid,
+        name: addon.name,
+        author: addon.authors?.[0]?.name || 'Addon Author',
+        version: version.version,
+        kind: 'Both',
+        thumbnail: addon.thumbnail || addon.mod?.thumbnail || '',
+        categoryTitle: 'Addons & Presets',
+        teaser: addon.teaser || addon.description || `Addon for ${addon.mod?.name || 'SPT'}`,
+        sptVersion: settings.sptVersion,
+        configFiles: [],
+      } as any
+    );
+  };
+
+  /**
+   * User chose to install both the missing parent mod and the addon
+   */
+  const handleConfirmInstallBothAddon = async () => {
+    const { addon, addonVersion, parentMod } = addonPromptState;
+    setAddonPromptState({ isOpen: false, addon: null, addonVersion: null, parentMod: null });
+
+    if (!addon || !addonVersion) return;
+
+    showToast(
+      'Installing Parent Mod + Addon',
+      `Queuing parent mod ${addon.mod?.name || 'Base Mod'} followed by ${addon.name}.`,
+      'info'
+    );
+
+    // 1. Install parent mod first
+    if (parentMod) {
+      await handleInstallMod(parentMod, undefined, undefined, true);
+    } else if (addon.mod) {
+      // Create minimal mod representation if full mod not loaded
+      const mockParent: Mod = {
+        id: addon.mod.id,
+        name: addon.mod.name,
+        slug: addon.mod.slug,
+        thumbnail: addon.mod.thumbnail || '',
+        owner: {
+          id: addon.mod.authors?.[0]?.id || 1,
+          name: addon.mod.authors?.[0]?.name || 'Author',
+          profile_photo_url: null,
+        },
+        category: { id: 1, title: 'Base Mods', slug: 'base-mods' },
+        downloads: 1000,
+        favourites_count: 50,
+        endorsements_count: 25,
+        versions: addon.mod.latest_version
+          ? [
+              {
+                id: addon.mod.latest_version.id,
+                version: addon.mod.latest_version.version,
+                link: addon.mod.latest_version.link,
+                description: 'Latest release',
+                content_length: null,
+                spt_version_constraint: '>=3.0.0',
+                fika_compatibility: 'compatible',
+                published_at: new Date().toISOString(),
+                downloads: 1000,
+                created_at: new Date().toISOString(),
+              },
+            ]
+          : [],
+        created_at: new Date().toISOString(),
+      };
+      await handleInstallMod(mockParent, undefined, undefined, true);
+    }
+
+    // 2. Install addon
+    await executeAddonInstall(addon, addonVersion);
+  };
+
+  /**
+   * User chose to install only the addon despite missing parent mod
+   */
+  const handleConfirmInstallAddonOnly = async () => {
+    const { addon, addonVersion } = addonPromptState;
+    setAddonPromptState({ isOpen: false, addon: null, addonVersion: null, parentMod: null });
+
+    if (!addon || !addonVersion) return;
+
+    showToast(
+      'Installing Addon Only',
+      `Installing ${addon.name} without parent mod.`,
+      'warning'
+    );
+
+    await executeAddonInstall(addon, addonVersion);
+  };
+
+
   const handleSelectVersion = (mod: Mod, ver: ModVersion) => {
     setVersionRecoveryNotice(null);
     setSelectedModForVersions(null);
@@ -1319,6 +1488,19 @@ export const App: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('addons')}
+          className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'addons'
+              ? 'text-[#EA580C] border-[#EA580C]'
+              : 'text-[#9AA3AF] hover:text-[#E8EAEE] border-transparent'
+          }`}
+          type="button"
+        >
+          <Puzzle className="w-3.5 h-3.5" />
+          <span>Addons</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('installed')}
           className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'installed'
@@ -1378,6 +1560,18 @@ export const App: React.FC = () => {
             onToggleShowRecommended={(show) => handleUpdateSettings({ showRecommendedMods: show })}
           />
         )}
+
+        {activeTab === 'addons' && (
+          <AddonsTab
+            installedMods={installedMods}
+            onInstallAddon={handleInstallAddon}
+            onNavigateToMod={(modId) => {
+              setActiveTab('browse');
+            }}
+            onShowToast={showToast}
+          />
+        )}
+
 
         {activeTab === 'installed' && (
           <InstalledModsTab
@@ -1510,8 +1704,27 @@ export const App: React.FC = () => {
         />
       )}
 
+      {/* Addon Missing Parent Mod Prompt Modal */}
+      <AddonDependencyPromptModal
+        isOpen={addonPromptState.isOpen}
+        addon={addonPromptState.addon}
+        addonVersion={addonPromptState.addonVersion}
+        parentMod={addonPromptState.parentMod}
+        onInstallBoth={handleConfirmInstallBothAddon}
+        onInstallAddonOnly={handleConfirmInstallAddonOnly}
+        onClose={() =>
+          setAddonPromptState({
+            isOpen: false,
+            addon: null,
+            addonVersion: null,
+            parentMod: null,
+          })
+        }
+      />
+
       <ConfigEditorModal
         mod={selectedModForConfig}
+
         isOpen={Boolean(selectedModForConfig)}
         onClose={() => setSelectedModForConfig(null)}
         onSaveConfigFile={handleSaveConfigFile}

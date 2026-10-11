@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to resolve the desktop installation error 'Unable to extract archive with any available decompression engine' for .7z and .rar mods like ISB Aishi. Configures dedicated bundled 7za binaries, runtime ASAR extraction fallback to disk, comprehensive multi-engine decompression cascade, and user-facing manual extraction recovery UI.",
-  "updatedAt":  "2026-10-10T08:47:36.772121597Z",
+  "summary":  "Implementation plan for integrating the official Forge Addons catalog into a dedicated top navigation tab in Blacksite Mod Manager, complete with search, parent mod dependency verification, and 1-click desktop installation.",
+  "updatedAt":  "2026-10-11T08:50:33.595638728Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

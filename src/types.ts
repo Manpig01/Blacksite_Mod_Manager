@@ -261,3 +261,63 @@ export interface LoadoutManifest {
   }[];
 }
 
+export interface AddonVersion {
+  id: number;
+  addon_id: number;
+  version: string;
+  slug: string;
+  link: string;
+  changelog?: string;
+  content_length?: number | null;
+  downloads?: number;
+  published_at?: string;
+  mod_version_constraint?: string | null;
+}
+
+export interface Addon {
+  id: number;
+  name: string;
+  slug: string;
+  teaser?: string;
+  description?: string;
+  mod_id: number;
+  category_id?: number;
+  downloads?: number;
+  rating?: number;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  thumbnail?: string;
+  authors?: {
+    id: number;
+    name: string;
+    avatar?: string;
+    roles?: string[];
+  }[];
+  versions?: AddonVersion[];
+  mod?: {
+    id: number;
+    name: string;
+    slug: string;
+    thumbnail?: string;
+    authors?: {
+      id: number;
+      name: string;
+    }[];
+    latest_version?: {
+      id: number;
+      version: string;
+      link: string;
+    };
+  };
+}
+
+export interface AddonQueryResult {
+  data: Addon[];
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+}
+
+
