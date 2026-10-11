@@ -6,7 +6,7 @@
 
 **Next-generation mod manager, conflict resolver, and server orchestrator for Single Player Tarkov (SPT) and Fika.**
 
-[![Version](https://img.shields.io/badge/version-2.0.0--stable-orange.svg?style=flat-square)](https://github.com/Manpig01/Blacksite_Mod_Manager-TEST/releases)
+[![Version](https://img.shields.io/badge/version-2.1.0--stable-orange.svg?style=flat-square)](https://github.com/Manpig01/Blacksite_Mod_Manager-TEST/releases)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg?style=flat-square)](https://github.com/Manpig01/Blacksite_Mod_Manager-TEST/actions)
 [![SPT Compatibility](https://img.shields.io/badge/SPT-3.8.x%20--%204.0.x-blue.svg?style=flat-square)](https://sp-mod.com)
 [![Fika](https://img.shields.io/badge/Fika-Co--op%20Ready-green.svg?style=flat-square)](https://github.com/project-fika)
@@ -26,8 +26,11 @@
 
 ---
 
-## ⚡ Highlights in v2.0.0
+## ⚡ Highlights in v2.1.0
 
+- **🧩 First-Class Addons Hub with Live SPT API**: Complete dedicated Addons hub synchronizing directly with `sp-mod.com/api/v0/addons`. Explore addon sub-mods, inspect parent mod relationships, view version constraints, and install addons with smart parent mod dependency prompting.
+- **🖼️ High-Fidelity Addon Image Caching & Proxy**: Fast image proxy fallback with parent mod thumbnail resolution, in-memory caching, and persistent IndexedDB offline storage for lightning-fast browsing.
+- **🪟 Windows 11 (24H2 / 25H2) Stability**: Electron 34 runtime upgrade, zero-crash startup switches (`--no-sandbox`, `--disable-gpu-sandbox`), single-instance mutex locking, and automatic crash diagnostic logging.
 - **🚀 1-Click Batch Mod Updater**: Automatically discovers updates for all installed mods and upgrades them in a single queued batch with automatic `.json`/`.cfg` configuration backup and preservation.
 - **🛡️ Deep Clean Uninstaller**: Purges both directory-based and standalone BepInEx client plugins and server mods with zero orphan files, while strictly safeguarding SPT core system files (`spt/`).
 - **⚔️ Real-Time Mod Conflict Detection**: Automatically flags duplicate client DLLs and server package ID collisions with immediate one-click resolution actions.
@@ -43,9 +46,9 @@ Head over to the **[Latest GitHub Release](https://github.com/Manpig01/Blacksite
 
 | Package | File | Description |
 | :--- | :--- | :--- |
-| **Setup Installer** *(Recommended)* | `Blacksite-Mod-Manager-Setup-2.0.0.exe` | Full Windows installer with Start Menu integration, desktop shortcut, and uninstaller. |
-| **Setup Installer (ZIP)** | `Blacksite-Mod-Manager-Setup-2.0.0.zip` | Standalone ZIP archive containing solely `Blacksite-Mod-Manager-Setup-2.0.0.exe` for environments with .exe download restrictions. |
-| **Portable Standalone** | `Blacksite-Mod-Manager-Portable-2.0.0.exe` | Zero-installation executable. Run directly from any folder or USB drive. |
+| **Setup Installer** *(Recommended)* | `Blacksite-Mod-Manager-Setup-2.1.0.exe` | Full Windows installer with Start Menu integration, desktop shortcut, and uninstaller. |
+| **Setup Installer (ZIP)** | `Blacksite-Mod-Manager-Setup-2.1.0.zip` | Standalone ZIP archive containing solely `Blacksite-Mod-Manager-Setup-2.1.0.exe` for environments with .exe download restrictions. |
+| **Portable Standalone** | `Blacksite-Mod-Manager-Portable-2.1.0.exe` | Zero-installation executable. Run directly from any folder or USB drive. |
 | **Integrity Checksums** | `SHA256SUMS.txt` | Cryptographic SHA256 hashes for all release artifacts. |
 
 ---
