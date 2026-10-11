@@ -831,7 +831,7 @@ function getDownloadHeaders(targetUrl, strategy = 'default') {
 
   // Standard Strategy: Authentic Application Client Identifier (bypasses Codeberg & Forgejo bot blocks)
   const headers = {
-    'User-Agent': 'BlacksiteModManager/2.0.0 (Windows NT 10.0; Win64; x64; SPT-Mod-Manager)',
+    'User-Agent': 'BlacksiteModManager/2.1.0 (Windows NT 10.0; Win64; x64; SPT-Mod-Manager)',
     'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
   };

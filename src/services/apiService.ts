@@ -1,4 +1,4 @@
-import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem, Addon, AddonQueryResult } from '../types';
+import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem, Addon, AddonVersion, AddonQueryResult } from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
 import { getKnownDependencyMeta } from '../data/knownDependencies';
 import { sortSptVersionsByMostRecent, sortModVersionsByMostRecent } from '../utils/versionUtils';
@@ -38,6 +38,77 @@ export function normalizeForgeImageUrl(url?: string | null): string | null {
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
   return `https://files.sp-mod.com/${trimmed.replace(/^\/+/, '')}`;
 }
+
+export function normalizeAddon(item: any): Addon {
+  if (!item) return item;
+  const owner = item.owner;
+  const authors: { id: number; name: string; avatar?: string; roles?: string[] }[] = [];
+  if (owner) {
+    authors.push({
+      id: owner.id,
+      name: owner.name,
+      avatar: normalizeForgeImageUrl(owner.profile_photo_url) || undefined
+    });
+  }
+  if (Array.isArray(item.additional_authors)) {
+    for (const a of item.additional_authors) {
+      if (a && a.id) {
+        authors.push({
+          id: a.id,
+          name: a.name,
+          avatar: normalizeForgeImageUrl(a.profile_photo_url) || undefined
+        });
+      }
+    }
+  }
+
+  const versions: AddonVersion[] = Array.isArray(item.versions)
+    ? item.versions.map((v: any) => ({
+        id: v.id,
+        addon_id: item.id,
+        version: v.version || '1.0.0',
+        slug: v.slug || (v.version ? v.version.replace(/\./g, '-') : '1-0-0'),
+        link: v.link || `https://sp-mod.com/addon/download/${item.id}/${item.slug || 'addon'}/${v.version || '1.0.0'}`,
+        changelog: v.description || v.changelog || '',
+        content_length: v.content_length,
+        downloads: v.downloads ?? 0,
+        published_at: v.published_at || v.created_at,
+        mod_version_constraint: v.mod_version_constraint || null
+      }))
+    : [];
+
+  return {
+    id: item.id,
+    name: (item.name || '').trim(),
+    slug: item.slug || '',
+    teaser: item.teaser || '',
+    description: item.description || '',
+    mod_id: item.mod_id,
+    category_id: item.category_id,
+    downloads: item.downloads ?? 0,
+    rating: item.rating,
+    status: item.status,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+    thumbnail: normalizeForgeImageUrl(item.thumbnail) || undefined,
+    authors: authors.length > 0 ? authors : (item.authors || [{ id: 0, name: 'Community' }]),
+    versions,
+    mod: item.mod
+      ? {
+          id: item.mod.id,
+          name: item.mod.name,
+          slug: item.mod.slug,
+          thumbnail: normalizeForgeImageUrl(item.mod.thumbnail) || undefined,
+          authors: item.mod.owner
+            ? [{ id: item.mod.owner.id, name: item.mod.owner.name }]
+            : item.mod.authors
+        }
+      : undefined
+  };
+}
+
+let cachedAllAddons: { data: Addon[]; timestamp: number } | null = null;
+const ADDONS_CACHE_TTL = 60 * 1000; // 60 seconds
 
 export const apiService = {
   async getCategories(): Promise<ModCategory[]> {
@@ -592,48 +663,108 @@ export const apiService = {
     search?: string;
     modId?: number;
     sort?: string;
+    forceRefresh?: boolean;
   }): Promise<AddonQueryResult> {
     const page = params?.page || 1;
     const perPage = params?.perPage || 24;
     const search = params?.search?.trim() || '';
     const sort = params?.sort || 'downloads_desc';
     const modId = params?.modId;
+    const forceRefresh = !!params?.forceRefresh;
 
     try {
-      const url = new URL(`${API_BASE}/addons`);
-      url.searchParams.set('page', page.toString());
-      url.searchParams.set('per_page', perPage.toString());
-      url.searchParams.set('include', 'versions,mod');
+      const now = Date.now();
+      let allAddons: Addon[] = [];
 
+      if (!forceRefresh && cachedAllAddons && (now - cachedAllAddons.timestamp) < ADDONS_CACHE_TTL) {
+        allAddons = cachedAllAddons.data;
+      } else {
+        // Fetch first page to inspect total and last_page from live SPT API
+        const firstRes = await fetch(`${API_BASE}/addons?per_page=50&page=1&include=mod,versions`, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(6000)
+        });
+
+        if (!firstRes.ok) {
+          throw new Error(`Failed to fetch addons: HTTP ${firstRes.status}`);
+        }
+
+        const firstJson = await firstRes.json();
+        const firstPageData = Array.isArray(firstJson.data) ? firstJson.data : [];
+        const lastPage = firstJson.meta?.last_page || 1;
+
+        const rawItems = [...firstPageData];
+
+        if (lastPage > 1) {
+          const subsequentRequests = [];
+          for (let p = 2; p <= lastPage; p++) {
+            subsequentRequests.push(
+              fetch(`${API_BASE}/addons?per_page=50&page=${p}&include=mod,versions`, {
+                headers: { Accept: 'application/json' },
+                signal: AbortSignal.timeout(6000)
+              })
+                .then(r => (r.ok ? r.json() : null))
+                .catch(() => null)
+            );
+          }
+          const subsequentPages = await Promise.all(subsequentRequests);
+          for (const sp of subsequentPages) {
+            if (sp && Array.isArray(sp.data)) {
+              rawItems.push(...sp.data);
+            }
+          }
+        }
+
+        allAddons = rawItems.map(normalizeAddon);
+        cachedAllAddons = { data: allAddons, timestamp: now };
+      }
+
+      // Filter by search query
+      let filtered = allAddons;
       if (search) {
-        url.searchParams.set('q', search);
+        const q = search.toLowerCase();
+        filtered = filtered.filter(
+          (a) =>
+            a.name.toLowerCase().includes(q) ||
+            (a.teaser && a.teaser.toLowerCase().includes(q)) ||
+            (a.slug && a.slug.toLowerCase().includes(q)) ||
+            (a.mod?.name && a.mod.name.toLowerCase().includes(q)) ||
+            (a.mod?.slug && a.mod.slug.toLowerCase().includes(q)) ||
+            (a.authors && a.authors.some((au) => au.name.toLowerCase().includes(q)))
+        );
       }
+
+      // Filter by parent mod ID if specified
       if (modId) {
-        url.searchParams.set('mod_id', modId.toString());
-      }
-      if (sort) {
-        url.searchParams.set('sort', sort);
+        filtered = filtered.filter((a) => a.mod_id === modId);
       }
 
-      const res = await fetch(url.toString(), {
-        headers: { Accept: 'application/json' }
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to fetch addons: HTTP ${res.status}`);
+      // Accurate sorting
+      if (sort === 'downloads_desc' || sort === 'downloads') {
+        filtered = [...filtered].sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0));
+      } else if (sort === 'created_desc' || sort === 'recent') {
+        filtered = [...filtered].sort((a, b) => {
+          const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return db - da;
+        });
+      } else if (sort === 'name_asc' || sort === 'name') {
+        filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
       }
 
-      const json = await res.json();
-      const rawData = Array.isArray(json) ? json : (json.data || []);
-      const total = json.total ?? rawData.length;
-      const totalPages = json.total_pages ?? Math.ceil(total / perPage) ?? 1;
+      const total = filtered.length;
+      const totalPages = Math.max(1, Math.ceil(total / perPage));
+      const validPage = Math.min(Math.max(1, page), totalPages);
+      const startIndex = (validPage - 1) * perPage;
+      const pageData = filtered.slice(startIndex, startIndex + perPage);
 
       return {
-        data: rawData as Addon[],
+        data: pageData,
         total,
-        page,
+        page: validPage,
         per_page: perPage,
-        total_pages: totalPages
+        total_pages: totalPages,
+        isOfflineFallback: false
       };
     } catch (err) {
       console.warn('API error fetching addons, using fallback fixtures:', err);
@@ -765,14 +896,15 @@ export const apiService = {
       let filtered = fallbackAddons;
       if (search) {
         const q = search.toLowerCase();
-        filtered = filtered.filter(a =>
-          a.name.toLowerCase().includes(q) ||
-          (a.teaser && a.teaser.toLowerCase().includes(q)) ||
-          (a.mod?.name && a.mod.name.toLowerCase().includes(q))
+        filtered = filtered.filter(
+          (a) =>
+            a.name.toLowerCase().includes(q) ||
+            (a.teaser && a.teaser.toLowerCase().includes(q)) ||
+            (a.mod?.name && a.mod.name.toLowerCase().includes(q))
         );
       }
       if (modId) {
-        filtered = filtered.filter(a => a.mod_id === modId);
+        filtered = filtered.filter((a) => a.mod_id === modId);
       }
 
       return {
@@ -780,7 +912,8 @@ export const apiService = {
         total: filtered.length,
         page: 1,
         per_page: perPage,
-        total_pages: 1
+        total_pages: 1,
+        isOfflineFallback: true
       };
     }
   },
@@ -807,23 +940,62 @@ export const apiService = {
     } catch {
       // Fallback to fixture
     }
-    const fixture = FIXTURE_MODS.find(m => m.id === modId);
+    const fixture = FIXTURE_MODS.find((m) => m.id === modId);
     return fixture || null;
   },
 
   /**
-   * Fetch single addon details
+   * Fetch single addon details with relations
    */
   async getAddon(addonId: number): Promise<Addon | null> {
     try {
       const res = await fetch(`${API_BASE}/addon/${addonId}?include=versions,mod`, {
-        headers: { Accept: 'application/json' }
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(4500)
       });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
+      if (res.ok) {
+        const json = await res.json();
+        const data = json.data || json;
+        if (data && data.id) {
+          return normalizeAddon(data);
+        }
+      }
+    } catch {}
+
+    if (cachedAllAddons) {
+      const found = cachedAllAddons.data.find((a) => a.id === addonId);
+      if (found) return found;
     }
+    return null;
+  },
+
+  /**
+   * Fetch versions list for an addon
+   */
+  async getAddonVersions(addonId: number): Promise<AddonVersion[]> {
+    try {
+      const res = await fetch(`${API_BASE}/addon/${addonId}/versions`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(4500)
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const data = Array.isArray(json.data) ? json.data : [];
+        return data.map((v: any) => ({
+          id: v.id,
+          addon_id: addonId,
+          version: v.version || '1.0.0',
+          slug: v.slug || (v.version ? v.version.replace(/\./g, '-') : '1-0-0'),
+          link: v.link,
+          changelog: v.description || v.changelog || '',
+          content_length: v.content_length,
+          downloads: v.downloads ?? 0,
+          published_at: v.published_at || v.created_at,
+          mod_version_constraint: v.mod_version_constraint || null
+        }));
+      }
+    } catch {}
+    return [];
   }
 };
 

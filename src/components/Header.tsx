@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="text-[15px] text-[#9AA3AF] mt-0.5">Mod Manager</span>
           <div className="bg-[#EA580C]/15 border border-[#EA580C]/35 rounded px-2 py-0.5 ml-2">
             <span className="text-[11px] text-[#EA580C] font-semibold tracking-wide">
-              v2.0.0
+              v2.1.0
             </span>
           </div>
           <div className="bg-[#20252D] rounded px-2 py-0.5 ml-1">

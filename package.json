@@ -3,7 +3,7 @@
   "description": "Next-generation mod manager and server orchestrator for Single Player Tarkov",
   "author": "Blacksite Development Team",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -30,7 +30,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.2.0",
+    "electron": "^34.5.8",
     "electron-builder": "^25.1.8",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0",

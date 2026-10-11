@@ -178,7 +178,7 @@ export const App: React.FC = () => {
     const foundConflicts = storageService.detectConflicts(installedMods, ignoredConflicts);
     setConflicts(foundConflicts);
 
-    showToast('Blacksite Ready', 'Blacksite Mod Manager v2.0.0 initialized.', 'info');
+    showToast('Blacksite Ready', 'Blacksite Mod Manager v2.1.0 initialized.', 'info');
   }, []);
 
   // Update conflict state when installed mods change
@@ -1479,7 +1479,7 @@ export const App: React.FC = () => {
   // Diagnostics Export
   const handleExportDiagnostics = () => {
     const diagnostics = {
-      appVersion: 'Blacksite Mod Manager - v2.0.0',
+      appVersion: 'Blacksite Mod Manager - v2.1.0',
       timestamp: new Date().toISOString(),
       os: 'Windows 11 x64 (Simulated Web Runtime)',
       sptPath: settings.sptDirectory,
@@ -1645,8 +1645,17 @@ export const App: React.FC = () => {
           <AddonsTab
             installedMods={installedMods}
             onInstallAddon={handleInstallAddon}
-            onNavigateToMod={(modId) => {
-              setActiveTab('browse');
+            onNavigateToMod={async (modId) => {
+              try {
+                const parent = await apiService.getMod(modId);
+                if (parent) {
+                  setSelectedModForVersions(parent);
+                } else {
+                  setActiveTab('browse');
+                }
+              } catch {
+                setActiveTab('browse');
+              }
             }}
             onShowToast={showToast}
           />
@@ -1843,7 +1852,7 @@ export const App: React.FC = () => {
       <WindowsDownloadModal
         isOpen={isDownloadModalOpen}
         onClose={() => setIsDownloadModalOpen(false)}
-        appVersion="2.0.0"
+        appVersion="2.1.0"
         onShowToast={showToast}
       />
 

@@ -28,7 +28,7 @@ interface WindowsDownloadModalProps {
 export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   isOpen,
   onClose,
-  appVersion = '2.0.0',
+  appVersion = '2.1.0',
   onShowToast,
 }) => {
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');

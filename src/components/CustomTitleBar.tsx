@@ -87,7 +87,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
           className="w-[22px] h-[22px] object-contain drop-shadow rounded-sm"
         />
         <span className="text-[12.5px] font-semibold text-[#E8EAEE] tracking-tight">
-          Blacksite Mod Manager - v2.0.0
+          Blacksite Mod Manager - v2.1.0
         </span>
       </div>
 

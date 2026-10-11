@@ -2,6 +2,41 @@ const { app, BrowserWindow, shell, ipcMain, dialog, session, nativeImage } = req
 const path = require('path');
 const fs = require('fs');
 
+// Windows 11 (24H2/25H2) compatibility flags:
+// Chromium 130/132 GPU sandbox and DACL permission collision fix
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  // Prevent occlusion query and D3D11 device creation crashes on Windows 11 insider/recent builds
+  app.commandLine.appendSwitch('disable-features', 'WidgetLayering,CalculateNativeWinOcclusion');
+}
+
+// Early crash logging to %LOCALAPPDATA%\blacksite-mod-manager\crash.log
+function logFatalError(context, err) {
+  try {
+    const errorDetails = `[${new Date().toISOString()}] [${context}] ${err?.stack || err?.message || String(err)}\n`;
+    console.error(errorDetails);
+    const localAppData =
+      process.env.LOCALAPPDATA ||
+      (process.platform === 'win32'
+        ? path.join(process.env.USERPROFILE || 'C:\\', 'AppData', 'Local')
+        : '');
+    if (localAppData) {
+      const logDir = path.join(localAppData, 'blacksite-mod-manager');
+      if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+      fs.appendFileSync(path.join(logDir, 'crash.log'), errorDetails);
+    }
+  } catch (_) {}
+}
+
+process.on('uncaughtException', (err) => {
+  logFatalError('uncaughtException', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logFatalError('unhandledRejection', reason);
+});
+
 let mainWindow = null;
 
 function resolveDefaultAppIcon() {
@@ -27,7 +62,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 680,
     backgroundColor: '#121418',
-    title: 'Blacksite Mod Manager - v2.0.0',
+    title: 'Blacksite Mod Manager - v2.1.0',
     icon: windowIcon,
     frame: false, // Frameless window - removes duplicate OS titlebar
     autoHideMenuBar: true,
@@ -88,9 +123,30 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logFatalError('render-process-gone', new Error(`Renderer gone: reason=${details.reason}, exitCode=${details.exitCode}`));
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    logFatalError('unresponsive', new Error('MainWindow became unresponsive'));
+  });
 }
 
-app.whenReady().then(() => {
+const singleInstanceLock = app.requestSingleInstanceLock();
+
+if (!singleInstanceLock) {
+  console.warn('Another instance is already running. Quitting.');
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
   // Ensure Forge images loaded by <img> elements in the renderer bypass hotlink protection
   if (session && session.defaultSession) {
     session.defaultSession.webRequest.onBeforeSendHeaders(
@@ -424,6 +480,7 @@ app.whenReady().then(() => {
     }
   });
 });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

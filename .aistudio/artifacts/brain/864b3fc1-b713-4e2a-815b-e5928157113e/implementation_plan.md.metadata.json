@@ -1,6 +1,6 @@
 {
-  "summary":  "Comprehensive implementation plan to fix decompression failures, TLS fetch errors, and CDN 404 errors across the Electron bridge and React UI. Includes runtime 7-Zip auto-provisioning, resilient HTTPS fallback for broken server TLS, automatic Forge URL recovery with Version Picker for 404s, and fixing sourceMod tracking in the installation queue.",
-  "updatedAt":  "2026-10-11T10:21:06.050152379Z",
+  "summary":  "Implementation plan for resilient Addon Image Fetching & Caching:\n1. Create dedicated AddonThumbnail component with candidate URL fallback chain (Addon thumbnail -> Parent mod thumbnail -> Author avatar -> Tactical badge placeholder).\n2. Support web image proxying (/api/forge-image) to bypass hotlink protection and native Electron Referer header injection.\n3. Integrate persistent IndexedDB and memory caching via imageCacheService for 0ms load and offline viewing.\n4. Replace raw img elements in AddonsTab card grid and Details Modal with AddonThumbnail.",
+  "updatedAt":  "2026-10-11T22:46:42.933041690Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
