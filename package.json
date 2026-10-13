@@ -45,6 +45,9 @@
   "build": {
     "appId": "com.blacksite.modmanager",
     "productName": "Blacksite Mod Manager",
+    "electronLanguages": [
+      "en-US"
+    ],
     "directories": {
       "output": "release"
     },
@@ -52,7 +55,11 @@
       "dist/**/*",
       "electron/**/*",
       "public/**/*",
-      "package.json"
+      "package.json",
+      "!**/node_modules/7zip-bin/arm/**",
+      "!**/node_modules/7zip-bin/arm64/**",
+      "!**/node_modules/7zip-bin/ia32/**",
+      "!**/node_modules/7zip-bin/mac/**"
     ],
     "extraResources": [
       {
@@ -62,7 +69,8 @@
     ],
     "asarUnpack": [
       "**/electron/bin/**/*",
-      "**/node_modules/7zip-bin/**/*"
+      "**/node_modules/7zip-bin/win/x64/**/*",
+      "**/node_modules/7zip-bin/linux/x64/**/*"
     ],
     "win": {
       "icon": "public/app.ico",
@@ -83,6 +91,7 @@
     },
     "nsis": {
       "artifactName": "Blacksite-Mod-Manager-Setup-${version}.${ext}",
+      "differentialPackage": true,
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

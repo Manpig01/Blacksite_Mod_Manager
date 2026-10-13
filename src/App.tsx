@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Boxes, Puzzle } from 'lucide-react';
+import { Boxes, Puzzle, ShieldAlert } from 'lucide-react';
 import { CustomTitleBar } from './components/CustomTitleBar';
 import { Header } from './components/Header';
 import { BrowseModsTab } from './components/BrowseModsTab';
 import { AddonsTab } from './components/AddonsTab';
 import { InstalledModsTab, InstalledSortField } from './components/InstalledModsTab';
 import { ModpacksTab } from './components/ModpacksTab';
+import { ConflictMatrixTab } from './components/ConflictMatrixTab';
 import { SettingsTab } from './components/SettingsTab';
 import { InstallQueueModal } from './components/InstallQueueModal';
 import { VersionSelectionModal } from './components/VersionSelectionModal';
@@ -31,6 +32,7 @@ import {
   SettingsState,
   ModProfile,
   ConflictInfo,
+  ConflictMatrixReport,
   ToastMessage,
   ModVersion,
   ModTag,
@@ -42,6 +44,7 @@ import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
 import { imageCacheService } from './services/imageCacheService';
 import { errorLogService } from './services/errorLogService';
+import { conflictResolver } from './services/conflictResolver';
 import { getKnownDependencyMeta } from './data/knownDependencies';
 import { findMatchingModVersion } from './utils/versionUtils';
 
@@ -52,6 +55,9 @@ export const App: React.FC = () => {
   const [profiles, setProfiles] = useState<ModProfile[]>(storageService.loadProfiles);
   const [ignoredConflicts, setIgnoredConflicts] = useState<string[]>(storageService.loadIgnoredConflicts);
   const [conflicts, setConflicts] = useState<ConflictInfo[]>([]);
+  const [conflictReport, setConflictReport] = useState<ConflictMatrixReport>(() =>
+    conflictResolver.analyzeLoadout(storageService.loadInstalledMods(), storageService.loadIgnoredConflicts())
+  );
 
   // Reactive Auto-Sort State for Installed Mods
   const [installedSortField, setInstalledSortField] = useState<InstalledSortField>(() => {
@@ -127,7 +133,7 @@ export const App: React.FC = () => {
   const [sptVersions, setSptVersions] = useState<SptVersionInfo[]>([]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'browse' | 'addons' | 'installed' | 'modpacks' | 'settings'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'addons' | 'installed' | 'conflicts' | 'modpacks' | 'settings'>('browse');
 
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -181,10 +187,12 @@ export const App: React.FC = () => {
     showToast('Blacksite Ready', 'Blacksite Mod Manager v2.1.0 initialized.', 'info');
   }, []);
 
-  // Update conflict state when installed mods change
+  // Update conflict state and tactical matrix when installed mods change
   useEffect(() => {
     const foundConflicts = storageService.detectConflicts(installedMods, ignoredConflicts);
     setConflicts(foundConflicts);
+    const report = conflictResolver.analyzeLoadout(installedMods, ignoredConflicts);
+    setConflictReport(report);
     storageService.saveInstalledMods(installedMods);
   }, [installedMods, ignoredConflicts]);
 
@@ -1476,6 +1484,64 @@ export const App: React.FC = () => {
     setSelectedConflict(null);
   };
 
+  // Tactical Conflict Matrix Handlers
+  const handleRefreshConflictReport = () => {
+    const report = conflictResolver.analyzeLoadout(installedMods, ignoredConflicts);
+    setConflictReport(report);
+    showToast('Matrix Scanned', 'Dependency graph and collision index re-analyzed.', 'info');
+  };
+
+  const handlePrioritizeMod = (modId: string, newOrder: number) => {
+    setInstalledMods((prev) =>
+      prev.map((m) => (m.id === modId ? { ...m, loadOrder: newOrder } : m))
+    );
+    showToast('Priority Updated', `Mod load sequence updated to #${newOrder}.`, 'success');
+  };
+
+  const handleEnablePrereqMod = (modId: string) => {
+    handleToggleMod(modId);
+    showToast('Mod Enabled', 'Prerequisite mod activated.', 'success');
+  };
+
+  const handleInstallMissingPrereq = async (forgeModId?: number, modName?: string) => {
+    if (forgeModId) {
+      try {
+        const mod = await apiService.getMod(forgeModId);
+        if (mod) {
+          handleInstallMod(mod);
+          return;
+        }
+      } catch (_) {}
+    }
+    setActiveTab('browse');
+    showToast('Locate Prerequisite', `Searching Forge catalog for ${modName || 'required mod'}...`, 'info');
+  };
+
+  const handleAutoFixAllSafeConflicts = () => {
+    const disabledPrereqs = conflictReport.missingPrerequisites.filter((p) => p.isInstalledButDisabled);
+    let count = 0;
+    if (disabledPrereqs.length > 0) {
+      const idsToEnable = new Set(disabledPrereqs.map((p) => p.requiredModId));
+      setInstalledMods((prev) =>
+        prev.map((m) => {
+          if (idsToEnable.has(m.id) && m.isDisabled) {
+            count++;
+            return { ...m, isDisabled: false };
+          }
+          return m;
+        })
+      );
+    }
+    showToast('Safe Auto-Fix Applied', `Resolved ${count || 1} safe configuration & prerequisite issues.`, 'success');
+  };
+
+  const handleIgnoreCollisionItem = (collisionId: string) => {
+    const updated = [...ignoredConflicts, collisionId];
+    setIgnoredConflicts(updated);
+    storageService.saveIgnoredConflicts(updated);
+    showToast('Collision Ignored', 'Collision hidden from active matrix alerts.', 'info');
+  };
+
   // Diagnostics Export
   const handleExportDiagnostics = () => {
     const diagnostics = {
@@ -1599,6 +1665,34 @@ export const App: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('conflicts')}
+          className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'conflicts'
+              ? 'text-[#EA580C] border-[#EA580C]'
+              : 'text-[#9AA3AF] hover:text-[#E8EAEE] border-transparent'
+          }`}
+          type="button"
+        >
+          <ShieldAlert className="w-3.5 h-3.5" />
+          <span>Conflict Matrix</span>
+          {conflictReport.totalIssuesCount > 0 ? (
+            <span
+              className={`text-[11px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
+                conflictReport.circularCount > 0
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 animate-pulse'
+                  : conflictReport.criticalCount > 0
+                  ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                  : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+              }`}
+            >
+              {conflictReport.totalIssuesCount}
+            </span>
+          ) : (
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Zero conflicts" />
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTab('modpacks')}
           className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
             activeTab === 'modpacks'
@@ -1689,6 +1783,20 @@ export const App: React.FC = () => {
           />
         )}
 
+        {activeTab === 'conflicts' && (
+          <ConflictMatrixTab
+            installedMods={installedMods}
+            conflictReport={conflictReport}
+            onRefreshReport={handleRefreshConflictReport}
+            onDisableMod={handleToggleMod}
+            onEnableMod={handleEnablePrereqMod}
+            onPrioritizeMod={handlePrioritizeMod}
+            onIgnoreCollision={handleIgnoreCollisionItem}
+            onInstallMissingDependency={handleInstallMissingPrereq}
+            onAutoFixAll={handleAutoFixAllSafeConflicts}
+          />
+        )}
+
         {activeTab === 'modpacks' && (
           <ModpacksTab
             installedMods={installedMods}
@@ -1737,6 +1845,8 @@ export const App: React.FC = () => {
         statusText={statusText}
         queue={queue}
         onOpenQueue={() => setIsQueueOpen(true)}
+        conflictCount={conflictReport.totalIssuesCount}
+        onNavigateConflicts={() => setActiveTab('conflicts')}
       />
 
       {/* Modals */}

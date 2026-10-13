@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execFile } = require('child_process');
+const crypto = require('crypto');
+const { execFile, spawn } = require('child_process');
 const { Readable } = require('stream');
 const https = require('https');
 const http = require('http');
@@ -59,24 +60,45 @@ function extractBinaryFromAsarIfNeeded(binPath) {
     return binPath;
   }
 
-  // If inside .asar or virtual asar path, extract to temp disk location
+  // First check if sibling unpacked path exists (Electron electron-builder standard)
+  const unpackedPath = binPath.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+  if (unpackedPath !== binPath && fs.existsSync(unpackedPath)) {
+    return unpackedPath;
+  }
+
+  // If inside .asar or virtual asar path, extract to user-data or temp disk location
   try {
     const isWin = process.platform === 'win32';
     const binName = isWin ? '7za.exe' : '7za';
-    const tempBinDir = path.join(os.tmpdir(), 'blacksite-bin');
-    fs.mkdirSync(tempBinDir, { recursive: true });
-    const targetDiskBin = path.join(tempBinDir, binName);
+    const diskDirs = [
+      path.join(getUserDataDir(), 'bin'),
+      path.join(os.tmpdir(), 'blacksite-bin'),
+    ];
 
-    // Read buffer (Electron fs reads from inside app.asar seamlessly)
-    if (fs.existsSync(binPath)) {
-      const binBuffer = fs.readFileSync(binPath);
-      if (!fs.existsSync(targetDiskBin) || fs.statSync(targetDiskBin).size !== binBuffer.length) {
-        fs.writeFileSync(targetDiskBin, binBuffer);
+    for (const tempBinDir of diskDirs) {
+      try {
+        fs.mkdirSync(tempBinDir, { recursive: true });
+        const targetDiskBin = path.join(tempBinDir, binName);
+
+        // Read buffer (Electron fs reads from inside app.asar seamlessly)
+        if (fs.existsSync(binPath)) {
+          const binBuffer = fs.readFileSync(binPath);
+          if (binBuffer && binBuffer.length > 50000) {
+            if (!fs.existsSync(targetDiskBin) || fs.statSync(targetDiskBin).size !== binBuffer.length) {
+              const tempWritePath = `${targetDiskBin}.${Date.now()}.tmp`;
+              fs.writeFileSync(tempWritePath, binBuffer);
+              try { if (fs.existsSync(targetDiskBin)) fs.unlinkSync(targetDiskBin); } catch (_) {}
+              fs.renameSync(tempWritePath, targetDiskBin);
+            }
+            if (!isWin) {
+              try { fs.chmodSync(targetDiskBin, 0o755); } catch {}
+            }
+            return targetDiskBin;
+          }
+        }
+      } catch (dirErr) {
+        console.warn(`[Blacksite Installer] Failed writing unpacked binary to ${tempBinDir}:`, dirErr.message);
       }
-      if (!isWin) {
-        try { fs.chmodSync(targetDiskBin, 0o755); } catch {}
-      }
-      return targetDiskBin;
     }
   } catch (err) {
     console.warn('[Blacksite Installer] Failed to unpack 7za binary from ASAR to temp directory:', err.message);
@@ -103,34 +125,42 @@ function resolve7zaBinary() {
   const tempBin = path.join(os.tmpdir(), 'blacksite-bin', exeName);
   candidates.push(tempBin);
 
-  // 3. Check unpacked extraResources in packaged Electron (from electron-builder extraResources)
+  // 3. Check extraResources & app.asar.unpacked in packaged Electron (from electron-builder extraResources)
   if (process.resourcesPath) {
     candidates.push(path.join(process.resourcesPath, 'bin', binSubdir, exeName));
     candidates.push(path.join(process.resourcesPath, 'bin', exeName));
     candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'bin', binSubdir, exeName));
     candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'electron', 'bin', exeName));
-    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', 'win', 'x64', '7za.exe'));
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', binSubdir, 'x64', exeName));
+    candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '7zip-bin', binSubdir, exeName));
     candidates.push(path.join(process.resourcesPath, exeName));
   }
 
-  // 4. Check bundled electron/bin relative to __dirname and process.cwd()
+  // 4. Check app.asar.unpacked derived from current __dirname
+  const unpackedDir = __dirname.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+  if (unpackedDir !== __dirname) {
+    candidates.push(path.join(unpackedDir, 'bin', binSubdir, exeName));
+    candidates.push(path.join(unpackedDir, 'bin', exeName));
+    candidates.push(path.join(unpackedDir, '../electron/bin', binSubdir, exeName));
+    candidates.push(path.join(unpackedDir, '../bin', binSubdir, exeName));
+  }
+
+  // 5. Check bundled electron/bin relative to __dirname and process.cwd()
   candidates.push(path.join(__dirname, 'bin', binSubdir, exeName));
   candidates.push(path.join(__dirname, 'bin', exeName));
   candidates.push(path.join(__dirname, '../electron/bin', binSubdir, exeName));
   candidates.push(path.join(process.cwd(), 'electron/bin', binSubdir, exeName));
 
-  // 5. Check node_modules/7zip-bin
+  // 6. Check node_modules/7zip-bin
   if (sevenZip && sevenZip.path7za) {
+    candidates.push(sevenZip.path7za.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2'));
     candidates.push(sevenZip.path7za);
-    if (sevenZip.path7za.includes('app.asar')) {
-      candidates.push(sevenZip.path7za.replace('app.asar', 'app.asar.unpacked'));
-    }
   }
-  candidates.push(path.join(__dirname, '../node_modules/7zip-bin/win/x64/7za.exe'));
-  candidates.push(path.join(__dirname, 'node_modules/7zip-bin/win/x64/7za.exe'));
-  candidates.push(path.join(process.cwd(), 'node_modules/7zip-bin/win/x64/7za.exe'));
+  candidates.push(path.join(__dirname, '../node_modules/7zip-bin', binSubdir, 'x64', exeName));
+  candidates.push(path.join(__dirname, 'node_modules/7zip-bin', binSubdir, 'x64', exeName));
+  candidates.push(path.join(process.cwd(), 'node_modules/7zip-bin', binSubdir, 'x64', exeName));
 
-  // 6. Check DragonDen-style tools/7zip directory (relative to app directory, cwd, and root)
+  // 7. Check DragonDen-style tools/7zip directory
   candidates.push(path.join(__dirname, '..', 'tools', '7zip', 'win', '7za.exe'));
   candidates.push(path.join(__dirname, 'tools', '7zip', 'win', '7za.exe'));
   candidates.push(path.join(process.cwd(), 'tools', '7zip', 'win', '7za.exe'));
@@ -140,7 +170,7 @@ function resolve7zaBinary() {
     candidates.push(path.join(process.resourcesPath, 'tools', '7zip', '7za.exe'));
   }
 
-  // 7. Standard Windows system 7-Zip installations if present
+  // 8. Standard Windows system 7-Zip installations if present
   if (isWin) {
     candidates.push('C:\\Program Files\\7-Zip\\7z.exe');
     candidates.push('C:\\Program Files (x86)\\7-Zip\\7z.exe');
@@ -157,7 +187,7 @@ function resolve7zaBinary() {
 
   for (const c of candidates) {
     if (c && fs.existsSync(c)) {
-      // If path is inside an ASAR container, extract it to temp disk first
+      // If path is inside an ASAR container, extract it to disk first
       if (c.includes('.asar')) {
         const extracted = extractBinaryFromAsarIfNeeded(c);
         if (extracted && fs.existsSync(extracted)) {
@@ -172,7 +202,7 @@ function resolve7zaBinary() {
     }
   }
 
-  // 7. Last-ditch check: test if 7za or 7z is globally in system PATH
+  // 9. Last-ditch check: test if 7za or 7z is globally in system PATH
   try {
     const testCmd = isWin ? 'where 7za' : 'which 7za';
     const out = require('child_process').execSync(testCmd, { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
@@ -281,6 +311,113 @@ function resolveWindowsTar() {
 }
 
 /**
+ * Constant-memory ring buffer for process diagnostic logs.
+ * Prevents memory exhaustion on 50,000+ file extractions by storing a bounded window of lines.
+ */
+class DiagnosticRingBuffer {
+  constructor(maxEntries = 40) {
+    this.maxEntries = maxEntries;
+    this.entries = [];
+  }
+
+  push(text) {
+    if (!text) return;
+    const lines = String(text)
+      .split(/[\r\n]+/)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !/^[\b\s]+$/.test(l));
+
+    for (const line of lines) {
+      this.entries.push(line);
+      if (this.entries.length > this.maxEntries) {
+        this.entries.shift();
+      }
+    }
+  }
+
+  toString() {
+    return this.entries.join('\n');
+  }
+
+  get length() {
+    return this.entries.length;
+  }
+}
+
+const PROTECTED_CORE_ITEMS = new Set([
+  'spt',
+  'spt-core',
+  'spt_core',
+  'bepinex',
+  'core',
+  'configurationmanager',
+  'spt_data',
+  'spt.server.exe',
+  'spt.launcher.exe',
+  'escapefromtarkov.exe',
+  'escapefromtarkov_data',
+]);
+
+const FORBIDDEN_SPT_CORE_PATHS = [
+  'bepinex/core',
+  'bepinex/plugins/spt',
+  'bepinex/plugins/configurationmanager',
+  'spt_data',
+  'spt_runtime/spt.server.exe',
+  'spt_runtime/spt.server',
+  'escapefromtarkov.exe',
+  'escapefromtarkov_data',
+  'spt.server.exe',
+  'spt.launcher.exe',
+  'spt.server',
+  'spt.launcher',
+];
+
+/**
+ * Asserts that a target file or directory path is safely contained within the SPT root
+ * and does not target or clobber protected core SPT system files or execute path traversal.
+ */
+function assertSafeSptTarget(targetPath, sptDirectory) {
+  if (!targetPath || !sptDirectory) {
+    throw new Error('assertSafeSptTarget: targetPath and sptDirectory are required');
+  }
+
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedSpt = path.resolve(sptDirectory);
+
+  // 1. Path traversal & Zip-Slip validation (must be strictly inside sptDirectory)
+  const rel = path.relative(resolvedSpt, resolvedTarget);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Security Violation: Target path "${targetPath}" escapes SPT root directory "${sptDirectory}"`);
+  }
+
+  // 2. Canonical case-folded SPT invariant protection
+  const normalizedRel = rel.replace(/\\/g, '/').toLowerCase();
+
+  for (const forbidden of FORBIDDEN_SPT_CORE_PATHS) {
+    if (normalizedRel === forbidden || normalizedRel.startsWith(forbidden + '/')) {
+      throw new Error(`Integrity Protection: Target path "${rel}" targets protected core SPT system path "${forbidden}". Operation blocked.`);
+    }
+  }
+
+  return resolvedTarget;
+}
+
+function isProtectedCoreItem(nameOrRelPath) {
+  if (!nameOrRelPath) return true;
+  const normalized = nameOrRelPath.replace(/\\/g, '/').toLowerCase().trim();
+  const basename = path.basename(normalized).replace(/\.disabled$/, '');
+  if (PROTECTED_CORE_ITEMS.has(basename)) return true;
+  if (basename.startsWith('spt.') || basename.startsWith('spt-')) return true;
+  for (const forbidden of FORBIDDEN_SPT_CORE_PATHS) {
+    if (normalized === forbidden || normalized.startsWith(forbidden + '/') || normalized.endsWith('/' + forbidden)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Robust non-blocking archive extraction with live percentage progress streaming.
  * Prioritizes high-speed multi-threaded 7za with -bsp1 live progress streaming,
  * falls back cleanly to native Windows bsdtar for ZIP/TAR, PowerShell without file copy lag,
@@ -324,50 +461,91 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
 
   try {
     // 1. Try precompiled 7za binary FIRST (Multi-threaded, supports .zip, .7z, .rar, .tar.gz, LZMA, Deflate64)
-    // Modeled with DragonDen-ModManager flags (-aoa overwrite all, -spf preserve full paths, -y assume yes)
+    // Ensures destination directory exists before spawning process
+    fs.mkdirSync(destinationDir, { recursive: true });
+
     let bin7za = resolve7zaBinary();
     if (!bin7za && (format === '7z' || format === 'rar' || !format)) {
       bin7za = await ensure7zaBinary(onProgress);
     }
 
     if (bin7za) {
-      try {
-        const threadCount = getExtractionThreadCount(performanceMode);
-        await new Promise((resolve, reject) => {
-          // DragonDen flags: 'x', archivePath, '-y', '-aoa', '-spf', `-o${destinationDir}`
-          // Plus Blacksite multi-threading and live progress capture:
-          const child = execFile(
-            bin7za,
-            ['x', archivePath, '-y', '-aoa', '-spf', `-o${destinationDir}`, '-bsp1', `-mmt=${threadCount}`],
-            { maxBuffer: 500 * 1024 * 1024, windowsHide: true },
-            (error, stdout, stderr) => {
-              if (error) {
-                console.error('[Blacksite Installer] 7za extraction error:', error.message, stderr ? stderr.toString() : '');
-                reject(error);
-              } else {
-                resolve();
-              }
-            }
-          );
+      const threadCount = getExtractionThreadCount(performanceMode);
+      const cleanDest = destinationDir.replace(/[\\/]+$/, '');
+
+      // Try primary extraction (standard multi-threaded extraction with overwrite and constant-memory streaming)
+      const tryExtraction = (useSpf = false) => {
+        return new Promise((resolve, reject) => {
+          const args = ['x', archivePath, '-y', '-aoa', '-bb0', '-bso0', '-bsp1'];
+          if (useSpf) args.push('-spf');
+          args.push(`-o${cleanDest}`, `-mmt=${threadCount}`);
+
+          const stderrRing = new DiagnosticRingBuffer(40);
+          const stdoutRing = new DiagnosticRingBuffer(40);
+
+          const child = spawn(bin7za, args, { windowsHide: true });
+
+          if (child.stderr) {
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', (chunk) => {
+              stderrRing.push(chunk);
+            });
+          }
 
           if (child.stdout) {
+            child.stdout.setEncoding('utf8');
             child.stdout.on('data', (chunk) => {
-              const str = chunk.toString();
-              const matches = str.matchAll(/(\d+)%/g);
+              // Parse progress percentage without large string retention
+              const matches = chunk.matchAll(/(\d+)%/g);
               for (const m of matches) {
                 const parsed = parseInt(m[1], 10);
                 if (!isNaN(parsed) && parsed > extractionProgress) {
                   reportProgress(parsed, `Extracting (7-Zip Multi-core) ${parsed}%...`);
                 }
               }
+              // Capture critical diagnostic messages if 7za outputs warnings/errors to stdout
+              if (chunk.includes('Error') || chunk.includes('WARNING') || chunk.includes('Can not open')) {
+                stdoutRing.push(chunk);
+              }
             });
           }
+
+          child.on('error', (err) => {
+            reject(err);
+          });
+
+          child.on('close', (code) => {
+            // In 7-Zip: exit code 0 = Success, exit code 1 = Non-fatal Warning (e.g. minor file attributes/links)
+            if (code === 0 || code === 1) {
+              if (code === 1) {
+                console.warn('[Blacksite Installer] 7za returned non-fatal warning (exit code 1). Extraction considered successful.');
+              }
+              return resolve();
+            }
+            const diagnostic = stderrRing.toString() || stdoutRing.toString() || `Decompression process exited with code ${code}`;
+            console.error('[Blacksite Installer] 7za extraction error:', diagnostic);
+            const err = new Error(diagnostic);
+            err.exitCode = code;
+            reject(err);
+          });
         });
+      };
+
+      try {
+        await tryExtraction(false);
         cleanupTimer();
         reportProgress(100, 'Extraction complete');
         return true;
-      } catch (err) {
-        console.warn('[Blacksite Installer] 7za extraction failed, falling back to system engines...', err.message);
+      } catch (firstErr) {
+        console.warn('[Blacksite Installer] 7za primary extraction failed, trying with -spf switch...', firstErr.message);
+        try {
+          await tryExtraction(true);
+          cleanupTimer();
+          reportProgress(100, 'Extraction complete');
+          return true;
+        } catch (secondErr) {
+          console.warn('[Blacksite Installer] 7za extraction failed with both modes:', secondErr.message);
+        }
       }
     }
 
@@ -455,13 +633,23 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
         const stat = fs.statSync(archivePath);
         if (stat.size < 1024 * 1024 * 1024) {
           await new Promise((r) => setImmediate(r));
+          fs.mkdirSync(destinationDir, { recursive: true });
           const zip = new AdmZip(archivePath);
           const entries = zip.getEntries();
           const totalEntries = entries.length;
+          const resolvedDest = path.resolve(destinationDir);
+
           for (let i = 0; i < totalEntries; i++) {
             const entry = entries[i];
+            const targetEntryPath = path.resolve(destinationDir, entry.entryName);
+            const relToDest = path.relative(resolvedDest, targetEntryPath);
+            if (relToDest.startsWith('..') || path.isAbsolute(relToDest)) {
+              console.warn(`[Blacksite Installer] Skipping unsafe Zip-Slip entry: ${entry.entryName}`);
+              continue;
+            }
+
             zip.extractEntryTo(entry, destinationDir, true, true);
-            if (i % 10 === 0) {
+            if (i % 20 === 0) {
               reportProgress(Math.floor((i / totalEntries) * 95));
               await new Promise((resolve) => setImmediate(resolve));
             }
@@ -469,6 +657,8 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           cleanupTimer();
           reportProgress(100, 'Extraction complete');
           return true;
+        } else {
+          console.warn(`[Blacksite Installer] Archive exceeds 1GB (${(stat.size / (1024 * 1024)).toFixed(1)} MB). Skipping AdmZip in-memory parser to avoid V8 heap exhaustion.`);
         }
       } catch (admErr) {
         console.warn('[Blacksite Installer] AdmZip fallback failed...', admErr.message);
@@ -537,16 +727,260 @@ function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
 }
 
 /**
- * Intelligent SPT Routing Engine (Asynchronous & Non-Blocking):
- * Analyzes extracted archive directories and places server mods into SPT_Runtime/user/mods (or user/mods)
- * and client files strictly into root BepInEx/plugins and BepInEx/patchers without locking Electron event loop.
+ * Phase 3 NTFS Hardlink VFS & Configuration Merge Engine
  */
-async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModName, sptVersion = '4.1.6', performanceMode = 'balanced', onProgress = null) {
+
+function sha256Buffer(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+function sha256File(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      return sha256Buffer(fs.readFileSync(filePath));
+    }
+  } catch (_) {}
+  return null;
+}
+
+function isMutableConfigFile(filePath) {
+  if (!filePath || typeof filePath !== 'string') return false;
+  const ext = path.extname(filePath).toLowerCase();
+  const base = path.basename(filePath).toLowerCase();
+  if (base === 'package.json') return false; // Mod manifest, not user gameplay config
+  return ['.json', '.jsonc', '.cfg', '.ini', '.yaml', '.yml'].includes(ext);
+}
+
+/**
+ * Deep merges JSON configuration:
+ * Strictly preserves existing user settings and custom values, while appending newly introduced keys from the mod update.
+ */
+function deepMergeJsonObjects(userObj, modObj) {
+  if (typeof userObj !== 'object' || userObj === null || Array.isArray(userObj)) {
+    return userObj !== undefined ? userObj : modObj;
+  }
+  if (typeof modObj !== 'object' || modObj === null || Array.isArray(modObj)) {
+    return userObj !== undefined ? userObj : modObj;
+  }
+
+  const result = { ...userObj };
+  for (const [key, modVal] of Object.entries(modObj)) {
+    if (!(key in result)) {
+      // New key introduced in updated version -> append it
+      result[key] = modVal;
+    } else if (
+      typeof result[key] === 'object' &&
+      result[key] !== null &&
+      !Array.isArray(result[key]) &&
+      typeof modVal === 'object' &&
+      modVal !== null &&
+      !Array.isArray(modVal)
+    ) {
+      result[key] = deepMergeJsonObjects(result[key], modVal);
+    }
+    // Existing keys and values chosen by user are preserved without overwrite
+  }
+  return result;
+}
+
+/**
+ * Deep merges INI / CFG format (e.g. BepInEx configs):
+ * Preserves user key values under each [Section], while appending new sections and new keys from mod update.
+ */
+function deepMergeIniStrings(userIniStr, modIniStr) {
+  if (!userIniStr) return modIniStr;
+  if (!modIniStr) return userIniStr;
+
+  function parseIni(content) {
+    const lines = content.split(/\r?\n/);
+    const sections = new Map();
+    let currentSection = '__DEFAULT__';
+    sections.set(currentSection, new Map());
+
+    for (const rawLine of lines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) {
+        continue;
+      }
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        currentSection = trimmed.slice(1, -1).trim();
+        if (!sections.has(currentSection)) {
+          sections.set(currentSection, new Map());
+        }
+      } else {
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx !== -1) {
+          const k = trimmed.slice(0, eqIdx).trim();
+          const v = trimmed.slice(eqIdx + 1).trim();
+          sections.get(currentSection).set(k, { line: rawLine, value: v });
+        }
+      }
+    }
+    return { sections, rawLines: lines };
+  }
+
+  try {
+    const userParsed = parseIni(userIniStr);
+    const modParsed = parseIni(modIniStr);
+    let mergedStr = userIniStr;
+
+    for (const [modSec, modKeys] of modParsed.sections.entries()) {
+      if (!userParsed.sections.has(modSec)) {
+        mergedStr += `\n\n[${modSec}]\n`;
+        for (const [, item] of modKeys.entries()) {
+          mergedStr += `${item.line}\n`;
+        }
+      } else {
+        const userKeys = userParsed.sections.get(modSec);
+        let missingKeysStr = '';
+        for (const [k, item] of modKeys.entries()) {
+          if (!userKeys.has(k)) {
+            missingKeysStr += `${item.line}\n`;
+          }
+        }
+        if (missingKeysStr) {
+          const secHeader = `[${modSec}]`;
+          const secPos = mergedStr.indexOf(secHeader);
+          if (secPos !== -1) {
+            const nextSecPos = mergedStr.indexOf('\n[', secPos + secHeader.length);
+            if (nextSecPos !== -1) {
+              mergedStr = mergedStr.slice(0, nextSecPos) + `\n${missingKeysStr}` + mergedStr.slice(nextSecPos);
+            } else {
+              mergedStr += `\n${missingKeysStr}`;
+            }
+          }
+        }
+      }
+    }
+    return mergedStr;
+  } catch (err) {
+    console.warn('[Blacksite VFS] Failed parsing INI, preserving existing user config:', err.message);
+    return userIniStr;
+  }
+}
+
+/**
+ * Metadata management for SHA-256 base hashes in .blacksite_library/_meta/<modId>.json
+ */
+function getModMetaFilePath(sptDirectory, cleanModId) {
+  const metaDir = path.join(sptDirectory, '.blacksite_library', '_meta');
+  try {
+    fs.mkdirSync(metaDir, { recursive: true });
+  } catch (_) {}
+  return path.join(metaDir, `${cleanModId}.json`);
+}
+
+function loadModMeta(sptDirectory, cleanModId) {
+  try {
+    const p = getModMetaFilePath(sptDirectory, cleanModId);
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, 'utf8'));
+    }
+  } catch (_) {}
+  return { modId: cleanModId, baseHashes: {} };
+}
+
+function saveModMeta(sptDirectory, cleanModId, metaObj) {
+  try {
+    const p = getModMetaFilePath(sptDirectory, cleanModId);
+    fs.writeFileSync(p, JSON.stringify(metaObj, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[Blacksite VFS] Failed saving mod metadata:', e.message);
+  }
+}
+
+/**
+ * Transactional rollback journal: records all filesystem mutations and executes atomic rollback on error/EBUSY
+ */
+class VfsTransactionJournal {
+  constructor(sptDirectory) {
+    this.sptDirectory = sptDirectory;
+    this.operations = [];
+    this.committed = false;
+  }
+
+  recordMkdir(dirPath) {
+    this.operations.push({ type: 'mkdir', target: dirPath });
+  }
+
+  recordLink(destPath, srcPath) {
+    this.operations.push({ type: 'link', target: destPath, src: srcPath });
+  }
+
+  recordCopy(destPath, srcPath) {
+    this.operations.push({ type: 'copy', target: destPath, src: srcPath });
+  }
+
+  recordBackup(destPath, backupPath) {
+    this.operations.push({ type: 'backup', target: destPath, backup: backupPath });
+  }
+
+  async rollback() {
+    if (this.committed) return;
+    console.warn(`[Blacksite VFS] Rollback triggered! Reverting ${this.operations.length} filesystem mutations...`);
+    for (let i = this.operations.length - 1; i >= 0; i--) {
+      const op = this.operations[i];
+      try {
+        if (op.type === 'link' || op.type === 'copy') {
+          if (fs.existsSync(op.target)) {
+            await fs.promises.unlink(op.target);
+          }
+        } else if (op.type === 'backup') {
+          if (fs.existsSync(op.backup)) {
+            if (fs.existsSync(op.target)) {
+              try { await fs.promises.unlink(op.target); } catch (_) {}
+            }
+            await fs.promises.rename(op.backup, op.target);
+          }
+        } else if (op.type === 'mkdir') {
+          try {
+            if (fs.existsSync(op.target)) {
+              const entries = await fs.promises.readdir(op.target);
+              if (entries.length === 0) {
+                await fs.promises.rmdir(op.target);
+              }
+            }
+          } catch (_) {}
+        }
+      } catch (err) {
+        console.error(`[Blacksite VFS] Failed during rollback step ${op.type} for ${op.target}:`, err.message);
+      }
+    }
+  }
+
+  async commit() {
+    this.committed = true;
+    for (const op of this.operations) {
+      if (op.type === 'backup' && op.backup && fs.existsSync(op.backup)) {
+        try {
+          await fs.promises.unlink(op.backup);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
+/**
+ * Intelligent SPT Routing Engine with NTFS Hardlink VFS, Transactional Rollback, and Semantic Config Merging
+ */
+async function routeExtractedModToSpt(
+  extractedDir,
+  sptDirectory,
+  fallbackModName,
+  sptVersion = '4.1.6',
+  performanceMode = 'balanced',
+  onProgress = null,
+  cleanModIdentifier = null
+) {
   const { serverModsDir, serverModsRelDir } = resolveSptPaths(sptDirectory, sptVersion);
   const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
   const targetClientPatchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
 
   const cleanFallback = (fallbackModName || 'Mod').replace(/[^\w.-]/g, '');
+  const activeModKey = cleanModIdentifier || cleanFallback;
+  const modMeta = loadModMeta(sptDirectory, activeModKey);
+  const journal = new VfsTransactionJournal(sptDirectory);
+
   let detectedServerPath = null;
   let detectedClientPath = null;
 
@@ -560,76 +994,134 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
     }
   };
 
-  // Atomic same-drive move helper: tries instant O(1) fs.promises.rename (1-2ms pointer reassignment)
-  // Gracefully falls back to parallel copy if cross-device or locked
-  async function moveOrCopyDirectory(srcDir, destDir) {
-    if (!fs.existsSync(srcDir)) return;
-    try {
-      if (fs.existsSync(destDir)) {
-        await fs.promises.rm(destDir, { recursive: true, force: true });
-      }
-      await fs.promises.mkdir(path.dirname(destDir), { recursive: true });
-      await fs.promises.rename(srcDir, destDir);
-      return;
-    } catch (renameErr) {
-      // If cross-device (EXDEV) or rename blocked, fallback to parallel copy
-      await copyDirectoryContents(srcDir, destDir);
-    }
-  }
-
-  async function moveOrCopyFile(srcFile, destFile) {
+  /**
+   * Deploys single file via zero-copy NTFS hardlink, pre-flighting lock contention (EBUSY)
+   * and deep-merging mutable user configurations.
+   */
+  async function deployFileWithHardlink(srcFile, destFile) {
     if (!fs.existsSync(srcFile)) return;
-    try {
-      await fs.promises.mkdir(path.dirname(destFile), { recursive: true });
-      if (fs.existsSync(destFile)) {
-        await fs.promises.unlink(destFile);
+    assertSafeSptTarget(destFile, sptDirectory);
+
+    const destDir = path.dirname(destFile);
+    if (!fs.existsSync(destDir)) {
+      await fs.promises.mkdir(destDir, { recursive: true });
+      journal.recordMkdir(destDir);
+    }
+
+    const isConfig = isMutableConfigFile(destFile);
+    const relPathKey = path.relative(sptDirectory, destFile).replace(/\\/g, '/').toLowerCase();
+
+    // If destination file exists: pre-flight test with atomic rename to catch EBUSY (game running)
+    if (fs.existsSync(destFile)) {
+      const rand = Math.random().toString(36).slice(2, 8);
+      const backupPath = `${destFile}.bs_bak_${Date.now()}_${rand}`;
+      try {
+        await fs.promises.rename(destFile, backupPath);
+        journal.recordBackup(destFile, backupPath);
+      } catch (lockErr) {
+        const err = new Error(
+          `File lock collision on ${path.basename(destFile)} (${lockErr.code || 'EBUSY'}). SPT Tarkov or Server may be running. Please close the game and try again.`
+        );
+        err.code = lockErr.code || 'EBUSY';
+        throw err;
       }
-      await fs.promises.rename(srcFile, destFile);
-      return;
-    } catch (renameErr) {
+
+      if (isConfig) {
+        const backupContent = fs.readFileSync(backupPath, 'utf8');
+        const incomingContent = fs.readFileSync(srcFile, 'utf8');
+        const currentHash = sha256Buffer(Buffer.from(backupContent));
+        const baseHash = modMeta.baseHashes ? modMeta.baseHashes[relPathKey] : null;
+
+        // If user customized settings (or no base recorded yet), preserve user settings via deep merge
+        if (baseHash && currentHash !== baseHash) {
+          console.log(`[Blacksite VFS] Deep-merging mutable config: ${relPathKey} (preserving user settings)`);
+          let mergedContent = incomingContent;
+          const ext = path.extname(destFile).toLowerCase();
+
+          if (ext === '.json' || ext === '.jsonc') {
+            try {
+              const cleanUser = backupContent.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
+              const cleanIncoming = incomingContent.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
+              const userObj = JSON.parse(cleanUser);
+              const incomingObj = JSON.parse(cleanIncoming);
+              const mergedObj = deepMergeJsonObjects(userObj, incomingObj);
+              mergedContent = JSON.stringify(mergedObj, null, 2);
+            } catch (jsonErr) {
+              console.warn('[Blacksite VFS] JSON parse error during merge, keeping user settings:', jsonErr.message);
+              mergedContent = backupContent;
+            }
+          } else if (ext === '.cfg' || ext === '.ini') {
+            mergedContent = deepMergeIniStrings(backupContent, incomingContent);
+          }
+
+          await fs.promises.writeFile(destFile, mergedContent, 'utf8');
+          journal.recordCopy(destFile, srcFile);
+          if (!modMeta.baseHashes) modMeta.baseHashes = {};
+          modMeta.baseHashes[relPathKey] = sha256Buffer(Buffer.from(incomingContent));
+          return;
+        }
+      }
+    }
+
+    // Deploy via zero-copy NTFS hardlink (O(1) linking)
+    try {
+      await fs.promises.link(srcFile, destFile);
+      journal.recordLink(destFile, srcFile);
+    } catch (linkErr) {
+      // Cross-device (EXDEV) or filesystem constraint fallback to copy
       await fs.promises.copyFile(srcFile, destFile);
+      journal.recordCopy(destFile, srcFile);
+    }
+
+    if (isConfig) {
+      if (!modMeta.baseHashes) modMeta.baseHashes = {};
+      modMeta.baseHashes[relPathKey] = sha256File(destFile);
     }
   }
 
-  // Helper to copy directory contents asynchronously: parallel chunks for Turbo Max, non-blocking yielding for Balanced/Smooth
-  async function copyDirectoryContents(srcDir, destDir) {
+  /**
+   * Recursively mirrors directory structure and deploys files via hardlinks
+   */
+  async function deployDirectoryWithHardlinks(srcDir, destDir) {
     if (!fs.existsSync(srcDir)) return;
-    await fs.promises.mkdir(destDir, { recursive: true });
+    assertSafeSptTarget(destDir, sptDirectory);
+    if (!fs.existsSync(destDir)) {
+      await fs.promises.mkdir(destDir, { recursive: true });
+      journal.recordMkdir(destDir);
+    }
+
     const entries = await fs.promises.readdir(srcDir, { withFileTypes: true });
 
     if (performanceMode === 'turbo') {
-      // Parallel batch routing for maximum NVMe throughput with zero delay
-      const batchSize = 16;
+      const batchSize = 32;
       for (let i = 0; i < entries.length; i += batchSize) {
         const batch = entries.slice(i, i + batchSize);
         await Promise.all(
           batch.map(async (entry) => {
-            const srcPath = path.join(srcDir, entry.name);
-            const destPath = path.join(destDir, entry.name);
+            const sPath = path.join(srcDir, entry.name);
+            const dPath = path.join(destDir, entry.name);
             if (entry.isDirectory()) {
-              await moveOrCopyDirectory(srcPath, destPath);
+              await deployDirectoryWithHardlinks(sPath, dPath);
             } else {
-              await moveOrCopyFile(srcPath, destPath);
+              await deployFileWithHardlink(sPath, dPath);
             }
           })
         );
       }
     } else {
       for (const entry of entries) {
-        const srcPath = path.join(srcDir, entry.name);
-        const destPath = path.join(destDir, entry.name);
+        const sPath = path.join(srcDir, entry.name);
+        const dPath = path.join(destDir, entry.name);
         if (entry.isDirectory()) {
-          await moveOrCopyDirectory(srcPath, destPath);
+          await deployDirectoryWithHardlinks(sPath, dPath);
         } else {
-          await moveOrCopyFile(srcPath, destPath);
+          await deployFileWithHardlink(sPath, dPath);
         }
-        // Yield to Node event loop so UI / IPC doesn't freeze during large file moves
         await new Promise((r) => setImmediate(r));
       }
     }
   }
 
-  // Find all directory occurrences recursively
   function findDirectoriesByName(dir, targetName, maxDepth = 6, depth = 0) {
     const matches = [];
     if (depth > maxDepth || !fs.existsSync(dir)) return matches;
@@ -646,146 +1138,137 @@ async function routeExtractedModToSpt(extractedDir, sptDirectory, fallbackModNam
     return matches;
   }
 
-  // 1. Locate and route SERVER MODS
-  // Check for SPT_Runtime/user/mods/* or user/mods/*
-  notifyRoute(92, 'Routing server mod files...');
-  const userModsDirs = [
-    ...findDirectoriesByName(extractedDir, 'mods').filter((d) => {
-      const parent = path.basename(path.dirname(d)).toLowerCase();
-      return parent === 'user';
-    }),
-  ];
+  try {
+    // 1. Locate and route SERVER MODS
+    notifyRoute(92, 'Deploying server mod via NTFS Hardlink VFS...');
+    const userModsDirs = [
+      ...findDirectoriesByName(extractedDir, 'mods').filter((d) => {
+        const parent = path.basename(path.dirname(d)).toLowerCase();
+        return parent === 'user';
+      }),
+    ];
 
-  if (userModsDirs.length > 0) {
-    for (const uModsDir of userModsDirs) {
-      const entries = fs.readdirSync(uModsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const modFolderName = entry.name;
-          const srcModDir = path.join(uModsDir, modFolderName);
+    if (userModsDirs.length > 0) {
+      for (const uModsDir of userModsDirs) {
+        const entries = fs.readdirSync(uModsDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const modFolderName = entry.name;
+            const srcModDir = path.join(uModsDir, modFolderName);
+            const destModDir = path.join(serverModsDir, modFolderName);
+            await deployDirectoryWithHardlinks(srcModDir, destModDir);
+            if (!detectedServerPath) {
+              detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
+            }
+          }
+        }
+      }
+    }
+
+    // 1b. Check for standalone server mod with package.json anywhere in tree
+    if (!detectedServerPath) {
+      function findPackageJsonDirs(dir, depth = 0) {
+        const dirs = [];
+        if (depth > 6 || !fs.existsSync(dir)) return dirs;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory() && entry.name.toLowerCase() === 'package.json') {
+            dirs.push(dir);
+          } else if (entry.isDirectory()) {
+            dirs.push(...findPackageJsonDirs(path.join(dir, entry.name), depth + 1));
+          }
+        }
+        return dirs;
+      }
+
+      const pkgDirs = findPackageJsonDirs(extractedDir);
+      for (const pDir of pkgDirs) {
+        try {
+          const pkgData = JSON.parse(fs.readFileSync(path.join(pDir, 'package.json'), 'utf8'));
+          const modFolderName = pkgData.name || path.basename(pDir) || cleanFallback;
           const destModDir = path.join(serverModsDir, modFolderName);
-          await moveOrCopyDirectory(srcModDir, destModDir);
+          await deployDirectoryWithHardlinks(pDir, destModDir);
           if (!detectedServerPath) {
             detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
           }
+        } catch (err) {
+          console.warn('Error reading package.json in mod:', err);
         }
       }
     }
-  }
 
-  // 1b. Check for standalone server mod with package.json anywhere in the tree
-  if (!detectedServerPath) {
-    function findPackageJsonDirs(dir, depth = 0) {
-      const dirs = [];
-      if (depth > 6 || !fs.existsSync(dir)) return dirs;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() && entry.name.toLowerCase() === 'package.json') {
-          dirs.push(dir);
-        } else if (entry.isDirectory()) {
-          dirs.push(...findPackageJsonDirs(path.join(dir, entry.name), depth + 1));
-        }
-      }
-      return dirs;
-    }
+    // 2. Locate and route CLIENT PLUGINS (BepInEx/plugins)
+    notifyRoute(95, 'Linking BepInEx client plugins...');
+    const pluginsDirs = findDirectoriesByName(extractedDir, 'plugins').filter((d) => {
+      const parent = path.basename(path.dirname(d)).toLowerCase();
+      return parent === 'bepinex';
+    });
 
-    const pkgDirs = findPackageJsonDirs(extractedDir);
-    for (const pDir of pkgDirs) {
-      try {
-        const pkgData = JSON.parse(fs.readFileSync(path.join(pDir, 'package.json'), 'utf8'));
-        const modFolderName = pkgData.name || path.basename(pDir) || cleanFallback;
-        const destModDir = path.join(serverModsDir, modFolderName);
-        await moveOrCopyDirectory(pDir, destModDir);
-        if (!detectedServerPath) {
-          detectedServerPath = `${serverModsRelDir}/${modFolderName}`;
-        }
-      } catch (err) {
-        console.warn('Error reading package.json in mod:', err);
-      }
-    }
-  }
-
-  // 2. Locate and route CLIENT PLUGINS (BepInEx/plugins)
-  notifyRoute(95, 'Routing BepInEx client plugins...');
-  const pluginsDirs = findDirectoriesByName(extractedDir, 'plugins').filter((d) => {
-    const parent = path.basename(path.dirname(d)).toLowerCase();
-    return parent === 'bepinex';
-  });
-
-  if (pluginsDirs.length > 0) {
-    for (const pDir of pluginsDirs) {
-      await copyDirectoryContents(pDir, targetClientPluginsDir);
-      const entries = fs.readdirSync(pDir);
-      if (entries.length > 0 && !detectedClientPath) {
-        detectedClientPath = `BepInEx/plugins/${entries[0]}`;
-      }
-    }
-  }
-
-  // 3. Locate and route CLIENT PATCHERS (BepInEx/patchers)
-  notifyRoute(97, 'Routing BepInEx client patchers...');
-  const patchersDirs = findDirectoriesByName(extractedDir, 'patchers').filter((d) => {
-    const parent = path.basename(path.dirname(d)).toLowerCase();
-    return parent === 'bepinex';
-  });
-
-  if (patchersDirs.length > 0) {
-    for (const pDir of patchersDirs) {
-      await copyDirectoryContents(pDir, targetClientPatchersDir);
-      const entries = fs.readdirSync(pDir);
-      if (entries.length > 0 && !detectedClientPath) {
-        detectedClientPath = `BepInEx/patchers/${entries[0]}`;
-      }
-    }
-  }
-
-  // 4. Locate standalone client .dll plugins not wrapped in BepInEx
-  notifyRoute(98, 'Verifying client plugins...');
-  if (!detectedClientPath && !detectedServerPath) {
-    function findDlls(dir, depth = 0) {
-      const dlls = [];
-      if (depth > 6 || !fs.existsSync(dir)) return dlls;
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.dll')) {
-          dlls.push(path.join(dir, entry.name));
-        } else if (entry.isDirectory()) {
-          dlls.push(...findDlls(path.join(dir, entry.name), depth + 1));
-        }
-      }
-      return dlls;
-    }
-
-    const foundDlls = findDlls(extractedDir);
-    if (foundDlls.length > 0) {
-      for (const dllPath of foundDlls) {
-        const fileName = path.basename(dllPath);
-        await fs.promises.copyFile(dllPath, path.join(targetClientPluginsDir, fileName));
-        await new Promise((r) => setImmediate(r));
-        if (!detectedClientPath) {
-          detectedClientPath = `BepInEx/plugins/${fileName}`;
+    if (pluginsDirs.length > 0) {
+      for (const pDir of pluginsDirs) {
+        await deployDirectoryWithHardlinks(pDir, targetClientPluginsDir);
+        const entries = fs.readdirSync(pDir);
+        if (entries.length > 0 && !detectedClientPath) {
+          detectedClientPath = `BepInEx/plugins/${entries[0]}`;
         }
       }
     }
-  }
 
-  // 5. Clean up any empty dummy folders in user/mods (e.g. earlier empty WTT-CommonLib folder)
-  try {
-    const legacyUserMods = path.join(sptDirectory, 'user', 'mods');
-    if (fs.existsSync(legacyUserMods)) {
-      const entries = fs.readdirSync(legacyUserMods);
-      for (const ent of entries) {
-        const full = path.join(legacyUserMods, ent);
-        if (fs.statSync(full).isDirectory()) {
-          const contents = fs.readdirSync(full);
-          if (contents.length === 0) {
-            fs.rmdirSync(full);
+    // 3. Locate and route CLIENT PATCHERS (BepInEx/patchers)
+    notifyRoute(97, 'Linking BepInEx client patchers...');
+    const patchersDirs = findDirectoriesByName(extractedDir, 'patchers').filter((d) => {
+      const parent = path.basename(path.dirname(d)).toLowerCase();
+      return parent === 'bepinex';
+    });
+
+    if (patchersDirs.length > 0) {
+      for (const pDir of patchersDirs) {
+        await deployDirectoryWithHardlinks(pDir, targetClientPatchersDir);
+        const entries = fs.readdirSync(pDir);
+        if (entries.length > 0 && !detectedClientPath) {
+          detectedClientPath = `BepInEx/patchers/${entries[0]}`;
+        }
+      }
+    }
+
+    // 4. Locate standalone client .dll plugins
+    notifyRoute(98, 'Verifying client plugins...');
+    if (!detectedClientPath && !detectedServerPath) {
+      function findDlls(dir, depth = 0) {
+        const dlls = [];
+        if (depth > 6 || !fs.existsSync(dir)) return dlls;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.dll')) {
+            dlls.push(path.join(dir, entry.name));
+          } else if (entry.isDirectory()) {
+            dlls.push(...findDlls(path.join(dir, entry.name), depth + 1));
+          }
+        }
+        return dlls;
+      }
+
+      const foundDlls = findDlls(extractedDir);
+      if (foundDlls.length > 0) {
+        for (const dllPath of foundDlls) {
+          const fileName = path.basename(dllPath);
+          const destDll = path.join(targetClientPluginsDir, fileName);
+          await deployFileWithHardlink(dllPath, destDll);
+          if (!detectedClientPath) {
+            detectedClientPath = `BepInEx/plugins/${fileName}`;
           }
         }
       }
     }
-  } catch (cleanErr) {
-    // Ignore cleanup error
+
+    // Commit transaction: unlink temporary backups and persist base metadata
+    await journal.commit();
+    saveModMeta(sptDirectory, activeModKey, modMeta);
+    console.log(`[Blacksite VFS] Hardlink transaction committed successfully for ${activeModKey}`);
+  } catch (txErr) {
+    console.error(`[Blacksite VFS] Deployment transaction failed: ${txErr.message}. Executing rollback...`);
+    await journal.rollback();
+    throw txErr;
   }
 
   const kind =
@@ -1279,6 +1762,7 @@ async function installMod({
           : `${(modName || 'Plugin').replace(/[^\w.-]/g, '')}.dll`;
 
       const destDllPath = path.join(targetClientPluginsDir, cleanDllName);
+      assertSafeSptTarget(destDllPath, sptDirectory);
       fs.copyFileSync(tempArchiveFile, destDllPath);
 
       if (onProgress) {
@@ -1299,14 +1783,25 @@ async function installMod({
       return routeResult;
     }
 
-    // Extraction stage
-    console.log(`[Blacksite Installer] Extracting archive (Performance mode: ${performanceMode})...`);
+    // Extraction stage - Dedicated Immutable Library Depot (<SPT_ROOT>/.blacksite_library/<modId>_<version>/)
+    console.log(`[Blacksite Installer] Extracting archive to Library Depot (Performance mode: ${performanceMode})...`);
     if (onProgress) {
       onProgress({
         stage: 'extracting',
         percent: 5,
         downloadSpeed: `Starting decompression (${performanceMode} mode)...`,
       });
+    }
+
+    const cleanModId = (modName || 'mod').replace(/[^\w.-]/g, '_');
+    const cleanVer = (version || '1.0.0').replace(/[^\w.-]/g, '_');
+    const cleanModIdentifier = `${cleanModId}_${cleanVer}`;
+    const libraryDepotDir = path.join(sptDirectory, '.blacksite_library', cleanModIdentifier);
+    let targetExtractDir = path.join(libraryDepotDir, 'extracted');
+    try {
+      fs.mkdirSync(targetExtractDir, { recursive: true });
+    } catch (depotErr) {
+      targetExtractDir = tempExtractDir;
     }
 
     const detectedFmt = detectArchiveFormat(tempArchiveFile);
@@ -1318,24 +1813,25 @@ async function installMod({
       } catch (_) {}
     }
 
-    await extractArchive(finalArchiveFile, tempExtractDir, performanceMode, onProgress);
+    await extractArchive(finalArchiveFile, targetExtractDir, performanceMode, onProgress);
 
-    // Routing stage
-    console.log(`[Blacksite Installer] Routing files into SPT: ${sptDirectory}...`);
+    // Routing stage via NTFS Hardlink VFS
+    console.log(`[Blacksite Installer] Deploying files via NTFS Hardlink VFS into SPT: ${sptDirectory}...`);
     if (onProgress) {
       onProgress({
         stage: 'routing',
         percent: 90,
-        downloadSpeed: isSameDriveStaging ? 'Atomic same-drive moving...' : 'Routing to SPT_Runtime...',
+        downloadSpeed: 'Zero-copy NTFS hardlink deployment...',
       });
     }
     const routeResult = await routeExtractedModToSpt(
-      tempExtractDir,
+      targetExtractDir,
       sptDirectory,
       modName,
       sptVersion,
       performanceMode,
-      onProgress
+      onProgress,
+      cleanModIdentifier
     );
 
     if (onProgress) {
@@ -1383,21 +1879,7 @@ async function installMod({
   }
 }
 
-const PROTECTED_CORE_ITEMS = new Set([
-  'spt',
-  'spt-core',
-  'bepinex',
-  'core',
-  'configurationmanager',
-]);
-
-function isProtectedCoreItem(name) {
-  if (!name) return true;
-  const clean = name.toLowerCase().replace(/\.disabled$/, '').trim();
-  if (PROTECTED_CORE_ITEMS.has(clean)) return true;
-  if (clean.startsWith('spt.') || clean.startsWith('spt-')) return true;
-  return false;
-}
+// PROTECTED_CORE_ITEMS, FORBIDDEN_SPT_CORE_PATHS, and isProtectedCoreItem are declared above
 
 /**
  * Permanently removes mod files from SPT_Runtime/user/mods, user/mods, or BepInEx/plugins
@@ -1408,8 +1890,15 @@ async function uninstallMod({ sptDirectory, serverPath, clientPath, modName, cli
   const deletePath = (relOrAbs) => {
     if (!relOrAbs) return;
     const full = path.isAbsolute(relOrAbs) ? relOrAbs : path.join(sptDirectory, relOrAbs);
+    try {
+      assertSafeSptTarget(full, sptDirectory);
+    } catch (err) {
+      console.warn(`[Blacksite Uninstall] Skipped deletion of protected/invalid target: ${full}`, err.message);
+      return;
+    }
+
     const basename = path.basename(full);
-    if (isProtectedCoreItem(basename)) return; // Never delete protected core files
+    if (isProtectedCoreItem(basename) || isProtectedCoreItem(full)) return; // Never delete protected core files
 
     if (fs.existsSync(full)) {
       try {
@@ -1711,4 +2200,7 @@ module.exports = {
   uninstallAllMods,
   toggleModDisable,
   scanInstalledMods,
+  assertSafeSptTarget,
+  isProtectedCoreItem,
+  DiagnosticRingBuffer,
 };

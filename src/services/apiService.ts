@@ -1,7 +1,7 @@
 import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem, Addon, AddonVersion, AddonQueryResult } from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
 import { getKnownDependencyMeta } from '../data/knownDependencies';
-import { sortSptVersionsByMostRecent, sortModVersionsByMostRecent } from '../utils/versionUtils';
+import { sortSptVersionsByMostRecent, sortModVersionsByMostRecent, isSptVersionCompatible } from '../utils/versionUtils';
 
 const API_BASE = 'https://sp-mod.com/api/v0';
 
@@ -109,6 +109,224 @@ export function normalizeAddon(item: any): Addon {
 
 let cachedAllAddons: { data: Addon[]; timestamp: number } | null = null;
 const ADDONS_CACHE_TTL = 60 * 1000; // 60 seconds
+
+export function normalizeMod(m: any): Mod {
+  if (!m) return m;
+  const normThumbnail =
+    normalizeForgeImageUrl(m.thumbnail) ||
+    (m.hub_id ? `https://files.sp-mod.com/mods/${m.hub_id}.png` : '') ||
+    '';
+  const normOwner = m.owner
+    ? {
+        ...m.owner,
+        profile_photo_url: normalizeForgeImageUrl(m.owner.profile_photo_url),
+      }
+    : m.owner;
+
+  return {
+    ...m,
+    thumbnail: normThumbnail,
+    owner: normOwner,
+  };
+}
+
+interface IndexedCatalogEntry {
+  mod: Mod;
+  tokens: string;
+  authorLower: string;
+  categoryTitleLower: string;
+  fikaCompatible: boolean;
+  sptVersionStrings: string[];
+}
+
+const CATALOG_STORAGE_KEY = 'blacksite_catalog_mods_v2';
+const LAST_SYNC_KEY = 'blacksite_catalog_last_sync_v2';
+
+const catalogMap = new Map<number, Mod>();
+let indexedCatalog: IndexedCatalogEntry[] = [];
+let isCatalogInitialized = false;
+let syncInFlight: Promise<number> | null = null;
+
+function buildIndexEntry(mod: Mod): IndexedCatalogEntry {
+  const authorName = mod.owner?.name || '';
+  const catTitle = mod.category?.title || '';
+  const versions = Array.isArray(mod.versions) ? mod.versions : [];
+  const sptVerStrings: string[] = [];
+
+  const rawConstraint = (mod as any).spt_version_constraint;
+  if (rawConstraint) {
+    sptVerStrings.push(String(rawConstraint).toLowerCase());
+  }
+  for (const v of versions) {
+    if (v.spt_version_constraint) {
+      sptVerStrings.push(v.spt_version_constraint.toLowerCase());
+    }
+  }
+
+  const tokens = `${mod.name} ${mod.slug || ''} ${mod.guid || ''} ${mod.teaser || ''} ${authorName} ${catTitle}`.toLowerCase();
+
+  const isFika =
+    mod.fika_compatibility === true ||
+    versions.some(
+      (v) =>
+        v.fika_compatibility === 'compatible' ||
+        (v as any).fika_compatibility === true
+    );
+
+  return {
+    mod,
+    tokens,
+    authorLower: authorName.toLowerCase(),
+    categoryTitleLower: catTitle.toLowerCase(),
+    fikaCompatible: isFika,
+    sptVersionStrings: sptVerStrings,
+  };
+}
+
+function rebuildCatalogIndex(): void {
+  const entries: IndexedCatalogEntry[] = [];
+  for (const mod of catalogMap.values()) {
+    entries.push(buildIndexEntry(mod));
+  }
+  indexedCatalog = entries;
+}
+
+function initializeCatalog(): void {
+  if (isCatalogInitialized) return;
+  isCatalogInitialized = true;
+
+  // 1. Populate catalog with FIXTURE_MODS first so catalog is instantly available on frame 0
+  for (const f of FIXTURE_MODS) {
+    catalogMap.set(f.id, normalizeMod(f));
+  }
+
+  // 2. Hydrate any persisted catalog entries from localStorage
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const saved = localStorage.getItem(CATALOG_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && item.id) {
+              catalogMap.set(item.id, normalizeMod(item));
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Catalog Engine] Failed parsing persisted catalog:', e);
+    }
+  }
+
+  rebuildCatalogIndex();
+}
+
+function matchesSptVersion(entry: IndexedCatalogEntry, targetVersion: string): boolean {
+  if (!targetVersion || targetVersion === 'All') return true;
+
+  // Direct constraint compatibility
+  const rawConstraint = (entry.mod as any).spt_version_constraint;
+  if (rawConstraint && isSptVersionCompatible(rawConstraint, targetVersion)) {
+    return true;
+  }
+  if (entry.sptVersionStrings.some((c) => isSptVersionCompatible(c, targetVersion))) {
+    return true;
+  }
+
+  // Target version tier matching (e.g. 4.1 or 4.0 or 3.8) in tokens or teaser
+  const cleanTarget = targetVersion.replace(/^[vV\s]+/, '').trim();
+  const majorMinor = cleanTarget.split('.').slice(0, 2).join('.');
+  if (majorMinor && (entry.tokens.includes(`spt ${majorMinor}`) || entry.tokens.includes(`spt-${majorMinor}`))) {
+    return true;
+  }
+
+  return false;
+}
+
+async function syncCatalogDifferential(force = false): Promise<number> {
+  if (syncInFlight) return syncInFlight;
+
+  syncInFlight = (async () => {
+    try {
+      initializeCatalog();
+      if (typeof window === 'undefined') return 0;
+
+      const lastSyncStr = localStorage.getItem(LAST_SYNC_KEY);
+      const lastSyncTimestamp = lastSyncStr ? parseInt(lastSyncStr, 10) : 0;
+      const now = Date.now();
+
+      // Skip if synced within last 3 minutes unless explicitly forced
+      if (!force && lastSyncTimestamp > 0 && now - lastSyncTimestamp < 3 * 60 * 1000) {
+        return 0;
+      }
+
+      let updatedCount = 0;
+      let latestTimestampEncountered = lastSyncTimestamp;
+      let stopPaging = false;
+
+      // Differential sync: sort=-updated_at to pull latest updates first
+      for (let page = 1; page <= 4; page++) {
+        if (stopPaging) break;
+
+        const res = await fetch(`${API_BASE}/mods?sort=-updated_at&page=${page}&per_page=50`, {
+          signal: AbortSignal.timeout(5000),
+        });
+
+        if (!res.ok) break;
+        const json = await res.json();
+        const items = Array.isArray(json.data) ? json.data : [];
+        if (items.length === 0) break;
+
+        for (const raw of items) {
+          const mod = normalizeMod(raw);
+          const updateTime = new Date(mod.updated_at || mod.created_at || mod.published_at || 0).getTime();
+
+          if (updateTime > latestTimestampEncountered) {
+            latestTimestampEncountered = updateTime;
+          }
+
+          // Differential cutoff: stop pagination early when encountering records older than last_sync_timestamp
+          if (lastSyncTimestamp > 0 && updateTime > 0 && updateTime <= lastSyncTimestamp) {
+            stopPaging = true;
+            break;
+          }
+
+          catalogMap.set(mod.id, mod);
+          updatedCount++;
+        }
+
+        const lastPage = json.meta?.last_page || 1;
+        if (page >= lastPage) break;
+      }
+
+      if (updatedCount > 0 || lastSyncTimestamp === 0) {
+        localStorage.setItem(LAST_SYNC_KEY, String(latestTimestampEncountered || now));
+        rebuildCatalogIndex();
+
+        // Persist top items to localStorage for immediate hydration
+        try {
+          const allMods = Array.from(catalogMap.values());
+          const trimmed = allMods
+            .sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
+            .slice(0, 300);
+          localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(trimmed));
+        } catch {
+          // Ignore quota errors
+        }
+      }
+
+      return updatedCount;
+    } catch (err) {
+      console.warn('[Catalog Sync] Differential sync skipped:', err);
+      return 0;
+    } finally {
+      syncInFlight = null;
+    }
+  })();
+
+  return syncInFlight;
+}
 
 export const apiService = {
   async getCategories(): Promise<ModCategory[]> {
@@ -352,174 +570,104 @@ export const apiService = {
     }
   },
 
+  async syncCatalogDifferential(force = false): Promise<number> {
+    return syncCatalogDifferential(force);
+  },
+
   async searchMods(filters: CatalogQueryFilters): Promise<CatalogQueryResult> {
+    initializeCatalog();
+
+    // Trigger non-blocking differential sync in background
+    syncCatalogDifferential().catch(() => {});
+
     const page = filters.page || 1;
     const perPage = filters.perPage || 20;
 
-    // Try live API first if query permits
-    try {
-      const params = new URLSearchParams();
-      params.set('page', String(page));
-      params.set('per_page', String(perPage));
+    let list = indexedCatalog;
 
-      if (filters.query?.trim()) {
-        params.set('query', filters.query.trim());
-      }
-      if (filters.categoryId) {
-        params.set('filter[category_id]', String(filters.categoryId));
-      }
-      if (filters.sptVersion && filters.sptVersion !== 'All') {
-        params.set('filter[spt_version]', filters.sptVersion);
-      }
-      if (filters.fikaOnly) {
-        params.set('filter[fika_compatibility]', '1');
-      }
-
-      // Sort mapping
-      switch (filters.sort) {
-        case 'downloads':
-          params.set('sort', '-downloads');
-          break;
-        case 'recent':
-          params.set('sort', '-published_at');
-          break;
-        case 'name_az':
-          params.set('sort', 'name');
-          break;
-        case 'name_za':
-          params.set('sort', '-name');
-          break;
-        case 'endorsements':
-          params.set('sort', '-endorsements_count');
-          break;
-        case 'favourites':
-          params.set('sort', '-favourites_count');
-          break;
-        default:
-          params.set('sort', '-downloads');
-      }
-
-      const res = await fetch(`${API_BASE}/mods?${params.toString()}`, {
-        signal: AbortSignal.timeout(4500)
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data && Array.isArray(json.data)) {
-          let list: Mod[] = json.data.map((m: Mod) => ({
-            ...m,
-            thumbnail:
-              normalizeForgeImageUrl(m.thumbnail) ||
-              (m.hub_id ? `https://files.sp-mod.com/mods/${m.hub_id}.png` : ''),
-            owner: m.owner
-              ? {
-                  ...m.owner,
-                  profile_photo_url: normalizeForgeImageUrl(m.owner.profile_photo_url),
-                }
-              : m.owner,
-          }));
-
-          if (filters.hideFeatured) {
-            list = list.filter(m => !m.featured);
-          }
-          if (filters.hideContainsAds) {
-            list = list.filter(m => !m.contains_ads);
-          }
-          if (filters.hideContainsAi) {
-            list = list.filter(m => !m.contains_ai_content);
-          }
-          if (filters.hideInstalled && filters.installedGuids?.length) {
-            const installed = new Set(filters.installedGuids);
-            list = list.filter(m => !(m.guid && installed.has(m.guid)));
-          }
-
-          return {
-            mods: list,
-            total: json.meta?.total || list.length,
-            currentPage: json.meta?.current_page || page,
-            lastPage: json.meta?.last_page || 1,
-            isOfflineFallback: false
-          };
-        }
-      }
-    } catch {
-      // Fall back to robust client-side filter
-    }
-
-    // Local fixture filter fallback
-    let list = [...FIXTURE_MODS];
-
-    // Filter text / author
+    // 1. Text & author filter (< 0.5ms)
     if (filters.query?.trim()) {
       const q = filters.query.trim().toLowerCase();
       if (q.startsWith('@')) {
         const authorQuery = q.slice(1).trim();
-        list = list.filter(m => m.owner?.name.toLowerCase().includes(authorQuery));
+        list = list.filter((e) => e.authorLower.includes(authorQuery));
       } else {
-        list = list.filter(m =>
-          m.name.toLowerCase().includes(q) ||
-          (m.guid && m.guid.toLowerCase().includes(q)) ||
-          (m.teaser && m.teaser.toLowerCase().includes(q)) ||
-          (m.owner?.name && m.owner.name.toLowerCase().includes(q))
-        );
+        const terms = q.split(/\s+/).filter(Boolean);
+        list = list.filter((e) => terms.every((t) => e.tokens.includes(t)));
       }
     }
 
-    // Category
+    if (filters.author?.trim()) {
+      const aQuery = filters.author.trim().toLowerCase();
+      list = list.filter((e) => e.authorLower.includes(aQuery));
+    }
+
+    // 2. Category filter (< 0.1ms)
     if (filters.categoryId) {
-      list = list.filter(m => m.category_id === filters.categoryId);
+      list = list.filter((e) => e.mod.category_id === filters.categoryId);
     }
 
-    // Fika only
+    // 3. SPT Version filter (< 0.3ms)
+    if (filters.sptVersion && filters.sptVersion !== 'All') {
+      list = list.filter((e) => matchesSptVersion(e, filters.sptVersion!));
+    }
+
+    // 4. Fika only (< 0.1ms)
     if (filters.fikaOnly) {
-      list = list.filter(m => m.fika_compatibility === true);
+      list = list.filter((e) => e.fikaCompatible);
     }
 
-    // Toggles
+    // 5. Toggles (< 0.2ms)
     if (filters.hideFeatured) {
-      list = list.filter(m => !m.featured);
+      list = list.filter((e) => !e.mod.featured);
     }
     if (filters.hideContainsAds) {
-      list = list.filter(m => !m.contains_ads);
+      list = list.filter((e) => !e.mod.contains_ads);
     }
     if (filters.hideContainsAi) {
-      list = list.filter(m => !m.contains_ai_content);
+      list = list.filter((e) => !e.mod.contains_ai_content);
     }
     if (filters.hideInstalled && filters.installedGuids?.length) {
-      const installed = new Set(filters.installedGuids);
-      list = list.filter(m => !(m.guid && installed.has(m.guid)));
+      const installed = new Set(filters.installedGuids.map((g) => g.toLowerCase()));
+      list = list.filter((e) => !(e.mod.guid && installed.has(e.mod.guid.toLowerCase())));
     }
 
-    // Sorting
-    list.sort((a, b) => {
+    // Extract mod objects
+    let mods = list.map((e) => e.mod);
+
+    // 6. Fast sorting (< 0.5ms)
+    mods.sort((a, b) => {
       switch (filters.sort) {
         case 'downloads':
-          return b.downloads - a.downloads;
+          return (b.downloads || 0) - (a.downloads || 0);
         case 'recent':
-          return new Date(b.published_at || 0).getTime() - new Date(a.published_at || 0).getTime();
+          return (
+            new Date(b.published_at || b.created_at || (b as any).updated_at || 0).getTime() -
+            new Date(a.published_at || a.created_at || (a as any).updated_at || 0).getTime()
+          );
         case 'name_az':
           return a.name.localeCompare(b.name);
         case 'name_za':
           return b.name.localeCompare(a.name);
         case 'endorsements':
-          return b.endorsements_count - a.endorsements_count;
+          return (b.endorsements_count || 0) - (a.endorsements_count || 0);
         case 'favourites':
-          return b.favourites_count - a.favourites_count;
+          return (b.favourites_count || 0) - (a.favourites_count || 0);
         default:
-          return b.downloads - a.downloads;
+          return (b.downloads || 0) - (a.downloads || 0);
       }
     });
 
-    const total = list.length;
+    const total = mods.length;
     const start = (page - 1) * perPage;
-    const paged = list.slice(start, start + perPage);
+    const paged = mods.slice(start, start + perPage);
 
     return {
       mods: paged,
       total,
       currentPage: page,
       lastPage: Math.max(1, Math.ceil(total / perPage)),
-      isOfflineFallback: true
+      isOfflineFallback: false,
     };
   },
 
@@ -922,6 +1070,12 @@ export const apiService = {
    * Fetch single mod details by ID
    */
   async getMod(modId: number): Promise<Mod | null> {
+    initializeCatalog();
+    const local = catalogMap.get(modId);
+    if (local && (local.teaser || (local as any).description) && local.versions && local.versions.length > 0) {
+      return local;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/mod/${modId}?include=versions,owner,category`, {
         headers: { Accept: 'application/json' },
@@ -931,17 +1085,16 @@ export const apiService = {
         const json = await res.json();
         const data = json.data || json;
         if (data && data.id) {
-          return {
-            ...data,
-            thumbnail: normalizeForgeImageUrl(data.thumbnail) || data.thumbnail
-          };
+          const normalized = normalizeMod(data);
+          catalogMap.set(normalized.id, normalized);
+          return normalized;
         }
       }
     } catch {
       // Fallback to fixture
     }
     const fixture = FIXTURE_MODS.find((m) => m.id === modId);
-    return fixture || null;
+    return local || fixture || null;
   },
 
   /**

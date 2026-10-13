@@ -5,12 +5,16 @@ interface StatusBarProps {
   statusText: string;
   queue: QueueItem[];
   onOpenQueue: () => void;
+  conflictCount?: number;
+  onNavigateConflicts?: () => void;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
   statusText,
   queue,
   onOpenQueue,
+  conflictCount = 0,
+  onNavigateConflicts,
 }) => {
   const activeItems = queue.filter(
     (i) => i.status === 'downloading' || i.status === 'extracting' || i.status === 'routing'
@@ -21,11 +25,21 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   return (
     <footer className="h-9 bg-[#181B20] border-t border-[#23272E] px-3.5 flex items-center justify-between text-xs select-none shrink-0 z-40">
       {/* Left: Branding + Status */}
-      <div className="flex items-center gap-4 min-w-0">
+      <div className="flex items-center gap-3 min-w-0">
         <span className="text-[#9AA3AF] font-medium shrink-0">Blacksite Mod Manager</span>
         <span className="text-[#E8EAEE] truncate max-w-md" title={statusText}>
           {statusText}
         </span>
+        {conflictCount > 0 && onNavigateConflicts && (
+          <button
+            onClick={onNavigateConflicts}
+            className="px-2 py-0.5 rounded bg-red-500/15 border border-red-500/30 text-red-300 text-[11px] font-medium hover:bg-red-500/25 transition-colors cursor-pointer flex items-center gap-1.5"
+            title="Active loadout conflicts detected — view Conflict Matrix"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+            <span>{conflictCount} conflict{conflictCount > 1 ? 's' : ''}</span>
+          </button>
+        )}
       </div>
 
       {/* Center: Installation Queue button */}

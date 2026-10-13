@@ -323,4 +323,68 @@ export interface AddonQueryResult {
   isOfflineFallback?: boolean;
 }
 
+// ==========================================
+// Phase 3: Conflict Matrix & VFS Types
+// ==========================================
+
+export type FileCollisionType = 'CRITICAL_BINARY' | 'CONFIG_OVERWRITE' | 'ASSET_OVERRIDE';
+
+export interface FileCollisionContender {
+  modId: string;
+  modName: string;
+  version: string;
+  loadOrder?: number;
+  isDirectLink?: boolean;
+}
+
+export interface FileCollision {
+  collisionId: string;
+  type: FileCollisionType;
+  relativePath: string;
+  severity: 'critical' | 'warning' | 'info';
+  contenders: FileCollisionContender[];
+  details: string;
+  recommendedAction: 'prioritize_higher' | 'disable_mod' | 'sandbox_config';
+  ignored?: boolean;
+}
+
+export interface CircularDependencyCycle {
+  cycleId: string;
+  modIds: string[];
+  modNames: string[];
+  pathRepresentation: string;
+  description: string;
+  breakRecommendation: {
+    sourceModId: string;
+    sourceModName: string;
+    targetModId: string;
+    targetModName: string;
+    suggestedAction: 'adjust_load_order' | 'disable_mod';
+  };
+}
+
+export interface MissingPrerequisite {
+  id: string;
+  consumerModId: string;
+  consumerModName: string;
+  requiredModId: string;
+  requiredModName: string;
+  versionConstraint?: string;
+  forgeModId?: number;
+  isInstalledButDisabled: boolean;
+}
+
+export interface ConflictMatrixReport {
+  cycles: CircularDependencyCycle[];
+  collisions: FileCollision[];
+  missingPrerequisites: MissingPrerequisite[];
+  criticalCount: number;
+  warningCount: number;
+  circularCount: number;
+  totalIssuesCount: number;
+  topologicalLoadOrder: string[];
+  hasCycle: boolean;
+  timestamp: string;
+}
+
 

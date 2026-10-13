@@ -141,9 +141,12 @@ Output binaries will be generated inside the `./release/` directory.
 
 ---
 
-## 🤝 Contributing
+## 🤝 Contributing & AI Agent Development
 
-Contributions from the SPT community are welcome!
+Contributions from the SPT community and AI coding agents are welcome!
+- For autonomous code agents (e.g. **Google Antigravity Agent**), consult the **[Agent Architecture & Reference Guide](docs/AGENT_README.md)** for detailed file maps, invariants, and IPC contracts.
+- For SPT Hub publication copy, see **[SPT Hub Description](docs/SPT_HUB_DESCRIPTION.md)**.
+
 1. Fork the repository.
 2. Create your feature branch (`git checkout -b feature/tactical-feature`).
 3. Commit your changes (`git commit -m 'Add tactical feature'`).
