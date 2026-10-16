@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Boxes, Puzzle, ShieldAlert } from 'lucide-react';
+import { Boxes, Puzzle, ShieldAlert, Layers } from 'lucide-react';
 import { CustomTitleBar } from './components/CustomTitleBar';
 import { Header } from './components/Header';
 import { BrowseModsTab } from './components/BrowseModsTab';
 import { AddonsTab } from './components/AddonsTab';
 import { InstalledModsTab, InstalledSortField } from './components/InstalledModsTab';
+import { ProfilesTab } from './components/ProfilesTab';
 import { ModpacksTab } from './components/ModpacksTab';
 import { ConflictMatrixTab } from './components/ConflictMatrixTab';
 import { SettingsTab } from './components/SettingsTab';
@@ -39,6 +40,7 @@ import {
   ResolvedDependencyItem,
   Addon,
   AddonVersion,
+  BsiteBundleModEntry,
 } from './types';
 import { storageService } from './services/storageService';
 import { apiService } from './services/apiService';
@@ -133,7 +135,7 @@ export const App: React.FC = () => {
   const [sptVersions, setSptVersions] = useState<SptVersionInfo[]>([]);
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'browse' | 'addons' | 'installed' | 'conflicts' | 'modpacks' | 'settings'>('browse');
+  const [activeTab, setActiveTab] = useState<'browse' | 'addons' | 'installed' | 'profiles' | 'conflicts' | 'modpacks' | 'settings'>('browse');
 
   // Modals
   const [isQueueOpen, setIsQueueOpen] = useState(false);
@@ -353,22 +355,71 @@ export const App: React.FC = () => {
     }
   };
 
-  // Profile Switching (task 2.5)
-  const handleSelectProfile = (profileId: string) => {
+  // Profile Switching & Atomic Zero-Copy VFS Relinking (Phase 4)
+  const handleSelectProfile = async (profileId: string) => {
     const profile = profiles.find((p) => p.id === profileId);
     if (!profile) return;
 
     handleUpdateSettings({ activeProfileId: profileId });
 
-    // Enable mods in profile, disable others (atomic profile switch simulation)
-    const enabledSet = new Set(profile.enabledModIds);
+    // Enable mods in profile, disable others (atomic profile switch)
+    const enabledSet = new Set(profile.enabledModIds.map((id) => id.toLowerCase()));
     const updatedMods = installedMods.map((m) => ({
       ...m,
-      isDisabled: !enabledSet.has(m.id),
+      isDisabled: !enabledSet.has(m.id.toLowerCase()),
     }));
 
     setInstalledMods(updatedMods);
-    showToast('Profile Loaded', `Switched to profile: ${profile.name}`, 'success');
+
+    // If running in desktop bridge, invoke zero-copy VFS relinker
+    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    if (bridge?.relinkVfsProfile && settings.sptDirectory) {
+      try {
+        const disabledModIds = installedMods
+          .filter((m) => !enabledSet.has(m.id.toLowerCase()))
+          .map((m) => m.id);
+        const relinkRes = await bridge.relinkVfsProfile({
+          sptDirectory: settings.sptDirectory,
+          enabledModIds: profile.enabledModIds,
+          disabledModIds,
+        });
+        if (relinkRes?.success) {
+          showToast(
+            'Loadout Swapped',
+            `Active: ${profile.name} (NTFS VFS relinked ${relinkRes.switchedCount} mods in ${relinkRes.durationMs}ms)`,
+            'success'
+          );
+          return;
+        }
+      } catch (err: any) {
+        console.warn('VFS relink warning:', err);
+      }
+    }
+
+    showToast('Profile Loaded', `Switched to profile: ${profile.name} (Zero-copy VFS simulated)`, 'success');
+  };
+
+  const handleUpdateProfile = (updatedProfile: ModProfile) => {
+    const exists = profiles.some((p) => p.id === updatedProfile.id);
+    let nextProfiles: ModProfile[];
+    if (exists) {
+      nextProfiles = profiles.map((p) => (p.id === updatedProfile.id ? updatedProfile : p));
+    } else {
+      nextProfiles = [updatedProfile, ...profiles];
+    }
+    setProfiles(nextProfiles);
+    storageService.saveProfiles(nextProfiles);
+
+    // If this is currently the active profile, synchronize installed mods state
+    if (updatedProfile.id === settings.activeProfileId) {
+      const enabledSet = new Set(updatedProfile.enabledModIds.map((id) => id.toLowerCase()));
+      setInstalledMods((prev) =>
+        prev.map((m) => ({
+          ...m,
+          isDisabled: !enabledSet.has(m.id.toLowerCase()),
+        }))
+      );
+    }
   };
 
   const handleCreateProfile = (profileName?: string) => {
@@ -384,6 +435,10 @@ export const App: React.FC = () => {
       description: 'Custom mod loadout',
       enabledModIds: installedMods.filter((m) => !m.isDisabled).map((m) => m.id),
       createdDate: new Date().toISOString().split('T')[0],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      tags: ['Custom'],
+      bannerColor: '#EA580C',
     };
 
     const updated = [...profiles, newProfile];
@@ -401,6 +456,27 @@ export const App: React.FC = () => {
     if (settings.activeProfileId === profileId) {
       handleSelectProfile(updated[0].id);
     }
+    showToast('Profile Deleted', 'Removed profile from loadouts deck.', 'info');
+  };
+
+  const handleBatchDownloadMissingMods = (missingMods: BsiteBundleModEntry[]) => {
+    if (missingMods.length === 0) return;
+    for (const m of missingMods) {
+      queueInstall(
+        m.name,
+        m.author || 'Forge Author',
+        m.version,
+        '',
+        m.guid || m.id,
+        m.sourceHubId,
+        m.downloadUrl
+      );
+    }
+    showToast(
+      'Batch Download Queued',
+      `Queued ${missingMods.length} missing mod${missingMods.length > 1 ? 's' : ''} from .bsite loadout for installation.`,
+      'info'
+    );
   };
 
   // Real Desktop Installation Pipeline with Web Simulation Fallback
@@ -1616,6 +1692,7 @@ export const App: React.FC = () => {
         profiles={profiles}
         onSelectProfile={handleSelectProfile}
         onCreateProfile={handleCreateProfile}
+        onOpenProfilesTab={() => setActiveTab('profiles')}
         isServerRunning={isSptServerRunning}
       />
 
@@ -1662,6 +1739,22 @@ export const App: React.FC = () => {
           {conflicts.length > 0 && (
             <span className="w-2 h-2 rounded-full bg-[#F59E0B]" title="Active conflicts detected" />
           )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('profiles')}
+          className={`px-4 py-2 text-[13px] font-semibold transition-colors border-b-2 flex items-center gap-1.5 cursor-pointer ${
+            activeTab === 'profiles'
+              ? 'text-[#EA580C] border-[#EA580C]'
+              : 'text-[#9AA3AF] hover:text-[#E8EAEE] border-transparent'
+          }`}
+          type="button"
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span>Profiles & Loadouts</span>
+          <span className="bg-[#20252D] text-[#9AA3AF] text-[11px] font-mono px-1.5 py-0.2 rounded-full">
+            {profiles.length}
+          </span>
         </button>
 
         <button
@@ -1779,6 +1872,22 @@ export const App: React.FC = () => {
             onBulkEnable={handleBulkEnableMods}
             onBulkDisable={handleBulkDisableMods}
             onBulkUninstall={handleBulkUninstallMods}
+            onShowToast={showToast}
+          />
+        )}
+
+        {activeTab === 'profiles' && (
+          <ProfilesTab
+            profiles={profiles}
+            activeProfileId={settings.activeProfileId}
+            installedMods={installedMods}
+            sptVersion={settings.sptVersion}
+            sptDirectory={settings.sptDirectory}
+            onSelectProfile={handleSelectProfile}
+            onCreateProfile={handleCreateProfile}
+            onUpdateProfile={handleUpdateProfile}
+            onDeleteProfile={handleDeleteProfile}
+            onBatchDownloadMods={handleBatchDownloadMissingMods}
             onShowToast={showToast}
           />
         )}

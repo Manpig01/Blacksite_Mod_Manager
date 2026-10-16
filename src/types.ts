@@ -104,6 +104,18 @@ export interface InstalledMod {
   loadOrder?: number;
   dependencies?: string[];
   tags?: ModTag[];
+  forgeLinkConfidence?: number; // 0.00 to 1.00
+  forgeLinkStatus?: 'linked' | 'quarantine' | 'unlinked';
+  forgeCandidateMod?: {
+    id: number;
+    name: string;
+    slug?: string | null;
+    author?: string;
+    version?: string;
+    thumbnail?: string;
+  };
+  inferredGuid?: string;
+  isPatcher?: boolean;
 }
 
 export interface ModTag {
@@ -159,6 +171,15 @@ export interface ModProfile {
   description: string;
   enabledModIds: string[];
   createdDate: string;
+  createdAt?: number;
+  updatedAt?: number;
+  isDefault?: boolean;
+  customLoadOrder?: Record<string, number>;
+  linkedSptProfileId?: string; // ID of character profile in user/profiles/*.json
+  linkedSptProfileName?: string; // Display name of Tarkov character (e.g. BEAR Level 45)
+  modConfigs?: Record<string, Record<string, any>>; // Custom config overrides
+  tags?: string[];
+  bannerColor?: string; // Tactical accent hex color
 }
 
 export type ExtractionPerformanceMode = 'balanced' | 'turbo' | 'smooth';
@@ -385,6 +406,80 @@ export interface ConflictMatrixReport {
   topologicalLoadOrder: string[];
   hasCycle: boolean;
   timestamp: string;
+}
+
+// ==========================================
+// Phase 4: Tactical Mod Profiles & .bsite Hub
+// ==========================================
+
+export interface SptPlayerProfile {
+  id: string; // e.g. "65a1b2c3d4e5f67890" or "Account-Alpha"
+  name: string;
+  side: 'Bear' | 'Usec' | 'Unknown';
+  level: number;
+  experience: number;
+  edition: string;
+  wipeVersion?: string;
+  lastPlayed?: string;
+}
+
+export interface ProfileDiffResult {
+  profileA: ModProfile;
+  profileB: ModProfile;
+  commonMods: InstalledMod[];
+  onlyInProfileA: InstalledMod[];
+  onlyInProfileB: InstalledMod[];
+  versionMismatches: {
+    modId: string;
+    modName: string;
+    versionA: string;
+    versionB: string;
+  }[];
+  loadOrderMismatches: {
+    modId: string;
+    modName: string;
+    orderA?: number;
+    orderB?: number;
+  }[];
+}
+
+export interface BsiteBundleModEntry {
+  id: string;
+  guid?: string;
+  name: string;
+  version: string;
+  author?: string;
+  downloadUrl?: string;
+  sourceHubId?: number;
+  required: boolean;
+  loadPriority?: number;
+  kind?: ModKind;
+}
+
+export interface BsiteBundleManifest {
+  formatVersion: '1.0';
+  manifestType: 'blacksite_loadout_bundle';
+  metadata: {
+    name: string;
+    description: string;
+    author: string;
+    targetSptVersion: string;
+    exportedAt: string;
+    modCount: number;
+    tags?: string[];
+    linkedAccountName?: string;
+  };
+  mods: BsiteBundleModEntry[];
+  configOverrides?: Record<string, string>; // relative path -> serialized JSON/INI content
+}
+
+export interface BsiteImportPreflight {
+  manifest: BsiteBundleManifest;
+  isVersionMatch: boolean;
+  installedCount: number;
+  missingCount: number;
+  existingMods: InstalledMod[];
+  missingMods: BsiteBundleModEntry[];
 }
 
 

@@ -820,28 +820,94 @@ export const INITIAL_INSTALLED_MODS: InstalledMod[] = [
   }
 ];
 
+export const INITIAL_SPT_PLAYER_PROFILES: import('../types').SptPlayerProfile[] = [
+  {
+    id: "account-bear-42",
+    name: "Viper_Actual",
+    side: "Bear",
+    level: 42,
+    experience: 1824900,
+    edition: "Edge of Darkness",
+    wipeVersion: "0.15.5.0",
+    lastPlayed: "Today, 14:22"
+  },
+  {
+    id: "account-usec-28",
+    name: "Ghost_Operator",
+    side: "Usec",
+    level: 28,
+    experience: 842100,
+    edition: "Unheard Edition",
+    wipeVersion: "0.15.5.0",
+    lastPlayed: "Yesterday, 21:05"
+  },
+  {
+    id: "account-hardcore-12",
+    name: "Solo_Survivor",
+    side: "Bear",
+    level: 12,
+    experience: 230400,
+    edition: "Standard",
+    wipeVersion: "0.15.5.0",
+    lastPlayed: "3 days ago"
+  }
+];
+
 export const INITIAL_PROFILES: ModProfile[] = [
   {
     id: "prof-1",
-    name: "Default Loadout",
-    description: "Clean vanilla profile with zero active mods",
+    name: "Vanilla Testing",
+    description: "Clean vanilla SPT profile with zero active mods for baseline benchmarks and troubleshooting",
     enabledModIds: [],
-    createdDate: "2026-09-01"
+    createdDate: "2026-09-01",
+    createdAt: 1725148800000,
+    updatedAt: 1725148800000,
+    isDefault: true,
+    tags: ["Vanilla", "Diagnostics"],
+    bannerColor: "#64748B",
+    linkedSptProfileId: "account-hardcore-12",
+    linkedSptProfileName: "Solo_Survivor (BEAR Lvl 12)"
   },
   {
     id: "prof-2",
-    name: "Vanilla+ Minimal",
-    description: "Performance and AI tweaks only, no server overhauls",
-    enabledModIds: ["xyz.drakia.bigbrain", "me.sol.sain", "com.amanda.graphics"],
-    createdDate: "2026-09-05"
+    name: "Tactical Realism (SAIN AI)",
+    description: "Enhanced combat bots, spatial audio, and visual enhancements for immersive solo raids",
+    enabledModIds: ["xyz.drakia.bigbrain", "me.sol.sain", "xyz.drakia.waypoints", "com.amanda.graphics"],
+    createdDate: "2026-09-05",
+    createdAt: 1725494400000,
+    updatedAt: 1725494400000,
+    tags: ["Combat AI", "Visuals", "Solo"],
+    bannerColor: "#EA580C",
+    linkedSptProfileId: "account-bear-42",
+    linkedSptProfileName: "Viper_Actual (BEAR Lvl 42)"
   },
   {
     id: "prof-3",
-    name: "Fika Co-op Sync",
-    description: "Matched loadout for headless server and clients",
+    name: "Fika Co-op Headless Sync",
+    description: "Server Value Modifier and shared AI configuration optimized for peer-to-peer multiplayer squad raids",
     enabledModIds: ["xyz.drakia.bigbrain", "fika.ghostfenixx.svm", "me.sol.sain"],
-    createdDate: "2026-09-12"
+    createdDate: "2026-09-12",
+    createdAt: 1726099200000,
+    updatedAt: 1726099200000,
+    tags: ["Multiplayer", "Server Sync"],
+    bannerColor: "#10B981",
+    linkedSptProfileId: "account-usec-28",
+    linkedSptProfileName: "Ghost_Operator (USEC Lvl 28)"
+  },
+  {
+    id: "prof-4",
+    name: "Stalker Anomaly Hardcore",
+    description: "High lethality, atmospheric graphics, custom weapons, and aggressive AI roaming spawns",
+    enabledModIds: ["xyz.drakia.bigbrain", "me.sol.sain", "xyz.drakia.waypoints", "xyz.drakia.questingbots", "com.amanda.graphics"],
+    createdDate: "2026-09-20",
+    createdAt: 1726790400000,
+    updatedAt: 1726790400000,
+    tags: ["Hardcore", "Atmosphere"],
+    bannerColor: "#8B5CF6",
+    linkedSptProfileId: "account-bear-42",
+    linkedSptProfileName: "Viper_Actual (BEAR Lvl 42)"
   }
 ];
 
 export const INITIAL_CONFLICTS: ConflictInfo[] = [];
+

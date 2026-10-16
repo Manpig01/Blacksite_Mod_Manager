@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   uninstallAllMods: (params) => ipcRenderer.invoke('mod:uninstall-all', params),
   toggleDisableMod: (params) => ipcRenderer.invoke('mod:toggle-disable', params),
   scanInstalledMods: (params) => ipcRenderer.invoke('mod:scan-installed', params),
+  relinkVfsProfile: (params) => ipcRenderer.invoke('profile:relink-vfs', params),
+  scanSptPlayerProfiles: (params) => ipcRenderer.invoke('profile:scan-player-saves', params),
   launchSpt: (params) => ipcRenderer.invoke('spt:launch', params),
   stopSptServer: () => ipcRenderer.invoke('spt:stop'),
   getSptStatus: () => ipcRenderer.invoke('spt:status'),
@@ -40,6 +42,7 @@ contextBridge.exposeInMainWorld('desktopBridge', {
     return () => ipcRenderer.removeListener('spt:server-exit', listener);
   },
   setCustomEmblem: (dataUrl) => ipcRenderer.invoke('app:set-custom-emblem', dataUrl),
+  updateAppIcon: (buffer) => ipcRenderer.invoke('branding:update-icon', buffer),
   resetCustomEmblem: () => ipcRenderer.invoke('app:reset-custom-emblem'),
   windowControl: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

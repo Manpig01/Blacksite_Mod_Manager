@@ -11,6 +11,7 @@ interface HeaderProps {
   profiles: ModProfile[];
   onSelectProfile: (profileId: string) => void;
   onCreateProfile: (name?: string) => void;
+  onOpenProfilesTab?: () => void;
   onOpenDownloadModal?: () => void;
   isLaunching?: boolean;
   isServerRunning?: boolean;
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   profiles,
   onSelectProfile,
   onCreateProfile,
+  onOpenProfilesTab,
   onOpenDownloadModal,
   isLaunching = false,
   isServerRunning = false,
@@ -105,28 +107,38 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Profile Selector (task 2.5) */}
+          {/* Profile Selector (task 2.5 & Phase 4) */}
           <div className="flex items-center gap-2">
-            <Layers className="w-3.5 h-3.5 text-[#9AA3AF]" />
-            <span className="text-xs text-[#9AA3AF]">Profile:</span>
-          <select
-            value={settings.activeProfileId}
-            onChange={(e) => {
-              if (e.target.value === '__new__') {
-                onCreateProfile();
-              } else {
-                onSelectProfile(e.target.value);
-              }
-            }}
-            className="bg-[#0E1013] border border-[#23272E] rounded text-xs text-[#E8EAEE] px-2.5 py-1 focus:outline-none focus:border-[#EA580C] cursor-pointer"
-          >
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.enabledModIds.length} mods)
-              </option>
-            ))}
-            <option value="__new__">+ New Profile...</option>
-          </select>
+            <button
+              onClick={onOpenProfilesTab}
+              type="button"
+              className="flex items-center gap-1.5 text-xs text-[#9AA3AF] hover:text-[#EA580C] transition-colors cursor-pointer group"
+              title="Open Tactical Profiles & Loadout Swapper"
+            >
+              <Layers className="w-3.5 h-3.5 group-hover:scale-110 transition-transform text-[#EA580C]" />
+              <span className="hidden sm:inline">Profile:</span>
+            </button>
+            <select
+              value={settings.activeProfileId}
+              onChange={(e) => {
+                if (e.target.value === '__new__') {
+                  onCreateProfile();
+                } else if (e.target.value === '__manage__') {
+                  if (onOpenProfilesTab) onOpenProfilesTab();
+                } else {
+                  onSelectProfile(e.target.value);
+                }
+              }}
+              className="bg-[#0E1013] border border-[#23272E] rounded text-xs text-[#E8EAEE] px-2.5 py-1 focus:outline-none focus:border-[#EA580C] cursor-pointer"
+            >
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.enabledModIds.length} mods)
+                </option>
+              ))}
+              <option value="__new__">+ New Profile...</option>
+              <option value="__manage__">⚡ Manage & Compare Profiles...</option>
+            </select>
           </div>
         </div>
       </div>

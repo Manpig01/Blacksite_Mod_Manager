@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Addon, AddonVersion, InstalledMod, Mod } from '../types';
 import { apiService } from '../services/apiService';
+import { parentModResolver } from '../services/parentModResolver';
 import { AddonThumbnail } from './AddonThumbnail';
 
 interface AddonsTabProps {
@@ -148,6 +149,19 @@ export const AddonsTab: React.FC<AddonsTabProps> = ({
       setTotalCount(res.total);
       setTotalPages(res.total_pages);
       setIsOfflineFallback(!!res.isOfflineFallback);
+
+      // Batch prefetch missing parent mod metadata in a single coalesced call
+      if (res.data && res.data.length > 0) {
+        const parentIds = res.data
+          .filter((a) => !a.mod?.thumbnail && a.mod_id)
+          .map((a) => a.mod_id);
+        if (parentIds.length > 0) {
+          const installedIds = new Set(installedMods.map((m) => m.modId).filter(Boolean) as number[]);
+          parentModResolver
+            .prefetchParentBatch(parentIds, installedIds, (ids) => apiService.getModsByIds(ids))
+            .catch(() => {});
+        }
+      }
     } catch (err: any) {
       console.error('Failed to load addons from SPT API:', err);
       setError(err?.message || 'Failed to retrieve addons catalog.');

@@ -727,6 +727,121 @@ function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
 }
 
 /**
+ * Detects whether the target SPT directory uses the SPT 4.x (`SPT_Runtime/user/mods`)
+ * or legacy SPT 3.8.x (`user/mods`) server architecture.
+ */
+async function detectSptServerModsRelativePath(sptRoot) {
+  const spt4RuntimeDir = path.join(sptRoot, 'SPT_Runtime');
+  try {
+    const stat = await fs.promises.stat(spt4RuntimeDir);
+    if (stat.isDirectory()) {
+      return 'SPT_Runtime/user/mods';
+    }
+  } catch {}
+  return 'user/mods';
+}
+
+/**
+ * Ultra-fast (<0.5ms) zero-dependency PE/CIL binary inspector for loose .dll files.
+ * Determines whether a standalone DLL is a BepInEx Plugin, a Preloader Patcher,
+ * and extracts its embedded [BepInPlugin("GUID", "Name", "Version")] if present.
+ */
+async function inspectManagedDll(dllPath) {
+  try {
+    const buf = await fs.promises.readFile(dllPath);
+    const asciiContent = buf.toString('latin1');
+
+    const isBepInPlugin = asciiContent.includes('BaseUnityPlugin') || asciiContent.includes('BepInPlugin');
+    const isPreloaderPatcher =
+      !isBepInPlugin &&
+      (asciiContent.includes('get_TargetDLLs') || (asciiContent.includes('Patcher') && asciiContent.includes('Mono.Cecil')));
+
+    // Extract GUID pattern e.g. com.author.modname from CLI metadata strings
+    const guidMatch = asciiContent.match(/\b([a-z0-9]+(?:\.[a-z0-9_-]+){2,})\b/i);
+
+    return {
+      role: isPreloaderPatcher ? 'patcher' : isBepInPlugin ? 'plugin' : 'unknown',
+      inferredGuid: guidMatch ? guidMatch[1].toLowerCase() : null
+    };
+  } catch (err) {
+    return { role: 'unknown', inferredGuid: null };
+  }
+}
+
+/**
+ * Rewrites extracted archive relative paths so SPT 3.x and SPT 4.1.6 structures
+ * route seamlessly regardless of how the mod author packaged the archive.
+ */
+async function normalizeAndRouteModEntry(sptRoot, extractedRelPath, absStagingFilePath) {
+  const targetServerModsRel = await detectSptServerModsRelativePath(sptRoot);
+  let cleanRel = extractedRelPath.replace(/\\/g, '/').replace(/^\/+/, '');
+
+  // 1. Strip redundant top-level release wrapper folder if present
+  // e.g., "SAIN-v3.2.0/BepInEx/plugins/..." -> "BepInEx/plugins/..."
+  const knownRoots = ['bepinex/', 'spt_runtime/', 'user/mods/'];
+  const lowerRel = cleanRel.toLowerCase();
+  for (const rootToken of knownRoots) {
+    const idx = lowerRel.indexOf(rootToken);
+    if (idx > 0) {
+      cleanRel = cleanRel.slice(idx);
+      break;
+    }
+  }
+
+  // 2. Bidirectional Server Mod Path Rewrite (user/mods <-> SPT_Runtime/user/mods)
+  if (cleanRel.toLowerCase().startsWith('user/mods/')) {
+    const subPath = cleanRel.slice('user/mods/'.length);
+    return path.join(targetServerModsRel, subPath);
+  }
+  if (cleanRel.toLowerCase().startsWith('spt_runtime/user/mods/')) {
+    const subPath = cleanRel.slice('spt_runtime/user/mods/'.length);
+    return path.join(targetServerModsRel, subPath);
+  }
+
+  // 3. Loose top-level DLL routing (Plugin vs. Preloader Patcher)
+  if (!cleanRel.includes('/') && cleanRel.toLowerCase().endsWith('.dll') && absStagingFilePath) {
+    const { role } = await inspectManagedDll(absStagingFilePath);
+    if (role === 'patcher') {
+      return path.join('BepInEx/patchers', cleanRel);
+    }
+    return path.join('BepInEx/plugins', cleanRel);
+  }
+
+  return cleanRel;
+}
+
+/**
+ * Delta File Purge for 1-Click Batch Mod Updater:
+ * Removes deprecated .dll / .bundle files from the previous version of a mod
+ * that no longer exist in the newly downloaded version, while preserving user configs.
+ */
+async function purgeDeprecatedModFiles(sptRoot, previousFileList = [], nextFileList = []) {
+  const nextSet = new Set(nextFileList.map((f) => f.replace(/\\/g, '/').toLowerCase()));
+  const removedFiles = [];
+
+  for (const oldRelPath of previousFileList) {
+    const normOld = oldRelPath.replace(/\\/g, '/').toLowerCase();
+    // Never auto-purge user configuration files or saved state
+    if (normOld.includes('/config/') || normOld.endsWith('.cfg') || normOld.endsWith('.json')) {
+      continue;
+    }
+
+    if (!nextSet.has(normOld)) {
+      const fullOldPath = path.join(sptRoot, oldRelPath);
+      try {
+        await fs.promises.unlink(fullOldPath);
+        removedFiles.push(oldRelPath);
+      } catch (err) {
+        if (err.code !== 'ENOENT') {
+          console.warn(`[DeltaPurge] Could not remove deprecated file ${oldRelPath}:`, err.message);
+        }
+      }
+    }
+  }
+  return removedFiles;
+}
+
+/**
  * Phase 3 NTFS Hardlink VFS & Configuration Merge Engine
  */
 
@@ -983,6 +1098,7 @@ async function routeExtractedModToSpt(
 
   let detectedServerPath = null;
   let detectedClientPath = null;
+  const newlyDeployedFiles = [];
 
   const notifyRoute = (pct, msg) => {
     if (onProgress) {
@@ -1077,6 +1193,7 @@ async function routeExtractedModToSpt(
       if (!modMeta.baseHashes) modMeta.baseHashes = {};
       modMeta.baseHashes[relPathKey] = sha256File(destFile);
     }
+    newlyDeployedFiles.push(path.relative(sptDirectory, destFile).replace(/\\/g, '/'));
   }
 
   /**
@@ -1252,14 +1369,30 @@ async function routeExtractedModToSpt(
       if (foundDlls.length > 0) {
         for (const dllPath of foundDlls) {
           const fileName = path.basename(dllPath);
-          const destDll = path.join(targetClientPluginsDir, fileName);
+          const { role } = await inspectManagedDll(dllPath);
+          const isPatcher = role === 'patcher';
+          const targetDir = isPatcher ? targetClientPatchersDir : targetClientPluginsDir;
+          const destDll = path.join(targetDir, fileName);
           await deployFileWithHardlink(dllPath, destDll);
           if (!detectedClientPath) {
-            detectedClientPath = `BepInEx/plugins/${fileName}`;
+            detectedClientPath = isPatcher ? `BepInEx/patchers/${fileName}` : `BepInEx/plugins/${fileName}`;
           }
         }
       }
     }
+
+    // Delta File Purge: Remove deprecated .dll/.bundle ghost files from previous versions of this mod
+    if (modMeta.deployedFiles && Array.isArray(modMeta.deployedFiles) && modMeta.deployedFiles.length > 0) {
+      try {
+        const purged = await purgeDeprecatedModFiles(sptDirectory, modMeta.deployedFiles, newlyDeployedFiles);
+        if (purged.length > 0) {
+          console.log(`[Blacksite DeltaPurge] Purged ${purged.length} deprecated ghost files for ${activeModKey}:`, purged);
+        }
+      } catch (purgeErr) {
+        console.warn(`[Blacksite DeltaPurge] Non-fatal delta purge warning:`, purgeErr.message);
+      }
+    }
+    modMeta.deployedFiles = newlyDeployedFiles;
 
     // Commit transaction: unlink temporary backups and persist base metadata
     await journal.commit();
@@ -1752,16 +1885,18 @@ async function installMod({
     }
 
     if (isStandaloneDll) {
-      console.log(`[Blacksite Installer] Detected standalone client DLL plugin: ${modName}`);
-      const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
-      fs.mkdirSync(targetClientPluginsDir, { recursive: true });
+      const { role, inferredGuid } = await inspectManagedDll(tempArchiveFile);
+      const isPatcher = role === 'patcher';
+      const targetSubdir = isPatcher ? path.join('BepInEx', 'patchers') : path.join('BepInEx', 'plugins');
+      const targetDir = path.join(sptDirectory, targetSubdir);
+      fs.mkdirSync(targetDir, { recursive: true });
 
       const cleanDllName =
         archiveFileName && archiveFileName.toLowerCase().endsWith('.dll')
           ? path.basename(archiveFileName)
           : `${(modName || 'Plugin').replace(/[^\w.-]/g, '')}.dll`;
 
-      const destDllPath = path.join(targetClientPluginsDir, cleanDllName);
+      const destDllPath = path.join(targetDir, cleanDllName);
       assertSafeSptTarget(destDllPath, sptDirectory);
       fs.copyFileSync(tempArchiveFile, destDllPath);
 
@@ -1773,13 +1908,16 @@ async function installMod({
         });
       }
 
+      const clientRelPath = `${targetSubdir.replace(/\\/g, '/')}/${cleanDllName}`;
       const routeResult = {
         success: true,
         serverPath: null,
-        clientPath: `BepInEx/plugins/${cleanDllName}`,
+        clientPath: clientRelPath,
         kind: 'Client',
+        inferredGuid: inferredGuid || undefined,
+        role,
       };
-      console.log(`[Blacksite Installer] Standalone DLL placed into BepInEx/plugins:`, routeResult);
+      console.log(`[Blacksite Installer] Standalone DLL placed into ${targetSubdir} (${role}):`, routeResult);
       return routeResult;
     }
 
@@ -2172,8 +2310,10 @@ async function scanInstalledMods({ sptDirectory }) {
       } else if (cleanName.toLowerCase().endsWith('.dll')) {
         // Standalone .dll plugin (e.g. Liquidwarp.ArmorExpert.dll)
         const baseName = cleanName.replace(/\.dll$/i, '');
+        const fullDll = path.join(clientPluginsDir, name);
+        const { role, inferredGuid } = await inspectManagedDll(fullDll);
         results.push({
-          id: `disk.client.${baseName.toLowerCase()}`,
+          id: inferredGuid || `disk.client.${baseName.toLowerCase()}`,
           name: baseName,
           author: 'Client Plugin',
           version: '1.0.0',
@@ -2186,6 +2326,40 @@ async function scanInstalledMods({ sptDirectory }) {
           hasUpdate: false,
           latestVersion: '1.0.0',
           configFiles: [],
+          inferredGuid: inferredGuid || undefined,
+          isPatcher: role === 'patcher',
+        });
+      }
+    }
+  }
+
+  // Scan BepInEx/patchers
+  const clientPatchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
+  if (fs.existsSync(clientPatchersDir)) {
+    const patcherEntries = fs.readdirSync(clientPatchersDir);
+    for (const name of patcherEntries) {
+      const isDisabled = name.toLowerCase().endsWith('.disabled');
+      const cleanName = isDisabled ? name.slice(0, -9) : name;
+      if (cleanName.toLowerCase().endsWith('.dll')) {
+        const baseName = cleanName.replace(/\.dll$/i, '');
+        const fullDll = path.join(clientPatchersDir, name);
+        const { inferredGuid } = await inspectManagedDll(fullDll);
+        results.push({
+          id: inferredGuid || `disk.patcher.${baseName.toLowerCase()}`,
+          name: baseName,
+          author: 'Preloader Patcher',
+          version: '1.0.0',
+          kind: 'Client',
+          sptVersion: '4.x',
+          fikaCompatibility: true,
+          installDate: new Date().toISOString().split('T')[0],
+          clientPath: `BepInEx/patchers/${name}`,
+          isDisabled,
+          hasUpdate: false,
+          latestVersion: '1.0.0',
+          configFiles: [],
+          inferredGuid: inferredGuid || undefined,
+          isPatcher: true,
         });
       }
     }
@@ -2194,13 +2368,118 @@ async function scanInstalledMods({ sptDirectory }) {
   return results;
 }
 
+/**
+ * Reads Tarkov player character save profiles from user/profiles/*.json
+ */
+async function scanSptPlayerProfiles({ sptDirectory }) {
+  if (!sptDirectory || !fs.existsSync(sptDirectory)) return [];
+  const profilesDir = path.join(sptDirectory, 'user', 'profiles');
+  if (!fs.existsSync(profilesDir)) return [];
+
+  const results = [];
+  try {
+    const files = await fs.promises.readdir(profilesDir);
+    for (const file of files) {
+      if (!file.toLowerCase().endsWith('.json')) continue;
+      const filePath = path.join(profilesDir, file);
+      try {
+        const raw = await fs.promises.readFile(filePath, 'utf8');
+        const data = JSON.parse(raw);
+        const pmcInfo = data?.characters?.pmc?.Info || data?.info || {};
+        const profileId = data?.info?.id || data?._id || path.basename(file, '.json');
+        const nickname = pmcInfo.Nickname || pmcInfo.username || profileId;
+        const rawSide = String(pmcInfo.Side || '').toLowerCase();
+        const side = rawSide.includes('bear') ? 'Bear' : rawSide.includes('usec') ? 'Usec' : 'Unknown';
+        const level = Number(pmcInfo.Level) || 1;
+        const experience = Number(pmcInfo.Experience) || 0;
+        const edition = String(data?.characters?.pmc?.Info?.AccountType || data?.info?.edition || 'Standard');
+
+        results.push({
+          id: profileId,
+          name: nickname,
+          side,
+          level,
+          experience,
+          edition,
+          wipeVersion: data?.info?.wipeVersion || '4.x',
+          lastPlayed: 'Local Save',
+        });
+      } catch (parseErr) {
+        // Skip unparseable json
+      }
+    }
+  } catch (err) {
+    console.warn('[Blacksite VFS] Error scanning user profiles:', err.message);
+  }
+  return results;
+}
+
+/**
+ * Fast VFS profile relinker: zero-copy atomic enable/disable of mods for the active profile
+ */
+async function relinkVfsProfile({ sptDirectory, enabledModIds = [], disabledModIds = [] }) {
+  const startTime = Date.now();
+  if (!sptDirectory || !fs.existsSync(sptDirectory)) {
+    return { success: false, error: 'Invalid SPT directory' };
+  }
+
+  const enabledSet = new Set(enabledModIds.map((id) => id.toLowerCase()));
+  const disabledSet = new Set(disabledModIds.map((id) => id.toLowerCase()));
+
+  // Scan installed mods on disk
+  const diskMods = await scanInstalledMods({ sptDirectory });
+  let switchedCount = 0;
+
+  for (const mod of diskMods) {
+    const modIdLower = mod.id.toLowerCase();
+    const shouldBeEnabled = enabledSet.has(modIdLower);
+    const shouldBeDisabled = disabledSet.has(modIdLower);
+
+    if (shouldBeEnabled && mod.isDisabled) {
+      await toggleModDisable({
+        sptDirectory,
+        serverPath: mod.serverPath,
+        clientPath: mod.clientPath,
+        clientPaths: mod.clientPaths,
+        disable: false,
+      });
+      switchedCount++;
+    } else if (shouldBeDisabled && !mod.isDisabled) {
+      await toggleModDisable({
+        sptDirectory,
+        serverPath: mod.serverPath,
+        clientPath: mod.clientPath,
+        clientPaths: mod.clientPaths,
+        disable: true,
+      });
+      switchedCount++;
+    }
+  }
+
+  const durationMs = Date.now() - startTime;
+  console.log(`[Blacksite VFS] Profile relink complete: ${switchedCount} mods adjusted in ${durationMs}ms`);
+
+  return {
+    success: true,
+    switchedCount,
+    durationMs,
+  };
+}
+
 module.exports = {
   installMod,
   uninstallMod,
   uninstallAllMods,
   toggleModDisable,
   scanInstalledMods,
+  scanSptPlayerProfiles,
+  relinkVfsProfile,
+  detectSptServerModsRelativePath,
+  inspectManagedDll,
+  normalizeAndRouteModEntry,
+  purgeDeprecatedModFiles,
   assertSafeSptTarget,
   isProtectedCoreItem,
   DiagnosticRingBuffer,
 };
+

@@ -3,6 +3,8 @@ import { Addon } from '../types';
 import { Puzzle, Layers, Sparkles, Box } from 'lucide-react';
 import { imageCacheService } from '../services/imageCacheService';
 import { getProxiedForgeImageUrl } from './ModThumbnail';
+import { parentModResolver } from '../services/parentModResolver';
+import { apiService } from '../services/apiService';
 
 interface AddonThumbnailProps {
   addon: Addon;
@@ -15,9 +17,46 @@ export const AddonThumbnail: React.FC<AddonThumbnailProps> = ({
   className = '',
   alt
 }) => {
+  const [resolvedParentThumb, setResolvedParentThumb] = useState<string | null>(() => {
+    if (addon.mod?.thumbnail) return addon.mod.thumbnail;
+    if (addon.mod_id) {
+      const cached = parentModResolver.getCachedParentMod(addon.mod_id);
+      return cached?.thumbnailUrl || null;
+    }
+    return null;
+  });
+
+  // Asynchronously resolve parent mod thumbnail if missing using coalesced requests
+  useEffect(() => {
+    let active = true;
+    if (!addon.thumbnail && !addon.mod?.thumbnail && addon.mod_id && !resolvedParentThumb) {
+      parentModResolver
+        .getParentMod(addon.mod_id, async (id) => {
+          const mod = await apiService.getMod(id);
+          if (!mod) return null;
+          return {
+            id: mod.id,
+            name: mod.name,
+            thumbnailUrl: mod.thumbnail ?? null,
+            latestVersion: mod.versions?.[0]?.version || '1.0.0',
+            isInstalled: false,
+          };
+        })
+        .then((res) => {
+          if (active && res?.thumbnailUrl) {
+            setResolvedParentThumb(res.thumbnailUrl);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+    };
+  }, [addon.thumbnail, addon.mod?.thumbnail, addon.mod_id, resolvedParentThumb]);
+
   // Build prioritized candidate URLs list:
   // 1. Addon primary thumbnail
-  // 2. Parent mod thumbnail
+  // 2. Parent mod thumbnail (direct or coalesced)
   // 3. Author avatar
   const candidateImages = useMemo(() => {
     const urls: string[] = [];
@@ -50,8 +89,9 @@ export const AddonThumbnail: React.FC<AddonThumbnailProps> = ({
     }
 
     // Candidate 2: Parent mod thumbnail
-    if (addon.mod?.thumbnail) {
-      addCandidate(addon.mod.thumbnail);
+    const parentThumb = addon.mod?.thumbnail || resolvedParentThumb;
+    if (parentThumb) {
+      addCandidate(parentThumb);
     }
 
     // Candidate 3: Author avatar
@@ -60,7 +100,7 @@ export const AddonThumbnail: React.FC<AddonThumbnailProps> = ({
     }
 
     return urls;
-  }, [addon.thumbnail, addon.mod?.thumbnail, addon.authors]);
+  }, [addon.thumbnail, addon.mod?.thumbnail, resolvedParentThumb, addon.authors]);
 
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [dataUrl, setDataUrl] = useState<string | null>(null);

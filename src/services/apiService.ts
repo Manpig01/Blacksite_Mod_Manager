@@ -1098,6 +1098,47 @@ export const apiService = {
   },
 
   /**
+   * Batch fetch parent mods by IDs to eliminate N+1 stampedes
+   */
+  async getModsByIds(modIds: number[]): Promise<Array<{ id: number; name: string; thumbnail?: string; version: string }>> {
+    initializeCatalog();
+    const uniqueIds = [...new Set(modIds)];
+    const results: Array<{ id: number; name: string; thumbnail?: string; version: string }> = [];
+    const missingIds: number[] = [];
+
+    for (const id of uniqueIds) {
+      const cached = catalogMap.get(id) || FIXTURE_MODS.find((m) => m.id === id);
+      if (cached) {
+        results.push({
+          id: cached.id,
+          name: cached.name,
+          thumbnail: cached.thumbnail,
+          version: cached.versions?.[0]?.version || '1.0.0',
+        });
+      } else {
+        missingIds.push(id);
+      }
+    }
+
+    if (missingIds.length > 0) {
+      const fetched = await Promise.allSettled(missingIds.map((id) => this.getMod(id)));
+      for (const res of fetched) {
+        if (res.status === 'fulfilled' && res.value) {
+          const m = res.value;
+          results.push({
+            id: m.id,
+            name: m.name,
+            thumbnail: m.thumbnail,
+            version: m.versions?.[0]?.version || '1.0.0',
+          });
+        }
+      }
+    }
+
+    return results;
+  },
+
+  /**
    * Fetch single addon details with relations
    */
   async getAddon(addonId: number): Promise<Addon | null> {

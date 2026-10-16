@@ -1,10 +1,43 @@
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
+
+// Regex that strips all ANSI CSI/OSC color & cursor escape sequences from SPT.Server stdout
+const ANSI_ESCAPE_REGEX = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
 let activeServerProcess = null;
 let activeServerPid = null;
 let hasLaunchedClientThisSession = false;
+
+/**
+ * Polls the SPT local HTTPS loopback endpoint (https://127.0.0.1:6969/launcher/ping)
+ * to confirm the HTTP listener is genuinely accepting connections before launching the client.
+ */
+function pingSptServer(port = 6969, timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/launcher/ping',
+        method: 'GET',
+        rejectUnauthorized: false, // SPT uses a self-signed localhost certificate
+        timeout: timeoutMs,
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode >= 200 && res.statusCode < 500);
+      }
+    );
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.end();
+  });
+}
 
 /**
  * Finds the server executable in SPT_Runtime or root SPT directory
@@ -186,14 +219,16 @@ async function launchSptSequence({
     activeServerProcess = serverProc;
     activeServerPid = serverProc.pid;
 
-    const readyRegex = /(server is ready|happy hunting|started webserver|listening on|server started|started.*server)/i;
+    const readyRegex = /(server is ready|happy hunting|happy playing|started webserver|listening on|server started|started.*server|127\.0\.0\.1:6969)/i;
 
     const handleData = (data, isStderr = false) => {
       const rawText = data.toString('utf8');
       const lines = rawText.split(/\r?\n/).filter((l) => l.trim().length > 0);
 
       for (const line of lines) {
-        const clean = line.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ''); // Strip ANSI escape codes
+        // Strip all ANSI CSI/OSC color & cursor escape sequences from modded server logs
+        const clean = line.replace(ANSI_ESCAPE_REGEX, '').trim();
+        if (!clean) continue;
 
         if (onLog) {
           onLog({
@@ -206,10 +241,19 @@ async function launchSptSequence({
         // Check for server ready milestone to trigger the launcher
         if (!hasLaunchedClientThisSession && readyRegex.test(clean)) {
           hasLaunchedClientThisSession = true;
-          // Small delay so server finishes socket bind
-          setTimeout(() => {
-            launchClient(sptDirectory, onLog, onClientLaunched);
-          }, 600);
+          // Verify genuine HTTP listener readiness via local loopback ping
+          pingSptServer(6969).then((isAlive) => {
+            if (onLog) {
+              onLog({
+                text: `[Blacksite Launcher] Server readiness confirmed${isAlive ? ' (Loopback ping verified)' : ''}. Launching Tarkov client...`,
+                level: 'info',
+                timestamp: new Date().toLocaleTimeString(),
+              });
+            }
+            setTimeout(() => {
+              launchClient(sptDirectory, onLog, onClientLaunched);
+            }, 500);
+          });
         }
       }
     };
@@ -265,58 +309,89 @@ async function launchSptSequence({
 }
 
 /**
- * Forcefully terminates the active SPT Server process tree
+ * Graceful Shutdown Guard:
+ * Avoids immediate TerminateProcess so SPT.Server can flush in-memory PMC profile JSON saves
+ * to user/profiles/*.json. Falls back to tree termination only if hung after grace period.
  */
-async function stopSptServer(onLog) {
+async function stopSptServer(onLog, gracePeriodMs = 5000) {
   if (!activeServerProcess && !activeServerPid) {
     return { success: true, notRunning: true };
   }
 
+  const proc = activeServerProcess;
   const pid = activeServerPid;
+
   if (onLog) {
     onLog({
-      text: `[Blacksite Launcher] Terminating SPT Server process (PID: ${pid})...`,
+      text: `[Blacksite Launcher] Initiating graceful shutdown of SPT Server (PID: ${pid}). Flushing profile saves...`,
       level: 'info',
       timestamp: new Date().toLocaleTimeString(),
     });
   }
 
   return new Promise((resolve) => {
-    if (process.platform === 'win32' && pid) {
-      // Windows taskkill terminates the entire child process tree cleanly
-      exec(`taskkill /pid ${pid} /T /F`, (err) => {
-        if (err) {
-          console.warn('taskkill notice:', err.message);
-        }
-        activeServerProcess = null;
-        activeServerPid = null;
-        hasLaunchedClientThisSession = false;
-        if (onLog) {
-          onLog({
-            text: `[Blacksite Launcher] Server process tree terminated. Port 6969 released.`,
-            level: 'info',
-            timestamp: new Date().toLocaleTimeString(),
-          });
-        }
-        resolve({ success: true });
-      });
-    } else {
-      if (activeServerProcess) {
-        try {
-          activeServerProcess.kill('SIGKILL');
-        } catch {}
-      }
+    let resolved = false;
+    const finish = (msg) => {
+      if (resolved) return;
+      resolved = true;
       activeServerProcess = null;
       activeServerPid = null;
       hasLaunchedClientThisSession = false;
       if (onLog) {
         onLog({
-          text: `[Blacksite Launcher] Server process terminated.`,
+          text: msg || '[Blacksite Launcher] SPT Server stopped. Port 6969 released.',
           level: 'info',
           timestamp: new Date().toLocaleTimeString(),
         });
       }
       resolve({ success: true });
+    };
+
+    // Watchdog fallback timer
+    const forceKillTimer = setTimeout(() => {
+      if (proc && pid) {
+        if (onLog) {
+          onLog({
+            text: `[Blacksite Launcher] Grace period expired (${gracePeriodMs}ms). Terminating process tree...`,
+            level: 'warn',
+            timestamp: new Date().toLocaleTimeString(),
+          });
+        }
+        if (process.platform === 'win32') {
+          execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () =>
+            finish('[Blacksite Launcher] Server process tree force-terminated.')
+          );
+        } else {
+          try {
+            proc.kill('SIGKILL');
+          } catch (_) {}
+          finish('[Blacksite Launcher] Server process killed.');
+        }
+      } else {
+        finish();
+      }
+    }, gracePeriodMs);
+
+    proc.once('exit', () => {
+      clearTimeout(forceKillTimer);
+      finish('[Blacksite Launcher] SPT Server exited gracefully. Profiles flushed.');
+    });
+
+    // Attempt soft termination
+    try {
+      if (proc.stdin && !proc.stdin.destroyed) {
+        proc.stdin.end();
+      }
+      if (process.platform === 'win32') {
+        // Non-forced taskkill sends WM_CLOSE / break event for graceful shutdown
+        execFile('taskkill', ['/PID', String(pid), '/T'], { windowsHide: true }, () => {});
+      } else {
+        proc.kill('SIGTERM');
+      }
+    } catch (err) {
+      try {
+        proc.kill();
+      } catch (_) {}
     }
   });
 }

@@ -2,39 +2,44 @@ const { app, BrowserWindow, shell, ipcMain, dialog, session, nativeImage } = req
 const path = require('path');
 const fs = require('fs');
 
-// Windows 11 (24H2/25H2) compatibility flags:
-// Chromium 130/132 GPU sandbox and DACL permission collision fix
-if (process.platform === 'win32') {
-  app.commandLine.appendSwitch('no-sandbox');
-  app.commandLine.appendSwitch('disable-gpu-sandbox');
-  // Prevent occlusion query and D3D11 device creation crashes on Windows 11 insider/recent builds
-  app.commandLine.appendSwitch('disable-features', 'WidgetLayering,CalculateNativeWinOcclusion');
-}
+// 1. Targeted Windows 11 (24H2/25H2) Stability Flags (Fixes exit code -2147483645)
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+app.commandLine.appendSwitch('disable-features', 'RendererCodeIntegrity,CalculateNativeWinOcclusion,WidgetLayering');
+app.setAppUserModelId('com.blacksite.modmanager'); // Required for Win11 Taskbar icon grouping
 
-// Early crash logging to %LOCALAPPDATA%\blacksite-mod-manager\crash.log
+// 2. Bounded Crash Logger with 2MB Automatic Rotation
+const crashDir = path.join(
+  process.env.LOCALAPPDATA ||
+    (process.platform === 'win32'
+      ? path.join(process.env.USERPROFILE || 'C:\\', 'AppData', 'Local')
+      : path.join(require('os').homedir(), '.config')),
+  'blacksite-mod-manager'
+);
+const crashLogPath = path.join(crashDir, 'crash.log');
+const MAX_CRASH_LOG_BYTES = 2 * 1024 * 1024; // 2 MB cap
+
 function logFatalError(context, err) {
   try {
-    const errorDetails = `[${new Date().toISOString()}] [${context}] ${err?.stack || err?.message || String(err)}\n`;
-    console.error(errorDetails);
-    const localAppData =
-      process.env.LOCALAPPDATA ||
-      (process.platform === 'win32'
-        ? path.join(process.env.USERPROFILE || 'C:\\', 'AppData', 'Local')
-        : '');
-    if (localAppData) {
-      const logDir = path.join(localAppData, 'blacksite-mod-manager');
-      if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-      fs.appendFileSync(path.join(logDir, 'crash.log'), errorDetails);
+    fs.mkdirSync(crashDir, { recursive: true });
+    if (fs.existsSync(crashLogPath)) {
+      const { size } = fs.statSync(crashLogPath);
+      if (size > MAX_CRASH_LOG_BYTES) {
+        const backup = `${crashLogPath}.old`;
+        if (fs.existsSync(backup)) fs.unlinkSync(backup);
+        fs.renameSync(crashLogPath, backup);
+      }
     }
+    const entry = `[${new Date().toISOString()}] [${context}] ${err?.stack || err?.message || String(err)}\n${'-'.repeat(72)}\n`;
+    fs.appendFileSync(crashLogPath, entry, 'utf8');
   } catch (_) {}
 }
 
 process.on('uncaughtException', (err) => {
-  logFatalError('uncaughtException', err);
+  logFatalError('UNCAUGHT_EXCEPTION', err);
 });
 
 process.on('unhandledRejection', (reason) => {
-  logFatalError('unhandledRejection', reason);
+  logFatalError('UNHANDLED_REJECTION', reason);
 });
 
 let mainWindow = null;
@@ -69,7 +74,9 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      spellcheck: false,
       preload: path.join(__dirname, 'preload.cjs'),
     },
   });
@@ -99,13 +106,22 @@ function createWindow() {
     });
   }
 
-  // Handle external links safely via default OS browser
+  // Security Guard: Prevent untrusted mod markdown/links from navigating the Electron window
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https:') || url.startsWith('http:')) {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
       shell.openExternal(url);
-      return { action: 'deny' };
     }
-    return { action: 'allow' };
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appOrigin = mainWindow ? mainWindow.webContents.getURL() : '';
+    if (appOrigin && !url.startsWith(appOrigin)) {
+      event.preventDefault();
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+    }
   });
 
   mainWindow.on('maximize', () => {
@@ -208,13 +224,29 @@ if (!singleInstanceLock) {
     return false;
   });
 
+  // 4. Live Custom Emblem & Windows 11 Taskbar Icon Updater (Normalized to 256x256)
+  ipcMain.handle('branding:update-icon', async (_event, imageBuffer) => {
+    if (!mainWindow || !imageBuffer) return false;
+    try {
+      const img = nativeImage.createFromBuffer(Buffer.from(imageBuffer));
+      if (img.isEmpty()) return false;
+      // Windows 11 Taskbar requires clean 256x256 scaling to refresh the pinned icon buffer reliably
+      const resized = img.resize({ width: 256, height: 256, quality: 'best' });
+      mainWindow.setIcon(resized);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
   // Dynamic native window and taskbar icon update
   ipcMain.handle('app:set-custom-emblem', async (_event, dataUrl) => {
     try {
       if (mainWindow && !mainWindow.isDestroyed() && dataUrl) {
         const icon = nativeImage.createFromDataURL(dataUrl);
         if (!icon.isEmpty()) {
-          mainWindow.setIcon(icon);
+          const resized = icon.resize({ width: 256, height: 256, quality: 'best' });
+          mainWindow.setIcon(resized);
           return true;
         }
       }
@@ -404,6 +436,24 @@ if (!singleInstanceLock) {
       return await modInstaller.scanInstalledMods(params);
     } catch (err) {
       console.error('mod:scan-installed error:', err);
+      return [];
+    }
+  });
+
+  ipcMain.handle('profile:relink-vfs', async (event, params) => {
+    try {
+      return await modInstaller.relinkVfsProfile(params);
+    } catch (err) {
+      console.error('profile:relink-vfs error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('profile:scan-player-saves', async (event, params) => {
+    try {
+      return await modInstaller.scanSptPlayerProfiles(params);
+    } catch (err) {
+      console.error('profile:scan-player-saves error:', err);
       return [];
     }
   });
