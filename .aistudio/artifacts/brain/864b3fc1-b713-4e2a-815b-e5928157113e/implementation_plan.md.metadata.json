@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for refactoring Blacksite Mod Manager: strongly-typed desktopBridge service, modular hooks extracted from App.tsx, decomposed InstalledModsTab and SettingsTab subcomponents, custom TacticalConfirmModal replacing browser confirm(), and optimized filtering/memoization/storage batching.",
-  "updatedAt":  "2026-10-26T06:58:52.535334996Z",
+  "summary":  "Plan to fix the Electron portable desktop bridge crash (sandboxed preload require('os') failure), restore native window controls (Minimize, Maximize, Close), fix File Explorer folder opening and SPT path resolution, and replace unsupported Electron window.prompt calls.",
+  "updatedAt":  "2026-10-26T21:06:44.906788510Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

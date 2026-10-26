@@ -314,11 +314,15 @@ export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
                   </h4>
                 </div>
                 <p className="text-[#9AA3AF] leading-relaxed">
-                  Your project contains an active CI/CD workflow at{' '}
+                  Your project contains active CI/CD workflows at{' '}
                   <code className="bg-[#181B20] text-[#EA580C] px-1.5 py-0.5 rounded border border-[#23272E] font-mono">
-                    .github/workflows/build-windows-exe.yml
+                    .github/workflows/build.yml
+                  </code>{' '}
+                  and{' '}
+                  <code className="bg-[#181B20] text-[#EA580C] px-1.5 py-0.5 rounded border border-[#23272E] font-mono">
+                    .github/workflows/release.yml
                   </code>
-                  . Every time you push to the <code className="text-[#E8EAEE]">main</code> or <code className="text-[#E8EAEE]">master</code> branch, GitHub automatically executes:
+                  . Every time you push to the <code className="text-[#E8EAEE]">main</code> branch or push a release tag, GitHub automatically executes:
                 </p>
 
                 <div className="space-y-2 bg-[#16181D] p-3 rounded-lg border border-[#23272E] font-mono text-[11px]">

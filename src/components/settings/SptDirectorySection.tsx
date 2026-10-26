@@ -70,12 +70,11 @@ export const SptDirectorySection: React.FC<SptDirectorySectionProps> = React.mem
                     console.error('Folder picker error:', err);
                   }
                 }
-                const manual = prompt('Enter Single Player Tarkov (SPT) folder path:', settings.sptDirectory);
-                if (manual?.trim()) {
-                  onUpdateSettings({ sptDirectory: manual.trim() });
-                  if (onRescanMods) onRescanMods(manual.trim());
-                  onShowToast('Directory Selected', `Updated SPT root folder to: ${manual.trim()}`, 'success');
-                }
+                onShowToast(
+                  'Edit SPT Directory',
+                  'Type or paste your SPT root folder path directly into the input box.',
+                  'info'
+                );
               }}
               className="bg-[#EA580C] hover:bg-[#F97316] text-white text-xs font-semibold px-4 py-2 rounded-md transition-colors cursor-pointer shrink-0"
               type="button"

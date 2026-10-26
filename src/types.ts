@@ -572,9 +572,9 @@ export interface DesktopBridgeAPI {
   selectDirectory?: (defaultPath?: string) => Promise<string | null>;
   inspectSptDirectory?: (targetPath: string) => Promise<DesktopSptDirectoryInfo | null>;
   fetchImageDataUrl?: (url: string) => Promise<string | null>;
-  openFolder?: (targetPath: string) => Promise<void>;
-  showItemInFolder?: (targetPath: string) => Promise<void>;
-  openExternal?: (url: string) => Promise<void>;
+  openFolder?: (targetPath: string) => Promise<boolean>;
+  showItemInFolder?: (targetPath: string) => Promise<boolean>;
+  openExternal?: (url: string) => Promise<boolean>;
   installMod?: (params: DesktopInstallModParams) => Promise<DesktopInstallModResult>;
   onInstallProgress?: (callback: (data: DesktopInstallProgressEvent) => void) => () => void;
   uninstallMod?: (params: DesktopUninstallModParams) => Promise<void>;

@@ -108,7 +108,18 @@ export function useDiskScanner({
                 getKnownDependencyMeta(dmId) ||
                 getKnownDependencyMeta(dmName);
 
-              const kind = dm.kind || existing?.kind || known?.kind || 'Both';
+              const resolvedServerPath = dm.serverPath ?? existing?.serverPath;
+              const resolvedClientPath = dm.clientPath ?? existing?.clientPath;
+              const inferredKindFromPaths =
+                resolvedServerPath && resolvedClientPath
+                  ? 'Both'
+                  : resolvedServerPath
+                  ? 'Server'
+                  : resolvedClientPath
+                  ? 'Client'
+                  : undefined;
+
+              const kind = dm.kind || inferredKindFromPaths || existing?.kind || known?.kind || 'Server';
 
               return {
                 id: dmId,
@@ -117,8 +128,8 @@ export function useDiskScanner({
                 kind,
                 installDate: dm.installDate || existing?.installDate || new Date().toISOString().split('T')[0],
                 isDisabled: Boolean(dm.isDisabled),
-                serverPath: dm.serverPath ?? existing?.serverPath,
-                clientPath: dm.clientPath ?? existing?.clientPath,
+                serverPath: resolvedServerPath,
+                clientPath: resolvedClientPath,
                 clientPaths: dm.clientPaths ?? existing?.clientPaths,
                 inferredGuid: dm.inferredGuid ?? existing?.inferredGuid,
                 isPatcher: dm.isPatcher ?? existing?.isPatcher,

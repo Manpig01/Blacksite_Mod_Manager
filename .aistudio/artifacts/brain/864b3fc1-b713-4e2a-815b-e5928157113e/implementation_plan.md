@@ -1,56 +1,34 @@
-# Blacksite Mod Manager — Codebase Refinement & Architectural Optimization Plan
+# Portable Desktop App Button & IPC Bridge Fix Plan
 
-## 1. Executive Summary
-This refinement pass transforms the Blacksite Mod Manager codebase from large, monolithic components into a modular, strongly-typed, high-performance architecture while preserving 100% of existing SPT 3.x / 4.x functionality.
+## Root Cause Identified from Screenshots
+In Electron 34, `BrowserWindow` enables `sandbox: true` by default unless explicitly configured otherwise. Inside a sandboxed preload script, calling `require('os')` (used on line 8 of the preload script to read `cpuCount`) throws a synchronous `Error: module not found: os` **before** `contextBridge.exposeInMainWorld('desktopBridge', ...)` executes.
 
----
-
-## 2. Strongly-Typed Desktop Bridge Service (`src/services/desktopBridgeService.ts`)
-Currently, `(window as any).desktopBridge` is cast in over 35 locations across `App.tsx`, `InstalledModsTab.tsx`, `SettingsTab.tsx`, `SptLauncherModal.tsx`, `CustomTitleBar.tsx`, `ProfilesTab.tsx`, and `EmblemUploader.tsx`.
-- **Action**:
-  - Define a complete `DesktopBridgeAPI` TypeScript interface in `src/types.ts` (and augment `Window` in `src/vite-env.d.ts`) covering all IPC methods exposed in `electron/preload.cjs`:
-    - Directory & shell methods (`selectDirectory`, `inspectSptDirectory`, `openFolder`, `showItemInFolder`, `openExternal`, `fetchImageDataUrl`)
-    - Mod lifecycle methods (`installMod`, `onInstallProgress`, `uninstallMod`, `uninstallAllMods`, `toggleDisableMod`, `scanInstalledMods`, `saveModConfigFile`, `clearTempFiles`)
-    - Profile & SPT launcher methods (`relinkVfsProfile`, `scanSptPlayerProfiles`, `launchSpt`, `stopSptServer`, `getSptStatus`, `onSptServerLog`, `onSptClientLaunched`, `onSptServerExit`)
-    - Branding & window controls (`setCustomEmblem`, `updateAppIcon`, `resetCustomEmblem`, `windowControl`)
-  - Create `src/services/desktopBridgeService.ts` providing safe, typed helper accessors (`getDesktopBridge()`, `isDesktopEnvironment()`, and typed wrapper helpers) so components never use `(window as any).desktopBridge`.
+Because the preload script crashes on startup:
+- `window.desktopBridge` is `undefined` in the portable `.exe`, causing the app to think it is running inside a web browser preview instead of the Windows desktop runtime.
+- Clicking **Minimize (`-`)**, **Maximize (`[]`)**, or **Close (`X`)** triggers the web preview fallback toasts (`"Minimized to taskbar"`, `"Window maximized"`) instead of controlling the native window.
+- Clicking **Plugins Folder**, **Server Folder**, or a mod's **Open Folder** icon shows the green toast notification (`"Directory Explorer"` / `"Dual Locations Opened"`) without invoking Windows File Explorer.
+- Clicking **Set SPT Directory** or **Browse…** falls back to `window.prompt()`, which is unsupported in Electron and silently does nothing.
+- Clicking **Rescan**, **Enable/Disable**, **Uninstall**, **Launch SPT**, or **Install** runs in simulated web mode instead of executing disk operations.
 
 ---
 
-## 3. Custom Tactical Confirmation Modal (`src/components/TacticalConfirmModal.tsx`)
-Native browser `confirm(...)` dialogs in `App.tsx`, `InstalledModsTab.tsx`, and `SettingsTab.tsx` block the renderer thread and clash with the dark tactical hardware UI.
-- **Action**:
-  - Create `src/components/TacticalConfirmModal.tsx` with customizable title, message, severity (`danger` | `warning` | `info`), confirm/cancel labels, and keyboard shortcuts (`Escape` to cancel, `Enter` to confirm).
-  - Create a lightweight `useConfirmDialog` hook (`src/hooks/useConfirmDialog.ts`) returning `{ confirm, confirmModalProps }` so any workflow (uninstalling a mod, uninstalling all mods, clearing diagnostic logs, deleting a profile) can await a Promise-based confirmation modal cleanly.
+## Planned Fixes
 
----
+### 1. Restore the Electron Preload & IPC Bridge
+- Remove unguarded Node `require('os')` calls from the preload script so it never crashes under Electron's preload environment, using safe hardware concurrency detection with a guarded fallback.
+- Explicitly set `sandbox: false` in the `BrowserWindow` `webPreferences` configuration so the preload bridge loads reliably across both Portable and Setup builds.
 
-## 4. Decomposing `App.tsx` into Domain Hooks
-`src/App.tsx` (~2,200 lines) will be modularized by extracting cohesive custom hooks under `src/hooks/`:
-1. **`src/hooks/useToastQueue.ts`**:
-   - Manages toast notifications (`toasts`, `addToast`, `removeToast`) with stable `useCallback` references.
-2. **`src/hooks/useSptProcessMonitor.ts`**:
-   - Encapsulates SPT Server & Client status polling, IPC event listeners (`onSptServerLog`, `onSptClientLaunched`, `onSptServerExit`), server log ring-buffer management, and launch/stop handlers.
-3. **`src/hooks/useDiskScanner.ts`**:
-   - Encapsulates scanning local SPT folders (`scanInstalledMods`, `scanSptPlayerProfiles`), auto-linking scanned mods against Forge metadata (`autoLinkerService`), reconciling installed versions, and checking for remote updates.
-4. **`src/hooks/useInstallQueue.ts`**:
-   - Manages the download & extraction queue (`installQueue`, `activeDownloads`, `installProgress` IPC subscription, queueing single/batch mod installs, addon installs, and retry/remove operations).
+### 2. Fix Native Window Caption Controls (Minimize, Maximize/Restore, Close)
+- Ensure the custom titlebar invokes the native Electron window controls directly when running in the desktop app and accurately syncs the maximize/restore icon state (`window:minimize`, `window:maximize`, `window:close`, and `window:maximized-change`).
+- Suppress web-preview toast notifications (`"Minimized to taskbar"`, `"Window maximized"`) when executing real window actions.
 
----
+### 3. Fix File Explorer Folder Opening & Per-Mod Folder Routing
+- **Accurate Per-Mod Folder Detection**: Update installed mod card folder resolution so a mod only opens two folders (`Dual Locations`) when it genuinely has both a server mod directory and client plugin files on disk, rather than defaulting every mod to dual folders.
+- **Smart File vs. Directory Handling in Electron**: Update the native `shell:open-folder` handler so that:
+  - If a target path points to a `.dll` or file, it opens Windows File Explorer with the file highlighted (`shell.showItemInFolder`) rather than trying to execute the `.dll`.
+  - If a subfolder or SPT layout variant (`SPT_Runtime/user/mods`, `SPT/user/mods`, or `user/mods`) does not exist yet, it automatically resolves the active SPT server/client mod directory or walks up to the nearest existing parent directory.
+- **Verified Toast Feedback**: Only display the `"Opened folder in File Explorer"` toast when the native shell confirms the directory or file was opened, showing a clear warning toast if the configured SPT directory does not exist on disk.
 
-## 5. Splitting Large Tab Components (`InstalledModsTab` & `SettingsTab`)
-1. **`InstalledModsTab.tsx` Decomposition**:
-   - Extract `src/components/installed/InstalledModsStatsBar.tsx` — Tactical summary bar for enabled/disabled/outdated/conflict counters and quick filter toggles.
-   - Extract `src/components/installed/InstalledModRowCard.tsx` — Memoized (`React.memo`) individual mod card/row component with version selector, enable/disable switch, tag badges, dependency tree drawer, and action buttons.
-2. **`SettingsTab.tsx` Decomposition**:
-   - Extract `src/components/settings/DiagnosticLogSection.tsx` — Self-contained error & diagnostic log viewer with level filters, search, clipboard export, and clear action.
-   - Extract `src/components/settings/SptDirectorySection.tsx` — SPT installation path selector, version auto-detection badge, and quick folder shortcuts (`user/mods`, `BepInEx/plugins`).
-
----
-
-## 6. Performance, Memoization & Storage Batching Optimizations
-- **`src/services/storageService.ts`**:
-  - Add debounced background persistence (`saveInstalledModsDebounced`, `saveProfilesDebounced`) alongside immediate flush on `beforeunload` so rapid state updates (such as batch enabling/disabling mods or queue progress updates) do not synchronously serialize large JSON payloads on every frame.
-  - Tighten TypeScript types in `storageService.ts` and `apiService.ts` to eliminate loose `any` types.
-- **Memoized Filtering & Lookups**:
-  - Precompute `Map<string, InstalledMod>` and `Set<string>` lookup structures in `App.tsx` and `InstalledModsTab.tsx` (`useMemo`) so mod installation checks, conflict lookups, and tag filtering run in $O(1)$ time per item rather than repeated `.find()` / `.some()` array scans.
+### 4. Replace Unsupported `window.prompt()` Calls
+- Update the Header profile selector (`+ New Profile...`) so selecting it opens the inline profile creator in the Profiles & Loadouts tab or creates a named profile cleanly without relying on `window.prompt()`, which Electron blocks.
+- Complete the remaining Conflict Matrix subcomponent wiring and keyboard shortcut bindings so all tabs and toolbar controls operate smoothly.

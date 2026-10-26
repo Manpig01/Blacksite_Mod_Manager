@@ -41,23 +41,25 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   }, []);
 
   const handleMinimize = () => {
+    const bridge = getDesktopBridge();
+    if (bridge?.windowControl?.minimize) {
+      bridge.windowControl.minimize();
+      return;
+    }
     if (onMinimize) {
       onMinimize();
-    } else {
-      const bridge = getDesktopBridge();
-      bridge?.windowControl?.minimize();
     }
   };
 
   const handleMaximize = async () => {
+    const bridge = getDesktopBridge();
+    if (bridge?.windowControl?.maximize) {
+      const result = await bridge.windowControl.maximize();
+      setIsMaximized(Boolean(result));
+      return;
+    }
     if (onMaximize) {
       onMaximize();
-    } else {
-      const bridge = getDesktopBridge();
-      if (bridge?.windowControl?.maximize) {
-        const result = await bridge.windowControl.maximize();
-        setIsMaximized(Boolean(result));
-      }
     }
   };
 

@@ -288,11 +288,8 @@ export const App: React.FC = () => {
   };
 
   const handleCreateProfile = (profileName?: string) => {
-    let name = profileName?.trim();
-    if (!name) {
-      name = prompt('Enter a name for the new profile:')?.trim();
-    }
-    if (!name) return;
+    const trimmed = profileName?.trim();
+    const name = trimmed || `Loadout Profile #${profiles.length + 1}`;
 
     const newProfile: ModProfile = {
       id: `prof-${Date.now()}`,
@@ -310,7 +307,10 @@ export const App: React.FC = () => {
     setProfiles(updated);
     storageService.saveProfiles(updated);
     handleUpdateSettings({ activeProfileId: newProfile.id });
-    showToast('Profile Created', `Created profile "${newProfile.name}".`, 'success');
+    if (!trimmed) {
+      setActiveTab('profiles');
+    }
+    showToast('Profile Created', `Created and activated profile "${newProfile.name}".`, 'success');
   };
 
   const handleDeleteProfile = async (profileId: string) => {
@@ -723,6 +723,10 @@ export const App: React.FC = () => {
     const bridge = getDesktopBridge();
 
     const fullPaths: string[] = [];
+    const openedPaths: string[] = [];
+    const failedPaths: string[] = [];
+
+    const cleanRoot = (settings.sptDirectory || 'C:\\Games\\SPT').replace(/[\\/]+$/, '');
 
     for (const item of targets) {
       let relPath = '';
@@ -734,29 +738,48 @@ export const App: React.FC = () => {
         relPath = item;
       }
 
-      const fullPath = `${settings.sptDirectory}\\${relPath.replace(/\//g, '\\')}`;
+      const normalizedRel = relPath.replace(/^[\\/]+/, '').replace(/\//g, '\\');
+      const fullPath = /^[a-zA-Z]:\\/.test(relPath) ? relPath.replace(/\//g, '\\') : `${cleanRoot}\\${normalizedRel}`;
       fullPaths.push(fullPath);
 
       if (bridge?.openFolder) {
         try {
-          await bridge.openFolder(fullPath);
+          const ok = await bridge.openFolder(fullPath);
+          if (ok) {
+            openedPaths.push(fullPath);
+          } else {
+            failedPaths.push(fullPath);
+          }
         } catch (err) {
+          failedPaths.push(fullPath);
           const message = err instanceof Error ? err.message : String(err);
           const stack = err instanceof Error ? err.stack : undefined;
           console.error('Failed to open folder:', err);
           errorLogService.logError('DiskRouter', `Failed opening folder: ${fullPath}`, stack || message);
         }
+      } else {
+        openedPaths.push(fullPath);
       }
     }
 
-    if (fullPaths.length > 1) {
+    if (bridge?.openFolder && openedPaths.length === 0 && failedPaths.length > 0) {
+      showToast(
+        'Directory Not Found on Disk',
+        `Could not locate folder in File Explorer:\n${failedPaths.join('\n')}\nVerify your SPT root directory in Settings.`,
+        'warning'
+      );
+      return;
+    }
+
+    const displayPaths = openedPaths.length > 0 ? openedPaths : fullPaths;
+    if (displayPaths.length > 1) {
       showToast(
         'Dual Locations Opened',
-        `Opened both BepInEx and SPT_Runtime\\user\\mods folders:\n${fullPaths.join('\n')}`,
+        `Opened both BepInEx and Server mods folders:\n${displayPaths.join('\n')}`,
         'success'
       );
-    } else if (fullPaths.length === 1) {
-      showToast('Directory Explorer', `Opened folder in File Explorer: ${fullPaths[0]}`, 'success');
+    } else if (displayPaths.length === 1) {
+      showToast('Directory Explorer', `Opened folder in File Explorer: ${displayPaths[0]}`, 'success');
     }
   };
 

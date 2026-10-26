@@ -25,19 +25,122 @@ import {
 const API_BASE = 'https://sp-mod.com/api/v0';
 
 /**
- * Concurrency limiter and Cloudflare 429 Retry-After queue for SP-Mod Forge API
- * Enforces max 5 in-flight requests and automatically backs off when 429 is encountered.
+ * Concurrency limiter, in-flight request deduplicator, and 5-minute TTL response cache
+ * for SP-Mod Forge API. Enforces max 5 concurrent requests and Cloudflare 429 backoff.
  */
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface CacheEntry<T = any> {
+  data: T;
+  expiresAt: number;
+}
+
+function combineSignals(userSignal?: AbortSignal, timeoutMs = 5000): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (!userSignal) return timeoutSignal;
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([userSignal, timeoutSignal]);
+  }
+  return userSignal;
+}
+
+export function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof DOMException && err.name === 'AbortError' ||
+    (typeof err === 'object' && err !== null && (err as any).name === 'AbortError')
+  );
+}
+
 class RateLimitedClient {
   private activeCount = 0;
   private queue: Array<() => void> = [];
   private maxConcurrent = 5;
   private rateLimitResetUntil = 0;
+  private ttlCache = new Map<string, CacheEntry>();
+  private inFlight = new Map<string, Promise<any>>();
+
+  getCached<T>(key: string): T | null {
+    const entry = this.ttlCache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      this.ttlCache.delete(key);
+      return null;
+    }
+    return entry.data as T;
+  }
+
+  setCached<T>(key: string, data: T, ttlMs = DEFAULT_CACHE_TTL_MS): void {
+    // Bound cache size to 200 entries
+    if (this.ttlCache.size >= 200) {
+      const oldestKey = this.ttlCache.keys().next().value;
+      if (oldestKey) this.ttlCache.delete(oldestKey);
+    }
+    this.ttlCache.set(key, {
+      data,
+      expiresAt: Date.now() + ttlMs,
+    });
+  }
+
+  clearCache(prefix?: string): void {
+    if (!prefix) {
+      this.ttlCache.clear();
+      return;
+    }
+    for (const key of this.ttlCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.ttlCache.delete(key);
+      }
+    }
+  }
+
+  async deduplicatedJson<T>(
+    cacheKey: string,
+    fetcher: () => Promise<T>,
+    options?: { ttlMs?: number; forceRefresh?: boolean; signal?: AbortSignal }
+  ): Promise<T> {
+    if (options?.signal?.aborted) {
+      throw new DOMException('Request aborted', 'AbortError');
+    }
+
+    if (!options?.forceRefresh) {
+      const cached = this.getCached<T>(cacheKey);
+      if (cached !== null) {
+        return cached;
+      }
+      const existing = this.inFlight.get(cacheKey);
+      if (existing && !options?.signal) {
+        return existing as Promise<T>;
+      }
+    }
+
+    const promise = (async () => {
+      try {
+        const result = await fetcher();
+        this.setCached(cacheKey, result, options?.ttlMs ?? DEFAULT_CACHE_TTL_MS);
+        return result;
+      } finally {
+        this.inFlight.delete(cacheKey);
+      }
+    })();
+
+    if (!options?.signal) {
+      this.inFlight.set(cacheKey, promise);
+    }
+    return promise;
+  }
 
   async request(url: string, options: RequestInit = {}, retries = 3): Promise<Response> {
+    if (options.signal?.aborted) {
+      throw new DOMException('Request aborted', 'AbortError');
+    }
+
     await this.acquireSlot();
 
     try {
+      if (options.signal?.aborted) {
+        throw new DOMException('Request aborted', 'AbortError');
+      }
+
       const now = Date.now();
       if (now < this.rateLimitResetUntil) {
         const waitMs = this.rateLimitResetUntil - now;
@@ -124,6 +227,8 @@ export interface CatalogQueryFilters {
   hideInstalled?: boolean;
   fikaOnly?: boolean;
   installedGuids?: string[];
+  signal?: AbortSignal;
+  forceRefresh?: boolean;
 }
 
 export interface CatalogQueryResult {
@@ -536,18 +641,40 @@ export const apiService = {
     return sortSptVersionsByMostRecent(SPT_VERSIONS);
   },
 
-  async getModVersions(modId: number): Promise<ModVersion[]> {
+  clearCache(prefix?: string): void {
+    apiClient.clearCache(prefix);
+  },
+
+  async getModVersions(modId: number, options?: { signal?: AbortSignal; forceRefresh?: boolean }): Promise<ModVersion[]> {
+    const cacheKey = `mod-versions:${modId}`;
+    if (!options?.forceRefresh) {
+      const cached = apiClient.getCached<ModVersion[]>(cacheKey);
+      if (cached) return cached;
+    }
+
     try {
-      const res = await fetch(`${API_BASE}/mod/${modId}/versions?per_page=50&sort=-published_at`, {
-        signal: AbortSignal.timeout(5000)
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data && Array.isArray(json.data) && json.data.length > 0) {
-          return sortModVersionsByMostRecent(json.data);
-        }
+      const versions = await apiClient.deduplicatedJson<ModVersion[]>(
+        cacheKey,
+        async () => {
+          const res = await apiClient.request(
+            `${API_BASE}/mod/${modId}/versions?per_page=50&sort=-published_at`,
+            { signal: combineSignals(options?.signal, 5000) }
+          );
+          if (res.ok) {
+            const json = await res.json();
+            if (json.data && Array.isArray(json.data) && json.data.length > 0) {
+              return sortModVersionsByMostRecent(json.data);
+            }
+          }
+          throw new Error('Empty versions response');
+        },
+        { forceRefresh: options?.forceRefresh, signal: options?.signal }
+      );
+      return versions;
+    } catch (err) {
+      if (options?.signal?.aborted && isAbortError(err)) {
+        throw err;
       }
-    } catch {
       // Fallback to fixture
     }
     const fixtureMod = FIXTURE_MODS.find(m => m.id === modId);
@@ -765,53 +892,77 @@ export const apiService = {
         queryParams.set('filter[fika_compatibility]', 'compatible');
       }
 
-      const res = await apiClient.request(`${API_BASE}/mods?${queryParams.toString()}`, {
-        signal: AbortSignal.timeout(5000),
-      });
+      const queryString = queryParams.toString();
+      const cacheKey = `mods-search:${queryString}`;
 
-      if (res.ok) {
-        const json = await res.json();
-        if (json && Array.isArray(json.data) && json.data.length > 0) {
-          const rawItems = json.data;
+      if (filters.forceRefresh) {
+        apiClient.clearCache(cacheKey);
+      }
+
+      const livePayload = await apiClient.deduplicatedJson<{
+        normalizedMods: Mod[];
+        total: number;
+        currentPage: number;
+        lastPage: number;
+      }>(
+        cacheKey,
+        async () => {
+          const res = await apiClient.request(`${API_BASE}/mods?${queryString}`, {
+            signal: combineSignals(filters.signal, 5000),
+          });
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const json = await res.json();
+          if (!json || !Array.isArray(json.data) || json.data.length === 0) {
+            throw new Error('Empty live catalog result');
+          }
           const normalizedMods: Mod[] = [];
-
-          for (const raw of rawItems) {
+          for (const raw of json.data) {
             const m = normalizeMod(raw);
             catalogMap.set(m.id, m);
             normalizedMods.push(m);
           }
-
-          // Merge newly fetched mods into the indexed catalog for sub-millisecond future searches
           rebuildCatalogIndex();
 
-          let filtered = normalizedMods;
-          if (filters.hideFeatured) {
-            filtered = filtered.filter((m) => !m.featured);
-          }
-          if (filters.hideContainsAds) {
-            filtered = filtered.filter((m) => !m.contains_ads);
-          }
-          if (filters.hideContainsAi) {
-            filtered = filtered.filter((m) => !m.contains_ai_content);
-          }
-          if (filters.hideInstalled && filters.installedGuids?.length) {
-            const installed = new Set(filters.installedGuids.map((g) => g.toLowerCase()));
-            filtered = filtered.filter((m) => !(m.guid && installed.has(m.guid.toLowerCase())));
-          }
-
-          const total = json.meta?.total ?? filtered.length;
+          const total = json.meta?.total ?? normalizedMods.length;
           const lastPage = json.meta?.last_page ?? Math.max(1, Math.ceil(total / perPage));
-
           return {
-            mods: filtered,
+            normalizedMods,
             total,
             currentPage: json.meta?.current_page ?? page,
             lastPage,
-            isOfflineFallback: false,
           };
-        }
+        },
+        { forceRefresh: filters.forceRefresh, signal: filters.signal }
+      );
+
+      let filtered = livePayload.normalizedMods;
+      if (filters.hideFeatured) {
+        filtered = filtered.filter((m) => !m.featured);
       }
-    } catch (_) {
+      if (filters.hideContainsAds) {
+        filtered = filtered.filter((m) => !m.contains_ads);
+      }
+      if (filters.hideContainsAi) {
+        filtered = filtered.filter((m) => !m.contains_ai_content);
+      }
+      if (filters.hideInstalled && filters.installedGuids?.length) {
+        const installed = new Set(filters.installedGuids.map((g) => g.toLowerCase()));
+        filtered = filtered.filter((m) => !(m.guid && installed.has(m.guid.toLowerCase())));
+      }
+
+      return {
+        mods: filtered,
+        total: livePayload.total,
+        currentPage: livePayload.currentPage,
+        lastPage: livePayload.lastPage,
+        isOfflineFallback: false,
+      };
+    } catch (err) {
+      if (filters.signal?.aborted && isAbortError(err)) {
+        throw err;
+      }
       // Live search failed or offline - fall through cleanly to local index
     }
 
@@ -1045,6 +1196,7 @@ export const apiService = {
     modId?: number;
     sort?: string;
     forceRefresh?: boolean;
+    signal?: AbortSignal;
   }): Promise<AddonQueryResult> {
     const page = params?.page || 1;
     const perPage = params?.perPage || 24;
@@ -1052,6 +1204,7 @@ export const apiService = {
     const sort = params?.sort || 'downloads_desc';
     const modId = params?.modId;
     const forceRefresh = !!params?.forceRefresh;
+    const signal = params?.signal;
 
     let apiSort = '-downloads';
     if (sort === 'created_desc' || sort === 'recent') apiSort = '-created_at';
@@ -1066,27 +1219,43 @@ export const apiService = {
       if (search) queryParams.set('query', search);
       if (modId) queryParams.set('filter[mod_id]', String(modId));
 
-      const res = await apiClient.request(`${API_BASE}/addons?${queryParams.toString()}`, {
-        signal: AbortSignal.timeout(6000),
-      });
+      const queryString = queryParams.toString();
+      const cacheKey = `addons:${queryString}`;
 
-      if (res.ok) {
-        const json = await res.json();
-        const rawItems = Array.isArray(json.data) ? json.data : [];
-        const addonsList = rawItems.map(normalizeAddon);
-        const total = json.meta?.total ?? addonsList.length;
-        const totalPages = json.meta?.last_page ?? Math.max(1, Math.ceil(total / perPage));
-
-        return {
-          data: addonsList,
-          total,
-          page: json.meta?.current_page ?? page,
-          per_page: perPage,
-          total_pages: totalPages,
-          isOfflineFallback: false,
-        };
+      if (forceRefresh) {
+        apiClient.clearCache(cacheKey);
       }
+
+      return await apiClient.deduplicatedJson<AddonQueryResult>(
+        cacheKey,
+        async () => {
+          const res = await apiClient.request(`${API_BASE}/addons?${queryString}`, {
+            signal: combineSignals(signal, 6000),
+          });
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const json = await res.json();
+          const rawItems = Array.isArray(json.data) ? json.data : [];
+          const addonsList = rawItems.map(normalizeAddon);
+          const total = json.meta?.total ?? addonsList.length;
+          const totalPages = json.meta?.last_page ?? Math.max(1, Math.ceil(total / perPage));
+
+          return {
+            data: addonsList,
+            total,
+            page: json.meta?.current_page ?? page,
+            per_page: perPage,
+            total_pages: totalPages,
+            isOfflineFallback: false,
+          };
+        },
+        { forceRefresh, signal }
+      );
     } catch (err) {
+      if (signal?.aborted && isAbortError(err)) {
+        throw err;
+      }
       console.warn('API error fetching addons, using fallback fixtures:', err);
     }
       // Fallback offline curated sample addons

@@ -74,6 +74,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: false,
@@ -138,6 +139,10 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    logFatalError('preload-error', error || new Error(`Preload error in ${preloadPath}`));
   });
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -235,21 +240,23 @@ if (!singleInstanceLock) {
   }
 
   // Native Window Titlebar Controls (Minimize, Maximize/Restore, Close)
-  ipcMain.handle('window:minimize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.minimize();
+  ipcMain.handle('window:minimize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (win && !win.isDestroyed()) {
+      win.minimize();
       return true;
     }
     return false;
   });
 
-  ipcMain.handle('window:maximize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMaximized()) {
-        mainWindow.unmaximize();
+  ipcMain.handle('window:maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (win && !win.isDestroyed()) {
+      if (win.isMaximized()) {
+        win.unmaximize();
         return false;
       } else {
-        mainWindow.maximize();
+        win.maximize();
         return true;
       }
     }
@@ -261,9 +268,10 @@ if (!singleInstanceLock) {
     return true;
   });
 
-  ipcMain.handle('window:is-maximized', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      return mainWindow.isMaximized();
+  ipcMain.handle('window:is-maximized', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (win && !win.isDestroyed()) {
+      return win.isMaximized();
     }
     return false;
   });
@@ -316,21 +324,61 @@ if (!singleInstanceLock) {
   });
 
   // Open directory in native OS File Explorer (Plugins, Server, Mod Folders)
-  ipcMain.handle('shell:open-folder', async (event, targetPath) => {
+  ipcMain.handle('shell:open-folder', async (_event, targetPath) => {
     if (!targetPath || typeof targetPath !== 'string') return false;
     try {
-      // If path does not exist, do NOT create a fake empty directory!
-      // Check if path or its parent directory exists
-      let pathToOpen = targetPath;
-      if (!fs.existsSync(pathToOpen)) {
-        console.warn(`Target path does not exist: ${pathToOpen}`);
-        const parentDir = path.dirname(pathToOpen);
-        if (fs.existsSync(parentDir)) {
-          pathToOpen = parentDir;
-        } else {
-          return false;
+      const normalizedInput = path.normalize(targetPath.trim().replace(/[\\/]+/g, path.sep));
+      const candidatePaths = [normalizedInput];
+
+      // Also check .disabled variant and SPT 3.x / 4.x server mod layout variants
+      candidatePaths.push(`${normalizedInput}.disabled`);
+      if (normalizedInput.toLowerCase().endsWith('.disabled')) {
+        candidatePaths.push(normalizedInput.slice(0, -'.disabled'.length));
+      }
+
+      const layoutVariants = [
+        [`SPT_Runtime${path.sep}user${path.sep}mods`, `SPT${path.sep}user${path.sep}mods`],
+        [`SPT_Runtime${path.sep}user${path.sep}mods`, `user${path.sep}mods`],
+        [`user${path.sep}mods`, `SPT${path.sep}user${path.sep}mods`],
+        [`user${path.sep}mods`, `SPT_Runtime${path.sep}user${path.sep}mods`],
+      ];
+      for (const [fromSeg, toSeg] of layoutVariants) {
+        if (normalizedInput.includes(fromSeg)) {
+          const alt = normalizedInput.replace(fromSeg, toSeg);
+          candidatePaths.push(alt, `${alt}.disabled`);
         }
       }
+
+      let pathToOpen = candidatePaths.find((p) => fs.existsSync(p)) || null;
+
+      // Walk up parent directories (up to 3 levels) if a specific mod folder doesn't exist yet
+      if (!pathToOpen) {
+        for (const baseCandidate of candidatePaths) {
+          let current = baseCandidate;
+          for (let depth = 0; depth < 3; depth++) {
+            const parentDir = path.dirname(current);
+            if (!parentDir || parentDir === current) break;
+            if (fs.existsSync(parentDir)) {
+              pathToOpen = parentDir;
+              break;
+            }
+            current = parentDir;
+          }
+          if (pathToOpen) break;
+        }
+      }
+
+      if (!pathToOpen || !fs.existsSync(pathToOpen)) {
+        console.warn(`Target path does not exist: ${normalizedInput}`);
+        return false;
+      }
+
+      const stat = fs.statSync(pathToOpen);
+      if (stat.isFile()) {
+        shell.showItemInFolder(pathToOpen);
+        return true;
+      }
+
       const err = await shell.openPath(pathToOpen);
       if (err) {
         console.error('shell.openPath error:', err);

@@ -53,22 +53,25 @@ interface InstalledModRowCardProps {
 
 const getModFolderPaths = (mod: InstalledMod): string[] => {
   const paths: string[] = [];
-  const hasServer = mod.kind === 'Server' || mod.kind === 'Both' || Boolean(mod.serverPath);
-  const hasClient = mod.kind === 'Client' || mod.kind === 'Both' || Boolean(mod.clientPath);
 
-  if (hasServer) {
-    paths.push(mod.serverPath || 'SPT_Runtime/user/mods');
-  }
-
-  if (hasClient) {
+  if (mod.serverPath || mod.clientPath) {
+    if (mod.serverPath) {
+      paths.push(mod.serverPath);
+    }
     if (mod.clientPath) {
       const cleanDir = /\.[a-zA-Z0-9]+$/.test(mod.clientPath)
-        ? mod.clientPath.replace(/\/[^/]+$/, '')
+        ? mod.clientPath.replace(/[\\/][^\\/]+$/, '')
         : mod.clientPath;
-      paths.push(cleanDir || 'BepInEx/plugins');
-    } else {
-      paths.push('BepInEx/plugins');
+      paths.push(cleanDir || mod.clientPath);
     }
+    return Array.from(new Set(paths));
+  }
+
+  if (mod.kind === 'Server' || mod.kind === 'Both') {
+    paths.push('SPT_Runtime/user/mods');
+  }
+  if (mod.kind === 'Client' || mod.kind === 'Both') {
+    paths.push('BepInEx/plugins');
   }
 
   return Array.from(new Set(paths));
