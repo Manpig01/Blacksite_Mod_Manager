@@ -118,13 +118,27 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
     }
   }, [currentPage]);
 
-  // Background fetch versions for visible mods to resolve their exact matching version
+  // Seed embedded versions and lazy-fetch only when genuinely missing
   useEffect(() => {
-    const modsToFetch = queryResult.mods.filter((m) => m.id && !modVersionsCache[m.id]);
+    // 1. Immediately populate cache from mods that already include embedded versions
+    const immediateSeeds: Record<number, ModVersion[]> = {};
+    for (const m of queryResult.mods) {
+      if (m.id && Array.isArray(m.versions) && m.versions.length > 0 && !modVersionsCache[m.id]) {
+        immediateSeeds[m.id] = m.versions;
+      }
+    }
+    if (Object.keys(immediateSeeds).length > 0) {
+      setModVersionsCache((prev) => ({ ...prev, ...immediateSeeds }));
+    }
+
+    // 2. Only fetch for mods that genuinely lack embedded versions
+    const modsToFetch = queryResult.mods.filter(
+      (m) => m.id && !modVersionsCache[m.id] && (!m.versions || m.versions.length === 0)
+    );
     if (modsToFetch.length === 0) return;
 
     let isMounted = true;
-    const fetchPromises = modsToFetch.slice(0, 20).map(async (m) => {
+    const fetchPromises = modsToFetch.slice(0, 5).map(async (m) => {
       try {
         const verList = await apiService.getModVersions(m.id);
         return { id: m.id, versions: verList };

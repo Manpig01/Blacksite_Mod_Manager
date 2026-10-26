@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Addon } from '../types';
-import { Puzzle, Layers, Sparkles, Box } from 'lucide-react';
-import { imageCacheService } from '../services/imageCacheService';
-import { getProxiedForgeImageUrl } from './ModThumbnail';
+import { Puzzle } from 'lucide-react';
+import { buildCandidateImageUrls, useCachedImageCandidates } from './ModThumbnail';
 import { parentModResolver } from '../services/parentModResolver';
 import { apiService } from '../services/apiService';
 
@@ -54,131 +53,18 @@ export const AddonThumbnail: React.FC<AddonThumbnailProps> = ({
     };
   }, [addon.thumbnail, addon.mod?.thumbnail, addon.mod_id, resolvedParentThumb]);
 
-  // Build prioritized candidate URLs list:
-  // 1. Addon primary thumbnail
-  // 2. Parent mod thumbnail (direct or coalesced)
-  // 3. Author avatar
-  const candidateImages = useMemo(() => {
-    const urls: string[] = [];
-    const isDesktop = typeof window !== 'undefined' && Boolean((window as any).desktopBridge?.isElectron);
+  const candidateImages = useMemo(
+    () =>
+      buildCandidateImageUrls([
+        addon.thumbnail,
+        addon.mod?.thumbnail || resolvedParentThumb,
+        addon.authors?.[0]?.avatar,
+      ]),
+    [addon.thumbnail, addon.mod?.thumbnail, resolvedParentThumb, addon.authors]
+  );
 
-    const addCandidate = (rawUrl?: string | null) => {
-      if (!rawUrl) return;
-      const trimmed = rawUrl.trim();
-      if (!trimmed) return;
-
-      if (isDesktop) {
-        // Direct URLs supported natively with Electron Referer header injection
-        if (!urls.includes(trimmed)) {
-          urls.push(trimmed);
-        }
-      } else {
-        const proxied = getProxiedForgeImageUrl(trimmed);
-        if (proxied && !urls.includes(proxied)) {
-          urls.push(proxied);
-        }
-        if (!urls.includes(trimmed) && trimmed !== proxied) {
-          urls.push(trimmed);
-        }
-      }
-    };
-
-    // Candidate 1: Addon direct thumbnail
-    if (addon.thumbnail) {
-      addCandidate(addon.thumbnail);
-    }
-
-    // Candidate 2: Parent mod thumbnail
-    const parentThumb = addon.mod?.thumbnail || resolvedParentThumb;
-    if (parentThumb) {
-      addCandidate(parentThumb);
-    }
-
-    // Candidate 3: Author avatar
-    if (addon.authors && addon.authors.length > 0 && addon.authors[0].avatar) {
-      addCandidate(addon.authors[0].avatar);
-    }
-
-    return urls;
-  }, [addon.thumbnail, addon.mod?.thumbnail, resolvedParentThumb, addon.authors]);
-
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [cachedUrl, setCachedUrl] = useState<string | null>(() => {
-    for (const url of candidateImages) {
-      const mem = imageCacheService.getMemoryUrl(url);
-      if (mem) return mem;
-    }
-    return null;
-  });
-  const [isLoaded, setIsLoaded] = useState<boolean>(Boolean(cachedUrl));
-  const [hasAllFailed, setHasAllFailed] = useState<boolean>(candidateImages.length === 0);
-
-  useEffect(() => {
-    setCurrentIndex(0);
-    setDataUrl(null);
-    setHasAllFailed(candidateImages.length === 0);
-
-    let isMounted = true;
-    const checkCache = async () => {
-      for (const url of candidateImages) {
-        const cached = await imageCacheService.getCachedImageUrl(url);
-        if (cached && isMounted) {
-          setCachedUrl(cached);
-          setIsLoaded(true);
-          return;
-        }
-      }
-      if (isMounted) {
-        setCachedUrl(null);
-        setIsLoaded(false);
-      }
-    };
-    checkCache();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [candidateImages]);
-
-  const handleImageError = async () => {
-    // If running in desktop app, try IPC data URL fetch before falling back
-    const currentUrl = candidateImages[currentIndex];
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
-    if (bridge?.fetchImageDataUrl && currentUrl && !currentUrl.startsWith('data:') && !dataUrl) {
-      try {
-        const base64 = await bridge.fetchImageDataUrl(currentUrl);
-        if (base64) {
-          setDataUrl(base64);
-          setIsLoaded(false);
-          return;
-        }
-      } catch (e) {
-        console.error('IPC image fetch failed for addon thumbnail:', e);
-      }
-    }
-
-    setDataUrl(null);
-    if (currentIndex < candidateImages.length - 1) {
-      setCurrentIndex((prev) => prev + 1);
-      setIsLoaded(false);
-    } else {
-      setHasAllFailed(true);
-    }
-  };
-
-  const handleImageLoad = () => {
-    setIsLoaded(true);
-    // Background persistent caching to IndexedDB
-    const activeUrl = candidateImages[currentIndex];
-    if (activeUrl && !cachedUrl && !activeUrl.startsWith('data:')) {
-      imageCacheService.fetchAndCache(activeUrl).catch(() => {});
-    }
-  };
-
-  const currentImageUrl = !hasAllFailed
-    ? (cachedUrl || dataUrl || candidateImages[currentIndex])
-    : null;
+  const { currentImageUrl, isLoaded, hasAllFailed, handleImageError, handleImageLoad } =
+    useCachedImageCandidates(candidateImages);
 
   // Render tactical fallback artwork when no images are available or all candidates fail
   const renderTacticalArtwork = () => {

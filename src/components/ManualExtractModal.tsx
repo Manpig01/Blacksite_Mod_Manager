@@ -1,5 +1,7 @@
 import React from 'react';
 import { AlertTriangle, FolderOpen, Folder, RotateCcw, X, ExternalLink } from 'lucide-react';
+import { Mod } from '../types';
+import { getDesktopBridge } from '../services/desktopBridgeService';
 
 export interface ManualExtractInfo {
   modName: string;
@@ -7,7 +9,7 @@ export interface ManualExtractInfo {
   archivePath?: string | null;
   format?: string | null;
   errorMessage: string;
-  sourceMod?: any;
+  sourceMod?: Mod;
 }
 
 interface ManualExtractModalProps {
@@ -27,7 +29,7 @@ export const ManualExtractModal: React.FC<ManualExtractModalProps> = ({
 }) => {
   if (!isOpen || !info) return null;
 
-  const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+  const bridge = getDesktopBridge();
 
   const handleOpenArchiveLocation = () => {
     if (!bridge) return;
@@ -87,7 +89,7 @@ export const ManualExtractModal: React.FC<ManualExtractModalProps> = ({
               {bridge?.openExternal && (
                 <button
                   type="button"
-                  onClick={() => bridge.openExternal('https://www.7-zip.org/')}
+                  onClick={() => bridge.openExternal?.('https://www.7-zip.org/')}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono text-zinc-400 hover:text-zinc-200 bg-zinc-800/80 hover:bg-zinc-700/80 border border-zinc-700/50 rounded transition-colors"
                   title="Download 7-Zip for Windows"
                 >

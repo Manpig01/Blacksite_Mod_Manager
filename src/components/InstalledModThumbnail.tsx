@@ -1,133 +1,45 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { InstalledMod, ConflictInfo } from '../types';
-import { Bot, Cpu, Eye, ShoppingBag, Crosshair, Volume2, Compass, Wrench, Package, AlertTriangle, AlertCircle } from 'lucide-react';
-import { getProxiedForgeImageUrl } from './ModThumbnail';
-import { imageCacheService } from '../services/imageCacheService';
+import React, { useMemo } from 'react';
+import { InstalledMod, FileCollision } from '../types';
+import { Bot, Cpu, Eye, ShoppingBag, Wrench, Package, AlertTriangle, AlertCircle } from 'lucide-react';
+import { buildCandidateImageUrls, useCachedImageCandidates } from './ModThumbnail';
 import { getKnownDependencyMeta } from '../data/knownDependencies';
 
 interface InstalledModThumbnailProps {
   mod: InstalledMod;
-  conflict?: ConflictInfo;
+  collision?: FileCollision;
   hasMissingDeps?: boolean;
   missingDepSummary?: string[];
-  onShowConflict?: (conflict: ConflictInfo) => void;
+  onNavigateConflicts?: () => void;
   className?: string;
 }
 
 export const InstalledModThumbnail: React.FC<InstalledModThumbnailProps> = ({
   mod,
-  conflict,
+  collision,
   hasMissingDeps,
   missingDepSummary = [],
-  onShowConflict,
+  onNavigateConflicts,
   className = '',
 }) => {
   const candidateImages = useMemo(() => {
-    const urls: string[] = [];
-    const isDesktop = typeof window !== 'undefined' && Boolean((window as any).desktopBridge?.isElectron);
-
-    const addCandidate = (raw?: string | null) => {
-      if (!raw) return;
-      const trimmed = raw.trim();
-      if (!trimmed) return;
-      if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
-        if (!urls.includes(trimmed)) urls.push(trimmed);
-        return;
-      }
-      if (isDesktop) {
-        if (!urls.includes(trimmed)) urls.push(trimmed);
-      } else {
-        const proxied = getProxiedForgeImageUrl(trimmed);
-        if (proxied && !urls.includes(proxied)) urls.push(proxied);
-        if (!urls.includes(trimmed) && trimmed !== proxied) urls.push(trimmed);
-      }
-    };
-
-    if (mod.thumbnail) {
-      addCandidate(mod.thumbnail);
-    }
-
-    const known = getKnownDependencyMeta(mod.id) || getKnownDependencyMeta(mod.name) || getKnownDependencyMeta(mod.modId);
-    if (known?.thumbnail) {
-      addCandidate(known.thumbnail);
-    }
-
+    const known =
+      getKnownDependencyMeta(mod.id) ||
+      getKnownDependencyMeta(mod.name) ||
+      getKnownDependencyMeta(mod.modId);
     const hubId = (mod as any).hub_id;
-    if (hubId) {
-      addCandidate(`https://files.sp-mod.com/mods/${hubId}.png`);
-      addCandidate(`https://files.sp-mod.com/mods/${hubId}.jpg`);
-    }
 
-    if (mod.modId) {
-      addCandidate(`https://files.sp-mod.com/mods/${mod.modId}.png`);
-      addCandidate(`https://files.sp-mod.com/mods/${mod.modId}.jpg`);
-    }
-
-    return urls;
+    return buildCandidateImageUrls([
+      mod.thumbnail,
+      known?.thumbnail,
+      hubId ? `https://files.sp-mod.com/mods/${hubId}.png` : null,
+      hubId ? `https://files.sp-mod.com/mods/${hubId}.jpg` : null,
+      mod.modId ? `https://files.sp-mod.com/mods/${mod.modId}.png` : null,
+      mod.modId ? `https://files.sp-mod.com/mods/${mod.modId}.jpg` : null,
+    ]);
   }, [mod.thumbnail, mod.id, mod.name, mod.modId, (mod as any).hub_id]);
 
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [cachedUrl, setCachedUrl] = useState<string | null>(() => {
-    for (const url of candidateImages) {
-      const mem = imageCacheService.getMemoryUrl(url);
-      if (mem) return mem;
-    }
-    return null;
-  });
-  const [isLoaded, setIsLoaded] = useState<boolean>(Boolean(cachedUrl));
-  const [hasAllFailed, setHasAllFailed] = useState<boolean>(candidateImages.length === 0);
-
-  useEffect(() => {
-    setCurrentIndex(0);
-    setHasAllFailed(candidateImages.length === 0);
-
-    let isMounted = true;
-    const checkCache = async () => {
-      for (const url of candidateImages) {
-        if (url.startsWith('data:') || url.startsWith('blob:')) {
-          if (isMounted) {
-            setCachedUrl(url);
-            setIsLoaded(true);
-            return;
-          }
-        }
-        const cached = await imageCacheService.getCachedImageUrl(url);
-        if (cached && isMounted) {
-          setCachedUrl(cached);
-          setIsLoaded(true);
-          return;
-        }
-      }
-      if (isMounted) {
-        setCachedUrl(null);
-        setIsLoaded(false);
-      }
-    };
-    checkCache();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [candidateImages]);
-
-  const handleImageError = () => {
-    if (currentIndex < candidateImages.length - 1) {
-      setCurrentIndex((prev) => prev + 1);
-      setIsLoaded(false);
-    } else {
-      setHasAllFailed(true);
-    }
-  };
-
-  const handleImageLoad = () => {
-    setIsLoaded(true);
-    const activeUrl = candidateImages[currentIndex];
-    if (activeUrl && !cachedUrl && !activeUrl.startsWith('data:')) {
-      imageCacheService.fetchAndCache(activeUrl).catch(() => {});
-    }
-  };
-
-  const currentImageUrl = !hasAllFailed ? (cachedUrl || candidateImages[currentIndex]) : null;
+  const { currentImageUrl, isLoaded, hasAllFailed, handleImageError, handleImageLoad } =
+    useCachedImageCandidates(candidateImages);
 
   // Thematic Category Graphic Fallback Renderer
   const renderCategoryArtwork = () => {
@@ -227,14 +139,14 @@ export const InstalledModThumbnail: React.FC<InstalledModThumbnailProps> = ({
       </div>
 
       {/* Top-right: Conflict Warning Badge */}
-      {conflict && (
+      {collision && (
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (onShowConflict) onShowConflict(conflict);
+            if (onNavigateConflicts) onNavigateConflicts();
           }}
           className="absolute top-1 right-1 bg-[#3A2A10] border border-[#F59E0B] text-[#F59E0B] rounded px-1.5 py-0.5 text-[9.5px] font-bold flex items-center gap-0.5 cursor-pointer shadow hover:bg-[#4A3515] transition-colors z-10"
-          title={conflict.details}
+          title={`${collision.relativePath}: ${collision.details}`}
           type="button"
         >
           <AlertTriangle className="w-2.5 h-2.5" />

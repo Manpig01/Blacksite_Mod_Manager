@@ -99,6 +99,9 @@ export interface InstalledMod {
   isDisabled: boolean;
   hasUpdate?: boolean;
   latestVersion?: string;
+  latestVersionLink?: string;
+  latestVersionId?: number;
+  latestContentLength?: number | null;
   conflictId?: string;
   configFiles: ConfigFile[];
   loadOrder?: number;
@@ -134,16 +137,6 @@ export interface ConfigFile {
   backups?: { timestamp: string; content: string }[];
 }
 
-export interface ConflictInfo {
-  id: string;
-  conflictingModIds: string[];
-  conflictingModNames: string[];
-  duplicateItem: string; // filename or package ID
-  itemType: 'dll' | 'package_id';
-  details: string;
-  ignored?: boolean;
-}
-
 export type QueueItemStatus = 'queued' | 'downloading' | 'extracting' | 'routing' | 'installed' | 'failed' | 'paused';
 
 export interface QueueItem {
@@ -162,7 +155,7 @@ export interface QueueItem {
   archiveName?: string;
   targetFolder?: string;
   downloadUrl?: string;
-  sourceMod?: any;
+  sourceMod?: Mod;
 }
 
 export interface ModProfile {
@@ -248,40 +241,6 @@ export interface ResolvedDependencyItem {
   kind?: ModKind;
   categoryTitle?: string;
   teaser?: string;
-}
-
-export interface ModpackSnapshot {
-  id: string;
-  name: string;
-  notes?: string;
-  createdAt: string;
-  sptVersion: string;
-  enabledModIds: string[];
-  totalModsCount: number;
-  modSnapshots: {
-    id: string;
-    name: string;
-    version: string;
-    isDisabled: boolean;
-    loadOrder?: number;
-    kind: ModKind;
-  }[];
-}
-
-export interface LoadoutManifest {
-  name: string;
-  author?: string;
-  description?: string;
-  sptVersion: string;
-  exportedAt: string;
-  mods: {
-    id: string;
-    name?: string;
-    version?: string;
-    enabled: boolean;
-    loadOrder?: number;
-    kind?: ModKind;
-  }[];
 }
 
 export interface AddonVersion {
@@ -480,6 +439,166 @@ export interface BsiteImportPreflight {
   missingCount: number;
   existingMods: InstalledMod[];
   missingMods: BsiteBundleModEntry[];
+}
+
+export interface CheckModUpdatesResult {
+  hasUpdates: boolean;
+  updatesCount: number;
+  updatedMods: {
+    installedModId: string;
+    modId?: number;
+    guid?: string;
+    currentVersion: string;
+    latestVersion: string;
+    downloadUrl: string;
+    versionId?: number;
+    contentLength?: number | null;
+    fikaCompatibility?: boolean;
+    changeSummary?: string;
+  }[];
+  upToDateCount: number;
+  incompatibleCount: number;
+}
+
+// ==========================================
+// Electron Desktop IPC Bridge Types
+// ==========================================
+
+export interface DesktopSptDirectoryInfo {
+  normalizedPath?: string;
+  sptVersion?: string;
+  detectedServerBinary?: string;
+  serverModPath?: string;
+  clientModPath?: string;
+  isSpt4xLayout?: boolean;
+}
+
+export interface DesktopInstallProgressEvent {
+  queueId: string;
+  modName?: string;
+  stage?: 'downloading' | 'extracting' | 'routing' | 'installed';
+  percent?: number;
+  bytesReceived?: number;
+  totalBytes?: number;
+  downloadSpeed?: string;
+}
+
+export interface DesktopInstallModParams {
+  queueId: string;
+  sptDirectory: string;
+  sptVersion: string;
+  modName: string;
+  author: string;
+  version: string;
+  downloadUrl?: string;
+  archiveBase64?: string;
+  archiveFileName?: string;
+  performanceMode?: ExtractionPerformanceMode;
+}
+
+export interface DesktopInstallModResult {
+  success: boolean;
+  error?: string;
+  errorCode?: string;
+  statusCode?: number;
+  stack?: string;
+  canManualExtract?: boolean;
+  archivePath?: string;
+  format?: string;
+  destinationDir?: string;
+  kind?: ModKind;
+  serverPath?: string;
+  clientPath?: string;
+}
+
+export interface DesktopUninstallModParams {
+  sptDirectory: string;
+  serverPath?: string;
+  clientPath?: string;
+  modName?: string;
+  clientPaths?: string[];
+}
+
+export interface DesktopToggleDisableParams {
+  sptDirectory: string;
+  serverPath?: string;
+  clientPath?: string;
+  clientPaths?: string[];
+  disable: boolean;
+}
+
+export interface DesktopToggleDisableResult {
+  success?: boolean;
+  serverPath?: string;
+  clientPath?: string;
+  clientPaths?: string[];
+}
+
+export interface DesktopVfsRelinkResult {
+  success: boolean;
+  switchedCount: number;
+  durationMs: number;
+}
+
+export interface DesktopClearTempResult {
+  reclaimedBytes?: number;
+  deletedCount?: number;
+}
+
+export interface DesktopSptStatusResult {
+  isRunning: boolean;
+  hasLaunchedClient?: boolean;
+}
+
+export interface DesktopServerLogEvent {
+  text: string;
+  level: 'info' | 'warn' | 'error';
+  timestamp: string;
+}
+
+export interface DesktopWindowControlAPI {
+  minimize: () => Promise<void> | void;
+  maximize: () => Promise<boolean>;
+  close: () => Promise<void> | void;
+  isMaximized: () => Promise<boolean>;
+  onMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
+}
+
+export interface DesktopBridgeAPI {
+  isElectron: boolean;
+  platform: string;
+  version: string;
+  cpuCount: number;
+  selectDirectory?: (defaultPath?: string) => Promise<string | null>;
+  inspectSptDirectory?: (targetPath: string) => Promise<DesktopSptDirectoryInfo | null>;
+  fetchImageDataUrl?: (url: string) => Promise<string | null>;
+  openFolder?: (targetPath: string) => Promise<void>;
+  showItemInFolder?: (targetPath: string) => Promise<void>;
+  openExternal?: (url: string) => Promise<void>;
+  installMod?: (params: DesktopInstallModParams) => Promise<DesktopInstallModResult>;
+  onInstallProgress?: (callback: (data: DesktopInstallProgressEvent) => void) => () => void;
+  uninstallMod?: (params: DesktopUninstallModParams) => Promise<void>;
+  uninstallAllMods?: (params: { sptDirectory: string }) => Promise<void>;
+  toggleDisableMod?: (params: DesktopToggleDisableParams) => Promise<DesktopToggleDisableResult | null>;
+  scanInstalledMods?: (params: { sptDirectory: string }) => Promise<Partial<InstalledMod>[]>;
+  saveModConfigFile?: (params: { sptDirectory: string; relativePath: string; content: string }) => Promise<void>;
+  relinkVfsProfile?: (params: {
+    sptDirectory: string;
+    enabledModIds: string[];
+    disabledModIds: string[];
+  }) => Promise<DesktopVfsRelinkResult | null>;
+  scanSptPlayerProfiles?: (params: { sptDirectory: string }) => Promise<SptPlayerProfile[]>;
+  clearTempFiles?: (params: { sptDirectory: string }) => Promise<DesktopClearTempResult | null>;
+  launchSpt?: (params: { sptDirectory: string; sptVersion: string }) => Promise<{ success: boolean; error?: string }>;
+  stopSptServer?: () => Promise<void>;
+  getSptStatus?: () => Promise<DesktopSptStatusResult | null>;
+  onSptServerLog?: (callback: (data: DesktopServerLogEvent) => void) => () => void;
+  onSptClientLaunched?: (callback: (data: { launcherName: string }) => void) => () => void;
+  onSptServerExit?: (callback: (data: { code: number; signal?: string }) => void) => () => void;
+  setCustomEmblem?: (dataUrl: string) => Promise<void> | void;
+  updateAppIcon?: (buffer: ArrayBuffer) => Promise<void> | void;
+  resetCustomEmblem?: () => Promise<void> | void;
+  windowControl?: DesktopWindowControlAPI;
 }
 
 

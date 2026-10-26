@@ -1,12 +1,15 @@
 import React from 'react';
-import { Folder, Play, Layers, Download } from 'lucide-react';
+import { Folder, Play, Layers, Download, RefreshCw } from 'lucide-react';
 import { SettingsState, ModProfile } from '../types';
 import { useAppEmblem } from '../hooks/useAppEmblem';
+import { isDesktopEnvironment } from '../services/desktopBridgeService';
 
 interface HeaderProps {
   settings: SettingsState;
   onUpdateSettings: (newSettings: Partial<SettingsState>) => void;
   onPickDirectory: () => void;
+  onRescanMods?: (customPath?: string) => void;
+  isScanningMods?: boolean;
   onLaunchSpt: () => void;
   profiles: ModProfile[];
   onSelectProfile: (profileId: string) => void;
@@ -21,6 +24,8 @@ export const Header: React.FC<HeaderProps> = ({
   settings,
   onUpdateSettings,
   onPickDirectory,
+  onRescanMods,
+  isScanningMods = false,
   onLaunchSpt,
   profiles,
   onSelectProfile,
@@ -95,7 +100,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls: Windows Download + Profile Selector */}
         <div className="flex items-center gap-2.5">
-          {onOpenDownloadModal && (
+          {onOpenDownloadModal && !isDesktopEnvironment() && (
             <button
               onClick={onOpenDownloadModal}
               className="bg-[#20252D] hover:bg-[#282F3A] border border-[#2B303C] hover:border-[#EA580C]/60 text-[#E8EAEE] text-xs font-semibold px-2.5 py-1.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer shadow-xs group"
@@ -107,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Profile Selector (task 2.5 & Phase 4) */}
+          {/* Profile Selector */}
           <div className="flex items-center gap-2">
             <button
               onClick={onOpenProfilesTab}
@@ -156,12 +161,36 @@ export const Header: React.FC<HeaderProps> = ({
           <span>Set SPT Directory</span>
         </button>
 
-        {/* Directory display box */}
-        <div
-          className="bg-[#0E1013] border border-[#23272E] rounded-md px-3 py-1.5 flex-1 min-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap text-[13px] text-[#9AA3AF] select-text"
-          title={settings.sptDirectory}
-        >
-          {settings.sptDirectory}
+        {/* Editable Directory input box + Rescan button */}
+        <div className="flex items-center flex-1 min-w-[220px] gap-1.5">
+          <input
+            type="text"
+            value={settings.sptDirectory}
+            onChange={(e) => onUpdateSettings({ sptDirectory: e.target.value })}
+            onBlur={() => {
+              if (onRescanMods) onRescanMods(settings.sptDirectory);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && onRescanMods) {
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder="C:\Games\SPT"
+            className="bg-[#0E1013] border border-[#23272E] focus:border-[#EA580C] rounded-md px-3 py-1.5 flex-1 min-w-0 text-[13px] text-[#E8EAEE] font-mono focus:outline-none transition-colors"
+            title="Current Single Player Tarkov Root Directory (Edit or click Set SPT Directory)"
+          />
+          {onRescanMods && (
+            <button
+              onClick={() => onRescanMods(settings.sptDirectory)}
+              disabled={isScanningMods}
+              className="bg-[#20252D] hover:bg-[#2A2F38] border border-[#2B303C] text-[#E8EAEE] text-xs font-medium px-2.5 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              title="Rescan SPT Directory on disk for installed mods and SPT version"
+              type="button"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-[#EA580C] ${isScanningMods ? 'animate-spin' : ''}`} />
+              <span className="hidden md:inline">{isScanningMods ? 'Scanning...' : 'Rescan'}</span>
+            </button>
+          )}
         </div>
 
         {/* SPT Version input */}

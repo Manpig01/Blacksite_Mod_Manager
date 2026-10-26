@@ -139,13 +139,13 @@ export const BsiteImportModal: React.FC<BsiteImportModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-[#E8EAEE] flex items-center gap-2">
-                <span>Import .bsite Tactical Bundle</span>
+                <span>Import Loadout Bundle or Share Code</span>
                 <span className="text-xs px-2 py-0.5 rounded bg-[#20252D] text-[#9AA3AF] font-mono">
-                  Manifest Loader
+                  .bsite / JSON / BS- Code
                 </span>
               </h2>
               <p className="text-xs text-[#9AA3AF]">
-                Drag and drop a .bsite loadout file or paste its JSON manifest
+                Drag and drop a .bsite/.json file or paste a BS- share code or JSON manifest
               </p>
             </div>
           </div>
@@ -180,7 +180,7 @@ export const BsiteImportModal: React.FC<BsiteImportModalProps> = ({
             />
             <Package className="w-8 h-8 text-[#9AA3AF] mx-auto mb-2" />
             <p className="text-xs font-medium text-[#E8EAEE]">
-              Drop your <code className="text-[#EA580C]">.bsite</code> bundle manifest here, or{' '}
+              Drop your <code className="text-[#EA580C]">.bsite</code> or <code className="text-[#EA580C]">.json</code> loadout file here, or{' '}
               <label
                 htmlFor="bsite-file-upload"
                 className="text-[#EA580C] hover:underline cursor-pointer font-semibold"
@@ -189,20 +189,20 @@ export const BsiteImportModal: React.FC<BsiteImportModalProps> = ({
               </label>
             </p>
             <p className="text-[11px] text-[#6B7480] mt-1">
-              Supports Blacksite .bsite bundles and standard JSON loadout manifests
+              Supports Blacksite .bsite bundles, JSON manifests, and compact BS- share codes
             </p>
           </div>
 
           {/* Paste Area Alternative */}
           <div>
             <label className="block text-xs font-semibold text-[#9AA3AF] mb-1">
-              Or Paste Manifest JSON Directly:
+              Or Paste Share Code (`BS-...`) or Manifest JSON Directly:
             </label>
             <textarea
               rows={3}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder='{"formatVersion": "1.0", "manifestType": "blacksite_loadout_bundle", "metadata": ...}'
+              placeholder='Paste BS-... share code or {"formatVersion": "1.0", "manifestType": "blacksite_loadout_bundle", ...}'
               className="w-full bg-[#121418] border border-[#2B303C] rounded px-3 py-2 text-xs font-mono text-[#E8EAEE] focus:outline-none focus:border-[#EA580C] resize-none"
             />
           </div>

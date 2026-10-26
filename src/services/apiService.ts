@@ -1,9 +1,114 @@
-import { Mod, ModCategory, SptVersionInfo, ModVersion, CatalogSortOption, RecommendedModItem, InstalledMod, ForgeDependencyNode, ResolvedDependencyItem, Addon, AddonVersion, AddonQueryResult } from '../types';
+import {
+  Mod,
+  ModCategory,
+  SptVersionInfo,
+  ModVersion,
+  CatalogSortOption,
+  RecommendedModItem,
+  InstalledMod,
+  ForgeDependencyNode,
+  ResolvedDependencyItem,
+  Addon,
+  AddonVersion,
+  AddonQueryResult,
+  CheckModUpdatesResult,
+} from '../types';
 import { FIXTURE_MODS, MOD_CATEGORIES, SPT_VERSIONS } from '../data/fixtureCatalog';
 import { getKnownDependencyMeta } from '../data/knownDependencies';
-import { sortSptVersionsByMostRecent, sortModVersionsByMostRecent, isSptVersionCompatible } from '../utils/versionUtils';
+import {
+  sortSptVersionsByMostRecent,
+  sortModVersionsByMostRecent,
+  isSptVersionCompatible,
+  findMatchingModVersion,
+} from '../utils/versionUtils';
 
 const API_BASE = 'https://sp-mod.com/api/v0';
+
+/**
+ * Concurrency limiter and Cloudflare 429 Retry-After queue for SP-Mod Forge API
+ * Enforces max 5 in-flight requests and automatically backs off when 429 is encountered.
+ */
+class RateLimitedClient {
+  private activeCount = 0;
+  private queue: Array<() => void> = [];
+  private maxConcurrent = 5;
+  private rateLimitResetUntil = 0;
+
+  async request(url: string, options: RequestInit = {}, retries = 3): Promise<Response> {
+    await this.acquireSlot();
+
+    try {
+      const now = Date.now();
+      if (now < this.rateLimitResetUntil) {
+        const waitMs = this.rateLimitResetUntil - now;
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+
+      const headers = new Headers(options.headers || {});
+      if (!headers.has('Accept')) {
+        headers.set('Accept', 'application/json');
+      }
+
+      // Check for user-configured Forge API key in localStorage or env
+      if (!headers.has('Authorization')) {
+        let key: string | null = null;
+        if (typeof localStorage !== 'undefined') {
+          key = localStorage.getItem('blacksite_forge_api_key');
+        }
+        if (!key && typeof process !== 'undefined' && process.env?.FORGE_API_KEY) {
+          key = process.env.FORGE_API_KEY;
+        }
+        if (key && key.trim()) {
+          headers.set('Authorization', `Bearer ${key.trim()}`);
+        }
+      }
+
+      const res = await fetch(url, { ...options, headers });
+
+      if (res.status === 429 && retries > 0) {
+        const retryAfterHeader = res.headers.get('Retry-After');
+        let delayMs = 2500;
+        if (retryAfterHeader) {
+          const parsed = parseInt(retryAfterHeader, 10);
+          if (!isNaN(parsed) && parsed > 0) {
+            delayMs = parsed * 1000;
+          }
+        }
+        this.rateLimitResetUntil = Date.now() + delayMs;
+        console.warn(`[SP-Mod API] Cloudflare Rate Limited (429). Retrying after ${(delayMs / 1000).toFixed(1)}s...`);
+        await new Promise((r) => setTimeout(r, delayMs));
+        return this.request(url, options, retries - 1);
+      }
+
+      return res;
+    } finally {
+      this.releaseSlot();
+    }
+  }
+
+  private async acquireSlot(): Promise<void> {
+    if (this.activeCount < this.maxConcurrent) {
+      this.activeCount++;
+      return;
+    }
+    return new Promise((resolve) => {
+      this.queue.push(() => {
+        this.activeCount++;
+        resolve();
+      });
+    });
+  }
+
+  private releaseSlot(): void {
+    this.activeCount--;
+    if (this.queue.length > 0 && this.activeCount < this.maxConcurrent) {
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+export const apiClient = new RateLimitedClient();
 
 export interface CatalogQueryFilters {
   query?: string;
@@ -123,10 +228,39 @@ export function normalizeMod(m: any): Mod {
       }
     : m.owner;
 
+  let normCategory = m.category;
+  if (m.category && typeof m.category === 'object') {
+    const catTitle = m.category.title || m.category.name || 'General';
+    normCategory = {
+      ...m.category,
+      id: m.category.id,
+      title: catTitle,
+      name: catTitle,
+      slug: m.category.slug || '',
+    };
+  }
+
+  let normVersions: ModVersion[] = [];
+  if (Array.isArray(m.versions)) {
+    normVersions = m.versions.map((v: any) => ({
+      id: v.id,
+      version: v.version || '1.0.0',
+      description: v.description || v.changelog || '',
+      link: v.link || `https://sp-mod.com/mod/download/${m.id}/${m.slug || 'mod'}/${v.version || '1.0.0'}`,
+      content_length: v.content_length,
+      spt_version_constraint: v.spt_version_constraint || null,
+      downloads: v.downloads ?? 0,
+      fika_compatibility: v.fika_compatibility || 'compatible',
+      published_at: v.published_at || v.created_at,
+    }));
+  }
+
   return {
     ...m,
     thumbnail: normThumbnail,
     owner: normOwner,
+    category: normCategory,
+    versions: normVersions.length > 0 ? normVersions : m.versions,
   };
 }
 
@@ -269,8 +403,8 @@ async function syncCatalogDifferential(force = false): Promise<number> {
       for (let page = 1; page <= 4; page++) {
         if (stopPaging) break;
 
-        const res = await fetch(`${API_BASE}/mods?sort=-updated_at&page=${page}&per_page=50`, {
-          signal: AbortSignal.timeout(5000),
+        const res = await apiClient.request(`${API_BASE}/mods?sort=-updated_at&page=${page}&per_page=50&include=versions,category`, {
+          signal: AbortSignal.timeout(6000),
         });
 
         if (!res.ok) break;
@@ -583,6 +717,105 @@ export const apiService = {
     const page = filters.page || 1;
     const perPage = filters.perPage || 20;
 
+    // Map CatalogSortOption to Forge API v0 format
+    let apiSort = '-downloads';
+    switch (filters.sort) {
+      case 'downloads':
+        apiSort = '-downloads';
+        break;
+      case 'recent':
+        apiSort = '-published_at';
+        break;
+      case 'name_az':
+        apiSort = 'name';
+        break;
+      case 'name_za':
+        apiSort = '-name';
+        break;
+      case 'endorsements':
+        apiSort = '-endorsements_count';
+        break;
+      case 'favourites':
+        apiSort = '-favourites_count';
+        break;
+    }
+
+    const cleanSpt = filters.sptVersion && filters.sptVersion !== 'All'
+      ? filters.sptVersion.replace(/^[vV\s]+/, '').trim()
+      : '';
+
+    // 1. Attempt Live Server-Side Search via Forge API v0
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.set('page', String(page));
+      queryParams.set('per_page', String(perPage));
+      queryParams.set('include', 'versions,category');
+      queryParams.set('sort', apiSort);
+
+      if (filters.query?.trim()) {
+        queryParams.set('query', filters.query.trim());
+      }
+      if (cleanSpt) {
+        queryParams.set('filter[spt_version]', cleanSpt);
+      }
+      if (filters.categoryId) {
+        queryParams.set('filter[category_id]', String(filters.categoryId));
+      }
+      if (filters.fikaOnly) {
+        queryParams.set('filter[fika_compatibility]', 'compatible');
+      }
+
+      const res = await apiClient.request(`${API_BASE}/mods?${queryParams.toString()}`, {
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        if (json && Array.isArray(json.data) && json.data.length > 0) {
+          const rawItems = json.data;
+          const normalizedMods: Mod[] = [];
+
+          for (const raw of rawItems) {
+            const m = normalizeMod(raw);
+            catalogMap.set(m.id, m);
+            normalizedMods.push(m);
+          }
+
+          // Merge newly fetched mods into the indexed catalog for sub-millisecond future searches
+          rebuildCatalogIndex();
+
+          let filtered = normalizedMods;
+          if (filters.hideFeatured) {
+            filtered = filtered.filter((m) => !m.featured);
+          }
+          if (filters.hideContainsAds) {
+            filtered = filtered.filter((m) => !m.contains_ads);
+          }
+          if (filters.hideContainsAi) {
+            filtered = filtered.filter((m) => !m.contains_ai_content);
+          }
+          if (filters.hideInstalled && filters.installedGuids?.length) {
+            const installed = new Set(filters.installedGuids.map((g) => g.toLowerCase()));
+            filtered = filtered.filter((m) => !(m.guid && installed.has(m.guid.toLowerCase())));
+          }
+
+          const total = json.meta?.total ?? filtered.length;
+          const lastPage = json.meta?.last_page ?? Math.max(1, Math.ceil(total / perPage));
+
+          return {
+            mods: filtered,
+            total,
+            currentPage: json.meta?.current_page ?? page,
+            lastPage,
+            isOfflineFallback: false,
+          };
+        }
+      }
+    } catch (_) {
+      // Live search failed or offline - fall through cleanly to local index
+    }
+
+    // 2. Offline / Cached Catalog Fallback
     let list = indexedCatalog;
 
     // 1. Text & author filter (< 0.5ms)
@@ -820,102 +1053,42 @@ export const apiService = {
     const modId = params?.modId;
     const forceRefresh = !!params?.forceRefresh;
 
+    let apiSort = '-downloads';
+    if (sort === 'created_desc' || sort === 'recent') apiSort = '-created_at';
+    else if (sort === 'name_asc' || sort === 'name') apiSort = 'name';
+
     try {
-      const now = Date.now();
-      let allAddons: Addon[] = [];
+      const queryParams = new URLSearchParams();
+      queryParams.set('page', String(page));
+      queryParams.set('per_page', String(perPage));
+      queryParams.set('include', 'mod,versions');
+      queryParams.set('sort', apiSort);
+      if (search) queryParams.set('query', search);
+      if (modId) queryParams.set('filter[mod_id]', String(modId));
 
-      if (!forceRefresh && cachedAllAddons && (now - cachedAllAddons.timestamp) < ADDONS_CACHE_TTL) {
-        allAddons = cachedAllAddons.data;
-      } else {
-        // Fetch first page to inspect total and last_page from live SPT API
-        const firstRes = await fetch(`${API_BASE}/addons?per_page=50&page=1&include=mod,versions`, {
-          headers: { Accept: 'application/json' },
-          signal: AbortSignal.timeout(6000)
-        });
+      const res = await apiClient.request(`${API_BASE}/addons?${queryParams.toString()}`, {
+        signal: AbortSignal.timeout(6000),
+      });
 
-        if (!firstRes.ok) {
-          throw new Error(`Failed to fetch addons: HTTP ${firstRes.status}`);
-        }
+      if (res.ok) {
+        const json = await res.json();
+        const rawItems = Array.isArray(json.data) ? json.data : [];
+        const addonsList = rawItems.map(normalizeAddon);
+        const total = json.meta?.total ?? addonsList.length;
+        const totalPages = json.meta?.last_page ?? Math.max(1, Math.ceil(total / perPage));
 
-        const firstJson = await firstRes.json();
-        const firstPageData = Array.isArray(firstJson.data) ? firstJson.data : [];
-        const lastPage = firstJson.meta?.last_page || 1;
-
-        const rawItems = [...firstPageData];
-
-        if (lastPage > 1) {
-          const subsequentRequests = [];
-          for (let p = 2; p <= lastPage; p++) {
-            subsequentRequests.push(
-              fetch(`${API_BASE}/addons?per_page=50&page=${p}&include=mod,versions`, {
-                headers: { Accept: 'application/json' },
-                signal: AbortSignal.timeout(6000)
-              })
-                .then(r => (r.ok ? r.json() : null))
-                .catch(() => null)
-            );
-          }
-          const subsequentPages = await Promise.all(subsequentRequests);
-          for (const sp of subsequentPages) {
-            if (sp && Array.isArray(sp.data)) {
-              rawItems.push(...sp.data);
-            }
-          }
-        }
-
-        allAddons = rawItems.map(normalizeAddon);
-        cachedAllAddons = { data: allAddons, timestamp: now };
+        return {
+          data: addonsList,
+          total,
+          page: json.meta?.current_page ?? page,
+          per_page: perPage,
+          total_pages: totalPages,
+          isOfflineFallback: false,
+        };
       }
-
-      // Filter by search query
-      let filtered = allAddons;
-      if (search) {
-        const q = search.toLowerCase();
-        filtered = filtered.filter(
-          (a) =>
-            a.name.toLowerCase().includes(q) ||
-            (a.teaser && a.teaser.toLowerCase().includes(q)) ||
-            (a.slug && a.slug.toLowerCase().includes(q)) ||
-            (a.mod?.name && a.mod.name.toLowerCase().includes(q)) ||
-            (a.mod?.slug && a.mod.slug.toLowerCase().includes(q)) ||
-            (a.authors && a.authors.some((au) => au.name.toLowerCase().includes(q)))
-        );
-      }
-
-      // Filter by parent mod ID if specified
-      if (modId) {
-        filtered = filtered.filter((a) => a.mod_id === modId);
-      }
-
-      // Accurate sorting
-      if (sort === 'downloads_desc' || sort === 'downloads') {
-        filtered = [...filtered].sort((a, b) => (b.downloads ?? 0) - (a.downloads ?? 0));
-      } else if (sort === 'created_desc' || sort === 'recent') {
-        filtered = [...filtered].sort((a, b) => {
-          const da = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const db = b.created_at ? new Date(b.created_at).getTime() : 0;
-          return db - da;
-        });
-      } else if (sort === 'name_asc' || sort === 'name') {
-        filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-      }
-
-      const total = filtered.length;
-      const totalPages = Math.max(1, Math.ceil(total / perPage));
-      const validPage = Math.min(Math.max(1, page), totalPages);
-      const startIndex = (validPage - 1) * perPage;
-      const pageData = filtered.slice(startIndex, startIndex + perPage);
-
-      return {
-        data: pageData,
-        total,
-        page: validPage,
-        per_page: perPage,
-        total_pages: totalPages,
-        isOfflineFallback: false
-      };
     } catch (err) {
       console.warn('API error fetching addons, using fallback fixtures:', err);
+    }
       // Fallback offline curated sample addons
       const fallbackAddons: Addon[] = [
         {
@@ -1063,7 +1236,6 @@ export const apiService = {
         total_pages: 1,
         isOfflineFallback: true
       };
-    }
   },
 
   /**
@@ -1157,7 +1329,8 @@ export const apiService = {
     } catch {}
 
     if (cachedAllAddons) {
-      const found = cachedAllAddons.data.find((a) => a.id === addonId);
+      const cache = cachedAllAddons as { data: Addon[]; timestamp: number };
+      const found = cache.data.find((a: Addon) => a.id === addonId);
       if (found) return found;
     }
     return null;
@@ -1190,6 +1363,174 @@ export const apiService = {
       }
     } catch {}
     return [];
+  },
+
+  /**
+   * Resolve dependencies for an addon (GET /api/v0/addons/dependencies?addons={id:version})
+   */
+  async resolveAddonDependencies(
+    addonId: number | string,
+    version: string = '1.0.0'
+  ): Promise<any[]> {
+    try {
+      const url = `${API_BASE}/addons/dependencies?addons=${encodeURIComponent(`${addonId}:${version}`)}`;
+      const res = await apiClient.request(url, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const json = await res.json();
+        return json.data || [];
+      }
+    } catch (err) {
+      console.warn('Failed resolving addon dependencies:', err);
+    }
+    return [];
+  },
+
+  /**
+   * Query the official SP-Mod Forge updates endpoint for installed mods:
+   * GET /api/v0/mods/updates?mods={identifier:version,...}&spt_version={sptVersion}
+   * Accepts up to 75 mods per batch, returns updates, blocked_updates, up_to_date, and incompatible_with_spt.
+   * Includes robust local catalog and fixture fallback.
+   */
+  async checkModUpdates(
+    installedMods: InstalledMod[],
+    sptVersion: string = '4.1.6'
+  ): Promise<CheckModUpdatesResult> {
+    initializeCatalog();
+    const cleanSpt = (sptVersion || '4.1.6').replace(/^[vV\s]+/, '').trim();
+
+    if (!installedMods || installedMods.length === 0) {
+      return {
+        hasUpdates: false,
+        updatesCount: 0,
+        updatedMods: [],
+        upToDateCount: 0,
+        incompatibleCount: 0,
+      };
+    }
+
+    const updatedModsMap = new Map<string, any>();
+    const checkedModIds = new Set<string>();
+
+    // Chunk mods into batches of 50 (well within max 75 allowed by API)
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < installedMods.length; i += BATCH_SIZE) {
+      const batch = installedMods.slice(i, i + BATCH_SIZE);
+      const queryTokens: string[] = [];
+      const tokenToModMap = new Map<string, InstalledMod>();
+
+      for (const m of batch) {
+        const ver = m.version || '1.0.0';
+        let identifier = '';
+        if (m.modId) {
+          identifier = String(m.modId);
+        } else if (m.inferredGuid) {
+          identifier = m.inferredGuid;
+        } else {
+          identifier = m.id.replace(/^disk\.(server|client)\./, '');
+        }
+
+        if (identifier) {
+          const token = `${identifier}:${ver}`;
+          queryTokens.push(token);
+          tokenToModMap.set(token, m);
+          tokenToModMap.set(identifier.toLowerCase(), m);
+          if (m.modId) tokenToModMap.set(String(m.modId), m);
+          if (m.inferredGuid) tokenToModMap.set(m.inferredGuid.toLowerCase(), m);
+        }
+      }
+
+      if (queryTokens.length > 0) {
+        try {
+          const url = `${API_BASE}/mods/updates?mods=${encodeURIComponent(queryTokens.join(','))}&spt_version=${encodeURIComponent(cleanSpt)}`;
+          const res = await apiClient.request(url, { signal: AbortSignal.timeout(6000) });
+          if (res.ok) {
+            const json = await res.json();
+            const data = json.data || {};
+
+            const updatesList = Array.isArray(data.updates) ? data.updates : [];
+            for (const item of updatesList) {
+              const matchedMod =
+                tokenToModMap.get(String(item.id)) ||
+                tokenToModMap.get((item.guid || '').toLowerCase()) ||
+                tokenToModMap.get((item.slug || '').toLowerCase()) ||
+                batch.find((b) => b.modId === item.id || b.name.toLowerCase() === item.name?.toLowerCase());
+
+              if (matchedMod && item.recommended_version) {
+                const rec = item.recommended_version;
+                updatedModsMap.set(matchedMod.id, {
+                  installedModId: matchedMod.id,
+                  modId: item.id || matchedMod.modId,
+                  guid: item.guid || matchedMod.inferredGuid,
+                  currentVersion: matchedMod.version,
+                  latestVersion: rec.version,
+                  downloadUrl: rec.link || `https://sp-mod.com/mod/download/${item.id}/${item.slug || 'mod'}/${rec.version}`,
+                  versionId: rec.id,
+                  contentLength: rec.content_length,
+                  fikaCompatibility: rec.fika_compatibility === 'compatible' || rec.fika_compatibility === true,
+                  changeSummary: rec.changelog || rec.description || `Update to v${rec.version}`,
+                });
+                checkedModIds.add(matchedMod.id);
+              }
+            }
+
+            const upToDateList = Array.isArray(data.up_to_date) ? data.up_to_date : [];
+            for (const item of upToDateList) {
+              const matchedMod =
+                tokenToModMap.get(String(item.id)) ||
+                tokenToModMap.get((item.guid || '').toLowerCase()) ||
+                tokenToModMap.get((item.slug || '').toLowerCase());
+              if (matchedMod) {
+                checkedModIds.add(matchedMod.id);
+              }
+            }
+          }
+        } catch (apiErr) {
+          console.warn('[Updates API] Batch check failed, falling back to catalog:', apiErr);
+        }
+      }
+    }
+
+    // Local catalog / fixture fallback check for any mods not verified by live API or offline
+    for (const m of installedMods) {
+      if (checkedModIds.has(m.id)) continue;
+
+      let catalogMod = m.modId ? catalogMap.get(m.modId) : null;
+      if (!catalogMod) {
+        catalogMod = FIXTURE_MODS.find(
+          (f) =>
+            (m.modId && f.id === m.modId) ||
+            (m.inferredGuid && f.guid?.toLowerCase() === m.inferredGuid.toLowerCase()) ||
+            f.name.toLowerCase() === m.name.toLowerCase()
+        ) || null;
+      }
+
+      if (catalogMod && catalogMod.versions && catalogMod.versions.length > 0) {
+        const matchingVer = findMatchingModVersion(catalogMod.versions, cleanSpt) || catalogMod.versions[0];
+        if (matchingVer && matchingVer.version && matchingVer.version !== m.version) {
+          updatedModsMap.set(m.id, {
+            installedModId: m.id,
+            modId: catalogMod.id,
+            guid: catalogMod.guid || m.inferredGuid,
+            currentVersion: m.version,
+            latestVersion: matchingVer.version,
+            downloadUrl: matchingVer.link || `https://sp-mod.com/mod/download/${catalogMod.id}/${catalogMod.slug || 'mod'}/${matchingVer.version}`,
+            versionId: matchingVer.id,
+            contentLength: matchingVer.content_length,
+            fikaCompatibility: matchingVer.fika_compatibility === 'compatible' || (matchingVer as any).fika_compatibility === true,
+            changeSummary: matchingVer.description || `Update available: v${matchingVer.version}`,
+          });
+        }
+      }
+    }
+
+    const updatedMods = Array.from(updatedModsMap.values());
+    return {
+      hasUpdates: updatedMods.length > 0,
+      updatesCount: updatedMods.length,
+      updatedMods,
+      upToDateCount: Math.max(0, installedMods.length - updatedMods.length),
+      incompatibleCount: 0,
+    };
   }
 };
 

@@ -40,11 +40,11 @@ function pingSptServer(port = 6969, timeoutMs = 1200) {
 }
 
 /**
- * Finds the server executable in SPT_Runtime or root SPT directory
+ * Finds the server executable in SPT_Runtime, SPT, or root SPT directory
  */
 function findServerExecutable(sptDirectory) {
   if (!sptDirectory) return null;
-  const subdirs = ['SPT_Runtime', ''];
+  const subdirs = ['SPT_Runtime', 'SPT', ''];
   const candidates = [
     'SPT.Server.exe',
     'Aki.Server.exe',
@@ -62,11 +62,11 @@ function findServerExecutable(sptDirectory) {
 }
 
 /**
- * Finds the launcher executable in SPT_Runtime or root SPT directory
+ * Finds the launcher executable in SPT_Runtime, SPT, or root SPT directory
  */
 function findLauncherExecutable(sptDirectory) {
   if (!sptDirectory) return null;
-  const subdirs = ['SPT_Runtime', ''];
+  const subdirs = ['SPT_Runtime', 'SPT', ''];
   const candidates = [
     'SPT.Launcher.exe',
     'Aki.Launcher.exe',

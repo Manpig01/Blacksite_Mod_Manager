@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Mod } from '../types';
 import { Bot, Cpu, Eye, ShoppingBag, Crosshair, Volume2, Compass, Wrench, Package } from 'lucide-react';
 import { imageCacheService } from '../services/imageCacheService';
+import { getDesktopBridge, isDesktopEnvironment } from '../services/desktopBridgeService';
 
 export function getProxiedForgeImageUrl(url?: string | null): string | null {
   if (!url || typeof url !== 'string') return null;
@@ -12,7 +13,7 @@ export function getProxiedForgeImageUrl(url?: string | null): string | null {
   }
   // In Electron desktop environment, return direct HTTPS URL because main process
   // webRequest.onBeforeSendHeaders automatically attaches Referer: https://sp-mod.com/
-  if (typeof window !== 'undefined' && (window as any).desktopBridge?.isElectron) {
+  if (isDesktopEnvironment()) {
     return trimmed;
   }
   if (trimmed.includes('sp-mod.com') || trimmed.includes('files.sp-mod.com')) {
@@ -21,53 +22,31 @@ export function getProxiedForgeImageUrl(url?: string | null): string | null {
   return trimmed;
 }
 
-interface ModThumbnailProps {
-  mod: Mod;
-  className?: string;
+export function buildCandidateImageUrls(rawUrls: Array<string | null | undefined>): string[] {
+  const urls: string[] = [];
+  const isDesktop = isDesktopEnvironment();
+
+  for (const rawUrl of rawUrls) {
+    if (!rawUrl) continue;
+    const trimmed = rawUrl.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+      if (!urls.includes(trimmed)) urls.push(trimmed);
+      continue;
+    }
+    if (isDesktop) {
+      if (!urls.includes(trimmed)) urls.push(trimmed);
+    } else {
+      const proxied = getProxiedForgeImageUrl(trimmed);
+      if (proxied && !urls.includes(proxied)) urls.push(proxied);
+      if (!urls.includes(trimmed) && trimmed !== proxied) urls.push(trimmed);
+    }
+  }
+
+  return urls;
 }
 
-export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' }) => {
-  // Build prioritized list of candidate URLs
-  const candidateImages = React.useMemo(() => {
-    const urls: string[] = [];
-    const isDesktop = typeof window !== 'undefined' && Boolean((window as any).desktopBridge?.isElectron);
-
-    const addCandidate = (rawUrl?: string | null) => {
-      if (!rawUrl) return;
-      const trimmed = rawUrl.trim();
-      if (!trimmed) return;
-      if (isDesktop) {
-        // In desktop mode, direct URLs work natively with Electron header injection
-        if (!urls.includes(trimmed)) {
-          urls.push(trimmed);
-        }
-      } else {
-        const proxied = getProxiedForgeImageUrl(trimmed);
-        if (proxied && !urls.includes(proxied)) {
-          urls.push(proxied);
-        }
-        if (!urls.includes(trimmed) && trimmed !== proxied) {
-          urls.push(trimmed);
-        }
-      }
-    };
-
-    if (mod.thumbnail) {
-      addCandidate(mod.thumbnail);
-    }
-
-    if (mod.hub_id) {
-      addCandidate(`https://files.sp-mod.com/mods/${mod.hub_id}.png`);
-      addCandidate(`https://files.sp-mod.com/mods/${mod.hub_id}.jpg`);
-    }
-
-    if (mod.owner?.profile_photo_url) {
-      addCandidate(mod.owner.profile_photo_url);
-    }
-
-    return urls;
-  }, [mod.thumbnail, mod.hub_id, mod.owner?.profile_photo_url]);
-
+export function useCachedImageCandidates(candidateImages: string[]) {
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [cachedUrl, setCachedUrl] = useState<string | null>(() => {
@@ -80,15 +59,21 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
   const [isLoaded, setIsLoaded] = useState<boolean>(Boolean(cachedUrl));
   const [hasAllFailed, setHasAllFailed] = useState<boolean>(candidateImages.length === 0);
 
-  React.useEffect(() => {
+  useEffect(() => {
     setCurrentIndex(0);
     setDataUrl(null);
     setHasAllFailed(candidateImages.length === 0);
 
     let isMounted = true;
-    // Check if any candidate is already in memory or indexedDB
     const checkCache = async () => {
       for (const url of candidateImages) {
+        if (url.startsWith('data:') || url.startsWith('blob:')) {
+          if (isMounted) {
+            setCachedUrl(url);
+            setIsLoaded(true);
+            return;
+          }
+        }
         const cached = await imageCacheService.getCachedImageUrl(url);
         if (cached && isMounted) {
           setCachedUrl(cached);
@@ -109,9 +94,8 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
   }, [candidateImages]);
 
   const handleImageError = async () => {
-    // If running in desktop app, try fetching via IPC data URL before giving up on current candidate
     const currentUrl = candidateImages[currentIndex];
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    const bridge = getDesktopBridge();
     if (bridge?.fetchImageDataUrl && currentUrl && !currentUrl.startsWith('data:') && !dataUrl) {
       try {
         const base64 = await bridge.fetchImageDataUrl(currentUrl);
@@ -136,7 +120,6 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
 
   const handleImageLoad = () => {
     setIsLoaded(true);
-    // Cache the image into IndexedDB in the background if not cached yet
     const activeUrl = candidateImages[currentIndex];
     if (activeUrl && !cachedUrl && !activeUrl.startsWith('data:')) {
       imageCacheService.fetchAndCache(activeUrl).catch(() => {});
@@ -144,6 +127,35 @@ export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' 
   };
 
   const currentImageUrl = !hasAllFailed ? (cachedUrl || dataUrl || candidateImages[currentIndex]) : null;
+
+  return {
+    currentImageUrl,
+    isLoaded,
+    hasAllFailed,
+    handleImageError,
+    handleImageLoad,
+  };
+}
+
+interface ModThumbnailProps {
+  mod: Mod;
+  className?: string;
+}
+
+export const ModThumbnail: React.FC<ModThumbnailProps> = ({ mod, className = '' }) => {
+  const candidateImages = useMemo(
+    () =>
+      buildCandidateImageUrls([
+        mod.thumbnail,
+        mod.hub_id ? `https://files.sp-mod.com/mods/${mod.hub_id}.png` : null,
+        mod.hub_id ? `https://files.sp-mod.com/mods/${mod.hub_id}.jpg` : null,
+        mod.owner?.profile_photo_url,
+      ]),
+    [mod.thumbnail, mod.hub_id, mod.owner?.profile_photo_url]
+  );
+
+  const { currentImageUrl, isLoaded, hasAllFailed, handleImageError, handleImageLoad } =
+    useCachedImageCandidates(candidateImages);
 
   // Thematic Category Graphic Fallback Renderer
   const renderCategoryArtwork = () => {

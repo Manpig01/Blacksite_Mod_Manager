@@ -187,6 +187,53 @@ if (!singleInstanceLock) {
     );
   }
 
+  const modInstaller = require('./modInstaller.cjs');
+  const sptLauncher = require('./sptLauncher.cjs');
+
+  let isShuttingDown = false;
+  async function gracefulShutdownAndExit() {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.hide();
+      }
+    } catch (_) {}
+
+    // Hard failsafe timer so the process can never hang in Task Manager
+    const hardExitTimer = setTimeout(() => {
+      process.exit(0);
+    }, 2800);
+    if (typeof hardExitTimer.unref === 'function') {
+      hardExitTimer.unref();
+    }
+
+    try {
+      const status = sptLauncher.getSptStatus();
+      if (status && status.isRunning) {
+        await Promise.race([
+          sptLauncher.stopSptServer(null, 2000),
+          new Promise((r) => setTimeout(r, 2200)),
+        ]);
+      }
+    } catch (_) {}
+
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.destroy();
+      }
+    } catch (_) {}
+
+    try {
+      app.quit();
+    } catch (_) {}
+
+    setTimeout(() => {
+      process.exit(0);
+    }, 300).unref?.();
+  }
+
   // Native Window Titlebar Controls (Minimize, Maximize/Restore, Close)
   ipcMain.handle('window:minimize', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -209,12 +256,9 @@ if (!singleInstanceLock) {
     return false;
   });
 
-  ipcMain.handle('window:close', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.close();
-      return true;
-    }
-    return false;
+  ipcMain.handle('window:close', async () => {
+    await gracefulShutdownAndExit();
+    return true;
   });
 
   ipcMain.handle('window:is-maximized', () => {
@@ -317,9 +361,20 @@ if (!singleInstanceLock) {
   // Native directory picker dialog for SPT folder
   ipcMain.handle('dialog:select-directory', async (event, defaultPath) => {
     const parentWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    let validDefaultPath = undefined;
+    if (defaultPath && typeof defaultPath === 'string') {
+      try {
+        if (fs.existsSync(defaultPath)) {
+          validDefaultPath = defaultPath;
+        } else if (fs.existsSync(path.dirname(defaultPath))) {
+          validDefaultPath = path.dirname(defaultPath);
+        }
+      } catch (_) {}
+    }
+
     const result = await dialog.showOpenDialog(parentWindow, {
       title: 'Select Single Player Tarkov (SPT) Root Folder',
-      defaultPath: defaultPath && typeof defaultPath === 'string' ? defaultPath : undefined,
+      defaultPath: validDefaultPath,
       properties: ['openDirectory', 'dontAddToRecent'],
     });
 
@@ -327,7 +382,26 @@ if (!singleInstanceLock) {
       return null;
     }
 
-    return result.filePaths[0];
+    return modInstaller.normalizeSptRoot(result.filePaths[0]);
+  });
+
+  // Inspect SPT root directory on disk (normalizes path, detects SPT version, server binary, and layout)
+  ipcMain.handle('spt:inspect-directory', async (_event, targetPath) => {
+    try {
+      return modInstaller.inspectSptDirectory(targetPath);
+    } catch (err) {
+      console.error('spt:inspect-directory error:', err);
+      return {
+        normalizedPath: targetPath || '',
+        exists: false,
+        isValidSptRoot: false,
+        sptVersion: null,
+        detectedServerBinary: null,
+        serverModPath: 'user/mods',
+        clientModPath: 'BepInEx/plugins',
+        isSpt4xLayout: false,
+      };
+    }
   });
 
   // Safe fallback to fetch Forge image via Node and return Base64 data URL
@@ -365,9 +439,6 @@ if (!singleInstanceLock) {
     }
     return false;
   });
-
-  // Real SPT Mod Installation & File Management Engine
-  const modInstaller = require('./modInstaller.cjs');
 
   ipcMain.handle('mod:install', async (event, params) => {
     try {
@@ -440,6 +511,24 @@ if (!singleInstanceLock) {
     }
   });
 
+  ipcMain.handle('mod:save-config', async (_event, params) => {
+    try {
+      return await modInstaller.saveModConfigFile(params);
+    } catch (err) {
+      console.error('mod:save-config error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('mod:clear-temp', async (event, params) => {
+    try {
+      return await modInstaller.clearTempDirectories(params);
+    } catch (err) {
+      console.error('mod:clear-temp error:', err);
+      return { success: false, error: err.message, reclaimedBytes: 0, deletedCount: 0 };
+    }
+  });
+
   ipcMain.handle('profile:relink-vfs', async (event, params) => {
     try {
       return await modInstaller.relinkVfsProfile(params);
@@ -457,9 +546,6 @@ if (!singleInstanceLock) {
       return [];
     }
   });
-
-  // Real SPT Process Launcher & Client Chaining Engine
-  const sptLauncher = require('./sptLauncher.cjs');
 
   ipcMain.handle('spt:launch', async (event, params) => {
     try {
@@ -523,6 +609,14 @@ if (!singleInstanceLock) {
   });
 
   createWindow();
+  if (mainWindow) {
+    mainWindow.on('close', (e) => {
+      if (!isShuttingDown) {
+        e.preventDefault();
+        gracefulShutdownAndExit();
+      }
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -535,5 +629,8 @@ if (!singleInstanceLock) {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+    setTimeout(() => {
+      process.exit(0);
+    }, 300).unref?.();
   }
 });

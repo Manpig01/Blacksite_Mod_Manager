@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Minus, Square, Copy, X, Sun, Moon } from 'lucide-react';
 import { useAppEmblem } from '../hooks/useAppEmblem';
+import { getDesktopBridge } from '../services/desktopBridgeService';
 
 interface CustomTitleBarProps {
   theme?: 'dark' | 'light';
@@ -21,14 +22,17 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   const { emblemSrc, defaultEmblem, fallbackEmblem } = useAppEmblem();
 
   useEffect(() => {
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    const bridge = getDesktopBridge();
     if (bridge?.windowControl) {
-      bridge.windowControl.isMaximized().then((max: boolean) => {
-        setIsMaximized(Boolean(max));
-      }).catch(() => {});
+      bridge.windowControl
+        .isMaximized()
+        .then((max) => {
+          setIsMaximized(Boolean(max));
+        })
+        .catch(() => {});
 
       if (bridge.windowControl.onMaximizedChange) {
-        const cleanup = bridge.windowControl.onMaximizedChange((max: boolean) => {
+        const cleanup = bridge.windowControl.onMaximizedChange((max) => {
           setIsMaximized(Boolean(max));
         });
         return cleanup;
@@ -40,7 +44,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
     if (onMinimize) {
       onMinimize();
     } else {
-      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      const bridge = getDesktopBridge();
       bridge?.windowControl?.minimize();
     }
   };
@@ -49,7 +53,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
     if (onMaximize) {
       onMaximize();
     } else {
-      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      const bridge = getDesktopBridge();
       if (bridge?.windowControl?.maximize) {
         const result = await bridge.windowControl.maximize();
         setIsMaximized(Boolean(result));
@@ -58,17 +62,25 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
   };
 
   const handleClose = () => {
+    const bridge = getDesktopBridge();
+    if (bridge?.windowControl?.close) {
+      bridge.windowControl.close();
+      return;
+    }
     if (onClose) {
       onClose();
-    } else {
-      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
-      bridge?.windowControl?.close();
+    } else if (typeof window !== 'undefined') {
+      try {
+        window.close();
+      } catch (_) {}
     }
   };
 
+  const noDragStyle = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
+
   return (
     <header
-      className="h-[38px] bg-[#181B20] border-b border-[#23272E] px-3.5 flex items-center justify-between select-none shrink-0 z-50 cursor-default"
+      className="h-[38px] bg-[#181B20] border-b border-[#23272E] pl-3.5 pr-0 flex items-center justify-between select-none shrink-0 relative z-[9999] cursor-default"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       onDoubleClick={handleMaximize}
     >
@@ -93,12 +105,13 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
 
       {/* Right window caption controls */}
       <div
-        className="flex items-center h-full -mr-3"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        className="flex items-center h-full shrink-0"
+        style={noDragStyle}
       >
         {onToggleTheme && (
           <button
             onClick={onToggleTheme}
+            style={noDragStyle}
             className="w-[38px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#EA580C] hover:bg-[#20252D] transition-colors cursor-pointer"
             title={`Switch to ${theme === 'light' ? 'Dark' : 'High-Contrast Light'} Theme`}
             type="button"
@@ -113,6 +126,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
 
         <button
           onClick={handleMinimize}
+          style={noDragStyle}
           className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#E8EAEE] hover:bg-[#20252D] transition-colors cursor-pointer"
           title="Minimize"
           type="button"
@@ -121,6 +135,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
         </button>
         <button
           onClick={handleMaximize}
+          style={noDragStyle}
           className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-[#E8EAEE] hover:bg-[#20252D] transition-colors cursor-pointer"
           title={isMaximized ? 'Restore' : 'Maximize'}
           type="button"
@@ -133,8 +148,9 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
         </button>
         <button
           onClick={handleClose}
+          style={noDragStyle}
           className="w-[46px] h-full flex items-center justify-center text-[#9AA3AF] hover:text-white hover:bg-[#DC2626] transition-colors cursor-pointer"
-          title="Close"
+          title="Close Blacksite Mod Manager"
           type="button"
         >
           <X className="w-4 h-4" />

@@ -92,6 +92,8 @@ export const ProfilesTab: React.FC<ProfilesTabProps> = ({
 
   const [exportModalProfile, setExportModalProfile] = useState<ModProfile | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+  const [newProfileName, setNewProfileName] = useState('');
 
   // Editing profile details in inspector
   const [isEditingDetails, setIsEditingDetails] = useState(false);
@@ -152,6 +154,28 @@ export const ProfilesTab: React.FC<ProfilesTabProps> = ({
     onUpdateProfile(cloned);
     setSelectedProfileId(cloned.id);
     onShowToast('Profile Cloned', `Created clone "${cloned.name}".`, 'success');
+  };
+
+  // Handle 1-click rollback checkpoint
+  const handleTakeCheckpoint = () => {
+    if (!activeProfile) return;
+    const checkpoint = profileService.createCheckpoint(activeProfile, installedMods, sptVersion);
+    onUpdateProfile(checkpoint);
+    setSelectedProfileId(checkpoint.id);
+    onShowToast(
+      'Checkpoint Saved',
+      `Saved rollback snapshot "${checkpoint.name}" (${checkpoint.enabledModIds.length} active mods).`,
+      'success'
+    );
+  };
+
+  const handleSubmitNewProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newProfileName.trim();
+    if (!trimmed) return;
+    onCreateProfile(trimmed);
+    setNewProfileName('');
+    setIsCreatingProfile(false);
   };
 
   // Save edited details
@@ -273,28 +297,70 @@ export const ProfilesTab: React.FC<ProfilesTabProps> = ({
         </div>
 
         {/* Global Toolbar Actions */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {isCreatingProfile ? (
+            <form onSubmit={handleSubmitNewProfile} className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={newProfileName}
+                onChange={(e) => setNewProfileName(e.target.value)}
+                placeholder="New profile name..."
+                autoFocus
+                className="bg-[#0E1013] border border-[#EA580C] rounded px-2.5 py-1 text-xs text-[#E8EAEE] focus:outline-none w-44"
+              />
+              <button
+                type="submit"
+                className="bg-[#16A34A] hover:bg-[#22C55E] text-white text-xs font-semibold px-2.5 py-1 rounded cursor-pointer"
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCreatingProfile(false);
+                  setNewProfileName('');
+                }}
+                className="bg-[#20252D] hover:bg-[#282F3A] text-[#9AA3AF] text-xs px-2 py-1 rounded cursor-pointer"
+              >
+                Cancel
+              </button>
+            </form>
+          ) : (
+            <button
+              onClick={() => setIsCreatingProfile(true)}
+              className="bg-[#EA580C] hover:bg-[#F97316] text-white text-xs font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              title="Create a new tactical mod profile"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Profile</span>
+            </button>
+          )}
+
           <button
-            onClick={() => {
-              const name = prompt('Enter a name for the new profile:');
-              if (name?.trim()) {
-                onCreateProfile(name.trim());
-              }
-            }}
-            className="bg-[#EA580C] hover:bg-[#F97316] text-white text-xs font-semibold px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-            title="Create a new tactical mod profile"
+            onClick={handleTakeCheckpoint}
+            className="bg-[#20252D] hover:bg-[#282F3A] border border-[#2B303C] hover:border-[#3A4150] text-[#E8EAEE] text-xs font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Create an instant timestamped rollback checkpoint of your current active loadout"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>New Profile</span>
+            <Clock className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Take Checkpoint</span>
           </button>
 
           <button
             onClick={() => setImportModalOpen(true)}
             className="bg-[#20252D] hover:bg-[#282F3A] border border-[#2B303C] hover:border-[#3A4150] text-[#E8EAEE] text-xs font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Import a .bsite loadout bundle from disk or clipboard"
+            title="Import a .bsite bundle, JSON manifest, or BS- share code"
           >
             <Upload className="w-3.5 h-3.5 text-blue-400" />
-            <span>Import .bsite</span>
+            <span>Import / Share Code</span>
+          </button>
+
+          <button
+            onClick={() => setExportModalProfile(activeProfile)}
+            className="bg-[#20252D] hover:bg-[#282F3A] border border-[#2B303C] hover:border-[#3A4150] text-[#E8EAEE] text-xs font-medium px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Export active loadout as a .bsite bundle or compact BS- share code"
+          >
+            <Download className="w-3.5 h-3.5 text-[#EA580C]" />
+            <span>Export / Share</span>
           </button>
 
           <button
@@ -665,7 +731,11 @@ export const ProfilesTab: React.FC<ProfilesTabProps> = ({
                   onChange={(e) => handleLinkTarkovSave(e.target.value)}
                   className="w-full bg-[#121418] border border-[#2B303C] rounded px-2.5 py-1.5 text-xs text-[#E8EAEE] focus:outline-none focus:border-amber-500 cursor-pointer"
                 >
-                  <option value="">-- No linked save (Use SPT Default) --</option>
+                  <option value="">
+                    {playerSaves.length === 0
+                      ? '-- No player saves found in user/profiles --'
+                      : '-- No linked save (Use SPT Default) --'}
+                  </option>
                   {playerSaves.map((save) => (
                     <option key={save.id} value={save.id}>
                       {save.name} ({save.side.toUpperCase()} Lvl {save.level} · {save.edition})

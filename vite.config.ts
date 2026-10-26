@@ -83,6 +83,12 @@ function forgeImageProxyPlugin(): Plugin {
     }
   };
 
+  return {
+    name: 'forge-image-proxy',
+    configureServer(server) {
+      server.middlewares.use(handler);
+    },
+  };
 }
 
 function emblemUploadPlugin(): Plugin {

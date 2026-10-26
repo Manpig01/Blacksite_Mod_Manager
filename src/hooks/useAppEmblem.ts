@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import defaultEmblem from '../assets/emblem.png';
+import { getDesktopBridge } from '../services/desktopBridgeService';
 
 export const FALLBACK_EMBLEM_SVG =
   'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none"><path d="M50 8 L85 22 V50 C85 72 50 92 50 92 C50 92 15 72 15 50 V22 Z" fill="%231E222A" stroke="%23EA580C" stroke-width="4"/><path d="M50 20 L74 30 V50 C74 65 50 78 50 78 C50 78 26 65 26 50 V30 Z" fill="%2316181E" stroke="%23EA580C" stroke-width="2" stroke-opacity="0.6"/><path d="M38 42 L50 32 L62 42 L58 56 L42 56 Z" fill="%23EA580C"/><circle cx="50" cy="46" r="4" fill="%23121418"/></svg>';
@@ -68,7 +69,7 @@ export function useAppEmblem() {
       window.dispatchEvent(new CustomEvent(UPDATE_EVENT));
 
       // If running inside desktop Electron, notify bridge
-      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      const bridge = getDesktopBridge();
       if (bridge?.setCustomEmblem) {
         bridge.setCustomEmblem(dataUrl);
       }
@@ -84,7 +85,7 @@ export function useAppEmblem() {
       setHasCustomEmblem(false);
       window.dispatchEvent(new CustomEvent(UPDATE_EVENT));
 
-      const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+      const bridge = getDesktopBridge();
       if (bridge?.resetCustomEmblem) {
         bridge.resetCustomEmblem();
       }

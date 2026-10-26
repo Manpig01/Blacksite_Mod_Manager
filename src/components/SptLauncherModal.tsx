@@ -7,19 +7,16 @@ import {
   RotateCw,
   Copy,
   Trash2,
-  ExternalLink,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
-  Sparkles,
 } from 'lucide-react';
+import { useSptProcessMonitor } from '../hooks/useSptProcessMonitor';
+import { ShowToastFn } from '../hooks/useToastQueue';
 
 interface SptLauncherModalProps {
   isOpen: boolean;
   onClose: () => void;
   sptDirectory: string;
   sptVersion: string;
-  onShowToast: (title: string, message: string, type: 'success' | 'info' | 'warning' | 'error') => void;
+  onShowToast: ShowToastFn;
   onServerStatusChange?: (running: boolean) => void;
 }
 
@@ -31,267 +28,37 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
   onShowToast,
   onServerStatusChange,
 }) => {
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [logs, setLogs] = useState<{ id: string; text: string; level: 'info' | 'warn' | 'error'; timestamp: string }[]>([]);
-  const [serverStatus, setServerStatus] = useState<'idle' | 'starting' | 'ready' | 'stopped' | 'error'>('idle');
-  const [clientStatus, setClientStatus] = useState<'idle' | 'waiting' | 'launched'>('idle');
-  const [launcherName, setLauncherName] = useState<string>('SPT.Launcher.exe');
-  const [autoScroll, setAutoScroll] = useState<boolean>(true);
+  const {
+    isRunning,
+    logs,
+    serverStatus,
+    clientStatus,
+    launcherName,
+    startSequence,
+    stopServer,
+    restartServer,
+    clearLogs,
+  } = useSptProcessMonitor(sptDirectory, sptVersion, onShowToast, onServerStatusChange);
 
+  const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const consoleEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-scroll terminal when new logs arrive
   useEffect(() => {
     if (autoScroll && consoleEndRef.current) {
       consoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs, autoScroll]);
 
-  // Subscribe to real Electron IPC events
-  useEffect(() => {
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
-
-    if (!bridge) return;
-
-    // Check current running state
-    if (bridge.getSptStatus) {
-      bridge.getSptStatus().then((status: any) => {
-        if (status?.isRunning) {
-          setIsRunning(true);
-          setServerStatus('ready');
-          if (status.hasLaunchedClient) {
-            setClientStatus('launched');
-          }
-          if (onServerStatusChange) onServerStatusChange(true);
-        }
-      }).catch(() => {});
-    }
-
-    const unsubLog = bridge.onSptServerLog?.((data: { text: string; level: 'info' | 'warn' | 'error'; timestamp: string }) => {
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: `log-${Date.now()}-${Math.random()}`,
-          text: data.text,
-          level: data.level || 'info',
-          timestamp: data.timestamp || new Date().toLocaleTimeString(),
-        },
-      ]);
-
-      const lower = (data.text || '').toLowerCase();
-      if (
-        lower.includes('server is ready') ||
-        lower.includes('happy hunting') ||
-        lower.includes('started webserver') ||
-        lower.includes('listening on')
-      ) {
-        setServerStatus('ready');
-        setIsRunning(true);
-        if (onServerStatusChange) onServerStatusChange(true);
-      }
-    });
-
-    const unsubClient = bridge.onSptClientLaunched?.((data: { launcherName: string }) => {
-      setClientStatus('launched');
-      if (data?.launcherName) {
-        setLauncherName(data.launcherName);
-      }
-      onShowToast('SPT Launched', `SPT.Server is active and ${data?.launcherName || 'SPT.Launcher.exe'} has been started!`, 'success');
-    });
-
-    const unsubExit = bridge.onSptServerExit?.((data: { code: number; signal?: string }) => {
-      setIsRunning(false);
-      setServerStatus('stopped');
-      if (onServerStatusChange) onServerStatusChange(false);
-      onShowToast('Server Stopped', `SPT.Server.exe has shut down (Code: ${data.code}).`, 'info');
-    });
-
-    return () => {
-      if (unsubLog) unsubLog();
-      if (unsubClient) unsubClient();
-      if (unsubExit) unsubExit();
-    };
-  }, [onServerStatusChange, onShowToast]);
-
-  // When modal is opened and server is idle, automatically start sequence
   useEffect(() => {
     if (isOpen && serverStatus === 'idle') {
-      handleStartSequence();
+      startSequence();
     }
-  }, [isOpen]);
-
-  const handleStartSequence = async () => {
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
-
-    setIsRunning(true);
-    setServerStatus('starting');
-    setClientStatus('waiting');
-
-    const initTime = new Date().toLocaleTimeString();
-    setLogs((prev) => [
-      ...prev,
-      {
-        id: `sys-${Date.now()}-1`,
-        text: `[Blacksite Launcher] Initializing Single Player Tarkov v${sptVersion} environment...`,
-        level: 'info',
-        timestamp: initTime,
-      },
-      {
-        id: `sys-${Date.now()}-2`,
-        text: `[Blacksite Launcher] Resolving executable paths in ${sptDirectory}\\SPT_Runtime and ${sptDirectory}...`,
-        level: 'info',
-        timestamp: initTime,
-      },
-      {
-        id: `sys-${Date.now()}-3`,
-        text: `[Blacksite Launcher] Spawning SPT.Server.exe (port 6969)...`,
-        level: 'info',
-        timestamp: initTime,
-      },
-    ]);
-
-    if (bridge?.launchSpt) {
-      try {
-        const result = await bridge.launchSpt({
-          sptDirectory,
-          sptVersion,
-        });
-
-        if (!result || !result.success) {
-          throw new Error(result?.error || 'Failed to start SPT.Server.exe');
-        }
-
-        if (onServerStatusChange) onServerStatusChange(true);
-      } catch (err: any) {
-        setIsRunning(false);
-        setServerStatus('error');
-        if (onServerStatusChange) onServerStatusChange(false);
-        setLogs((prev) => [
-          ...prev,
-          {
-            id: `err-${Date.now()}`,
-            text: `[Blacksite Launcher] ERROR: ${err.message}`,
-            level: 'error',
-            timestamp: new Date().toLocaleTimeString(),
-          },
-        ]);
-        onShowToast('Launch Failed', err.message, 'error');
-      }
-      return;
-    }
-
-    // Web Fallback Simulation (for preview environments without native Electron child_process)
-    const timer1 = setTimeout(() => {
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: `sim-1`,
-          text: `[SPT-Server] Loading BepInEx & Server mods: SAIN, BigBrain, SVM, Waypoints, LootingBots...`,
-          level: 'info',
-          timestamp: new Date().toLocaleTimeString(),
-        },
-        {
-          id: `sim-2`,
-          text: `[SPT-Server] Database loaded. 2,140 items, 34 traders, and raid configurations initialized.`,
-          level: 'info',
-          timestamp: new Date().toLocaleTimeString(),
-        },
-      ]);
-    }, 1200);
-
-    const timer2 = setTimeout(() => {
-      setLogs((prev) => [
-        ...prev,
-        {
-          id: `sim-3`,
-          text: `[SPT-Server] Server is ready! Happy hunting in Tarkov! (Listening on 127.0.0.1:6969)`,
-          level: 'info',
-          timestamp: new Date().toLocaleTimeString(),
-        },
-      ]);
-      setServerStatus('ready');
-      if (onServerStatusChange) onServerStatusChange(true);
-
-      setTimeout(() => {
-        setLogs((prev) => [
-          ...prev,
-          {
-            id: `sim-4`,
-            text: `[Blacksite Launcher] Ready marker detected! Starting SPT.Launcher.exe...`,
-            level: 'info',
-            timestamp: new Date().toLocaleTimeString(),
-          },
-          {
-            id: `sim-5`,
-            text: `[Blacksite Launcher] SPT.Launcher.exe started successfully!`,
-            level: 'info',
-            timestamp: new Date().toLocaleTimeString(),
-          },
-        ]);
-        setClientStatus('launched');
-        onShowToast('SPT Launched', 'SPT Server is running and SPT.Launcher.exe has been launched.', 'success');
-      }, 700);
-    }, 2400);
-
-    return () => {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-    };
-  };
-
-  const handleStopServer = async () => {
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
-
-    setLogs((prev) => [
-      ...prev,
-      {
-        id: `stop-${Date.now()}`,
-        text: `[Blacksite Launcher] Terminating SPT.Server.exe process tree...`,
-        level: 'warn',
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
-
-    if (bridge?.stopSptServer) {
-      try {
-        await bridge.stopSptServer();
-      } catch (err: any) {
-        console.error('Stop server error:', err);
-      }
-    }
-
-    setIsRunning(false);
-    setServerStatus('stopped');
-    if (onServerStatusChange) onServerStatusChange(false);
-
-    setLogs((prev) => [
-      ...prev,
-      {
-        id: `stop-done-${Date.now()}`,
-        text: `[Blacksite Launcher] Server stopped. Port 6969 released.`,
-        level: 'info',
-        timestamp: new Date().toLocaleTimeString(),
-      },
-    ]);
-    onShowToast('Server Stopped', 'SPT.Server.exe has been stopped.', 'info');
-  };
-
-  const handleRestart = async () => {
-    await handleStopServer();
-    setTimeout(() => {
-      handleStartSequence();
-    }, 500);
-  };
+  }, [isOpen, serverStatus, startSequence]);
 
   const handleCopyLogs = () => {
     const text = logs.map((l) => `[${l.timestamp}] ${l.text}`).join('\n');
     navigator.clipboard.writeText(text);
     onShowToast('Logs Copied', 'Console log history copied to clipboard.', 'info');
-  };
-
-  const handleClearLogs = () => {
-    setLogs([]);
-    onShowToast('Console Cleared', 'Terminal output wiped.', 'info');
   };
 
   if (!isOpen) return null;
@@ -365,7 +132,7 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
             </button>
 
             <button
-              onClick={handleClearLogs}
+              onClick={clearLogs}
               disabled={logs.length === 0}
               className="bg-[#20252D] hover:bg-[#2A2F38] disabled:opacity-40 text-[#9AA3AF] hover:text-[#E8EAEE] text-xs px-2.5 py-1.5 rounded-lg border border-[#2A2F38] flex items-center gap-1.5 transition-colors cursor-pointer"
               title="Clear terminal output"
@@ -378,7 +145,7 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
             {isRunning ? (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleRestart}
+                  onClick={restartServer}
                   className="bg-[#20252D] hover:bg-[#2A2F38] text-[#F59E0B] text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#F59E0B]/30 flex items-center gap-1.5 transition-colors cursor-pointer"
                   title="Restart server process"
                   type="button"
@@ -387,7 +154,7 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
                   <span>Restart</span>
                 </button>
                 <button
-                  onClick={handleStopServer}
+                  onClick={stopServer}
                   className="bg-[#DC2626] hover:bg-red-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                   title="Terminate SPT.Server.exe process tree"
                   type="button"
@@ -398,7 +165,7 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
               </div>
             ) : (
               <button
-                onClick={handleStartSequence}
+                onClick={startSequence}
                 className="bg-[#16A34A] hover:bg-[#22C55E] text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                 title="Launch SPT.Server.exe then chain SPT.Launcher.exe"
                 type="button"
@@ -450,7 +217,7 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
                       : 'text-[#D1D5DB]'
                   }`}
                 >
-                  <span className="text-[#4B5563] mr-2 select-none">[{log.timestamp}]</span>
+                  <span className="text-[#6B7480] select-none mr-2">[{log.timestamp}]</span>
                   <span>{log.text}</span>
                 </div>
               );
@@ -459,34 +226,24 @@ export const SptLauncherModal: React.FC<SptLauncherModalProps> = ({
           <div ref={consoleEndRef} />
         </div>
 
-        {/* Terminal Footer with Status Bar & Auto-scroll Toggle */}
-        <div className="px-4 py-2 bg-[#121418] border-t border-[#23272E] text-[11px] text-[#9AA3AF] flex items-center justify-between select-none">
+        {/* Footer Info Bar */}
+        <div className="px-5 py-2.5 bg-[#121418] border-t border-[#23272E] flex items-center justify-between text-[11px] text-[#9AA3AF]">
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 font-mono">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  isRunning ? 'bg-[#22C55E] animate-pulse' : 'bg-[#6B7480]'
-                }`}
-              />
-              {isRunning ? 'Port 6969 Monitored · Process Active' : 'Server Inactive'}
-            </span>
-            <span aria-hidden="true" className="text-[#3A3F4A]">·</span>
-            <span className="font-mono text-[#6B7480] truncate max-w-sm">
-              Path: {sptDirectory}
+            <span>
+              Target Path: <code className="text-[#E8EAEE] font-mono">{sptDirectory}</code>
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 cursor-pointer text-[#6B7480] hover:text-[#9AA3AF]">
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={autoScroll}
                 onChange={(e) => setAutoScroll(e.target.checked)}
-                className="w-3.5 h-3.5 accent-[#EA580C] rounded cursor-pointer"
+                className="accent-[#EA580C]"
               />
-              <span>Auto-scroll</span>
+              <span>Auto-scroll terminal</span>
             </label>
-            <span className="font-mono text-[#6B7480]">{logs.length} lines</span>
           </div>
         </div>
       </div>

@@ -14,3 +14,9 @@ declare module '*.svg' {
   const src: string;
   export default src;
 }
+
+interface Window {
+  desktopBridge?: import('./types').DesktopBridgeAPI;
+  showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<{ name: string }>;
+}
+

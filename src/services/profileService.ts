@@ -7,7 +7,8 @@ import {
   BsiteImportPreflight,
   SptPlayerProfile,
 } from '../types';
-import { INITIAL_SPT_PLAYER_PROFILES } from '../data/fixtureCatalog';
+import { getDesktopBridge } from './desktopBridgeService';
+
 
 export const profileService = {
   /**
@@ -21,16 +22,10 @@ export const profileService = {
     const setA = new Set(profileA.enabledModIds.map((id) => id.toLowerCase()));
     const setB = new Set(profileB.enabledModIds.map((id) => id.toLowerCase()));
 
-    const modMap = new Map<string, InstalledMod>();
-    for (const mod of allMods) {
-      modMap.set(mod.id.toLowerCase(), mod);
-    }
-
     const commonMods: InstalledMod[] = [];
     const onlyInProfileA: InstalledMod[] = [];
     const onlyInProfileB: InstalledMod[] = [];
 
-    // Search through all mods known in the catalog
     for (const mod of allMods) {
       const idKey = mod.id.toLowerCase();
       const inA = setA.has(idKey);
@@ -45,7 +40,6 @@ export const profileService = {
       }
     }
 
-    // Check for load order mismatches in common mods
     const loadOrderMismatches: ProfileDiffResult['loadOrderMismatches'] = [];
     for (const mod of commonMods) {
       const orderA = profileA.customLoadOrder?.[mod.id] ?? mod.loadOrder ?? 100;
@@ -88,7 +82,7 @@ export const profileService = {
     return {
       id: `prof-${now}-${Math.random().toString(36).substring(2, 7)}`,
       name: name.trim() || 'New Loadout',
-      description: description.trim() || 'Custom tactical mod profile',
+      description: description.trim() || 'Custom mod profile',
       enabledModIds,
       createdDate: dateStr,
       createdAt: now,
@@ -100,6 +94,43 @@ export const profileService = {
       modConfigs: options.modConfigs ? { ...options.modConfigs } : {},
       tags: options.tags && options.tags.length > 0 ? [...options.tags] : ['Custom'],
       bannerColor: options.bannerColor || '#EA580C',
+    };
+  },
+
+  /**
+   * Creates a quick timestamped checkpoint profile from the current active loadout
+   */
+  createCheckpoint(
+    activeProfile: ModProfile | undefined,
+    installedMods: InstalledMod[],
+    sptVersion: string,
+    customLabel?: string
+  ): ModProfile {
+    const now = Date.now();
+    const stamp = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const baseName = customLabel?.trim() || `${activeProfile?.name || 'Loadout'} Checkpoint (${stamp})`;
+    const enabledModIds = installedMods.filter((m) => !m.isDisabled).map((m) => m.id);
+    const customLoadOrder: Record<string, number> = {};
+    for (const m of installedMods) {
+      if (typeof m.loadOrder === 'number') {
+        customLoadOrder[m.id] = m.loadOrder;
+      }
+    }
+
+    return {
+      id: `prof-chk-${now}-${Math.random().toString(36).substring(2, 6)}`,
+      name: baseName,
+      description: `Rollback checkpoint saved on ${new Date(now).toLocaleString()} for SPT ${sptVersion} (${enabledModIds.length} active mods).`,
+      enabledModIds,
+      createdDate: new Date(now).toISOString().split('T')[0],
+      createdAt: now,
+      updatedAt: now,
+      isDefault: false,
+      customLoadOrder,
+      linkedSptProfileId: activeProfile?.linkedSptProfileId,
+      linkedSptProfileName: activeProfile?.linkedSptProfileName,
+      tags: ['Checkpoint', `SPT ${sptVersion}`],
+      bannerColor: '#38BDF8',
     };
   },
 
@@ -120,7 +151,7 @@ export const profileService = {
       enabledModIds: [...source.enabledModIds],
       customLoadOrder: source.customLoadOrder ? { ...source.customLoadOrder } : {},
       modConfigs: source.modConfigs ? JSON.parse(JSON.stringify(source.modConfigs)) : {},
-      tags: source.tags ? [...source.tags, 'Cloned'] : ['Cloned'],
+      tags: source.tags ? [...source.tags.filter((t) => t !== 'Default'), 'Cloned'] : ['Cloned'],
     };
   },
 
@@ -182,17 +213,43 @@ export const profileService = {
   },
 
   /**
-   * Parses raw string/JSON content into a validated BsiteBundleManifest
+   * Encodes a BsiteBundleManifest into a compact BS-... share string
+   */
+  encodeShareCode(manifest: BsiteBundleManifest): string {
+    try {
+      const compact = {
+        formatVersion: '1.0',
+        manifestType: 'blacksite_loadout_bundle',
+        metadata: manifest.metadata,
+        mods: manifest.mods,
+      };
+      const json = JSON.stringify(compact);
+      return `BS-${btoa(encodeURIComponent(json))}`;
+    } catch {
+      return '';
+    }
+  },
+
+  /**
+   * Parses raw string/JSON content or a BS-... share code into a validated BsiteBundleManifest
    */
   parseBsiteManifest(rawText: string): BsiteBundleManifest {
-    let parsed: any;
-    try {
-      parsed = JSON.parse(rawText.trim());
-    } catch {
-      throw new Error('Invalid file format: Not a valid JSON or .bsite bundle manifest.');
+    let trimmed = rawText.trim();
+    if (trimmed.startsWith('BS-')) {
+      try {
+        trimmed = decodeURIComponent(atob(trimmed.slice(3)));
+      } catch {
+        throw new Error('Invalid BS- share code: could not decode base64 payload.');
+      }
     }
 
-    // Support both formal Blacksite 1.0 format and fallback standard loadout manifests
+    let parsed: any;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error('Invalid format: Input is neither a valid .bsite/.json manifest nor a valid BS- share code.');
+    }
+
     if (parsed.manifestType === 'blacksite_loadout_bundle' || (parsed.mods && parsed.formatVersion)) {
       if (!Array.isArray(parsed.mods)) {
         throw new Error('Malformed .bsite bundle: missing or invalid "mods" roster array.');
@@ -204,7 +261,7 @@ export const profileService = {
           name: parsed.metadata?.name || parsed.name || 'Imported Loadout',
           description: parsed.metadata?.description || parsed.description || 'Imported from .bsite bundle',
           author: parsed.metadata?.author || parsed.author || 'Unknown Author',
-          targetSptVersion: parsed.metadata?.targetSptVersion || parsed.sptVersion || '4.1.0',
+          targetSptVersion: parsed.metadata?.targetSptVersion || parsed.sptVersion || '4.1.6',
           exportedAt: parsed.metadata?.exportedAt || parsed.exportedAt || new Date().toISOString(),
           modCount: parsed.mods.length,
           tags: parsed.metadata?.tags || ['Imported'],
@@ -226,8 +283,8 @@ export const profileService = {
       };
     }
 
-    // Fallback: Legacy loadout manifest format from Phase 2
     if (Array.isArray(parsed.mods)) {
+      const enabledMods = parsed.mods.filter((m: any) => m.enabled !== false && m.status !== 'disabled');
       return {
         formatVersion: '1.0',
         manifestType: 'blacksite_loadout_bundle',
@@ -235,15 +292,16 @@ export const profileService = {
           name: parsed.name || 'Imported Loadout',
           description: parsed.description || 'Imported modpack manifest',
           author: parsed.author || 'Community',
-          targetSptVersion: parsed.sptVersion || '4.1.0',
+          targetSptVersion: parsed.sptVersion || '4.1.6',
           exportedAt: parsed.exportedAt || new Date().toISOString(),
-          modCount: parsed.mods.length,
+          modCount: enabledMods.length,
           tags: ['Imported'],
         },
-        mods: parsed.mods.map((m: any) => ({
+        mods: enabledMods.map((m: any) => ({
           id: m.id,
           name: m.name || m.id,
           version: m.version || '1.0.0',
+          author: m.author || 'Community',
           required: true,
           loadPriority: m.loadOrder || 100,
           kind: m.kind || 'Server',
@@ -285,7 +343,6 @@ export const profileService = {
       }
     }
 
-    // Version match: compare major.minor (e.g. 4.1 matches 4.1.6)
     const currentPrefix = currentSptVersion.split('.').slice(0, 2).join('.');
     const targetPrefix = manifest.metadata.targetSptVersion.split('.').slice(0, 2).join('.');
     const isVersionMatch = currentPrefix === targetPrefix || !manifest.metadata.targetSptVersion;
@@ -320,20 +377,21 @@ export const profileService = {
   },
 
   /**
-   * Scans or retrieves SPT Tarkov player accounts from user/profiles
+   * Scans real SPT Tarkov player accounts from <SPT_Root>/user/profiles/*.json
    */
   async scanSptPlayerProfiles(sptDirectory: string): Promise<SptPlayerProfile[]> {
-    const bridge = typeof window !== 'undefined' ? (window as any).desktopBridge : null;
+    const bridge = getDesktopBridge();
     if (bridge?.scanSptPlayerProfiles && sptDirectory) {
       try {
         const diskProfiles = await bridge.scanSptPlayerProfiles({ sptDirectory });
-        if (Array.isArray(diskProfiles) && diskProfiles.length > 0) {
+        if (Array.isArray(diskProfiles)) {
           return diskProfiles;
         }
       } catch (err) {
-        console.warn('Bridge scanSptPlayerProfiles failed, falling back:', err);
+        console.warn('Bridge scanSptPlayerProfiles failed:', err);
       }
     }
-    return INITIAL_SPT_PLAYER_PROFILES;
+    return [];
   },
 };
+

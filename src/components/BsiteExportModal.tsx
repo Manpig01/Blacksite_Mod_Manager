@@ -37,6 +37,7 @@ export const BsiteExportModal: React.FC<BsiteExportModalProps> = ({
   const [includeConfigs, setIncludeConfigs] = useState(true);
   const [tagsInput, setTagsInput] = useState((profile.tags || ['Tactical']).join(', '));
   const [copied, setCopied] = useState(false);
+  const [copiedShareCode, setCopiedShareCode] = useState(false);
 
   // Active mods in this profile
   const activeMods = useMemo(() => {
@@ -66,6 +67,8 @@ export const BsiteExportModal: React.FC<BsiteExportModalProps> = ({
     return generated;
   }, [profile, installedMods, targetSptVersion, authorName, description, tagsInput, includeConfigs]);
 
+  const shareCode = useMemo(() => profileService.encodeShareCode(manifest), [manifest]);
+
   if (!isOpen) return null;
 
   const handleDownloadFile = () => {
@@ -82,6 +85,17 @@ export const BsiteExportModal: React.FC<BsiteExportModalProps> = ({
       setTimeout(() => setCopied(false), 2000);
     } catch {
       onShowToast('Clipboard Error', 'Failed to copy to clipboard.', 'warning');
+    }
+  };
+
+  const handleCopyShareCode = async () => {
+    try {
+      await navigator.clipboard.writeText(shareCode);
+      setCopiedShareCode(true);
+      onShowToast('Share Code Copied', 'Compact BS- loadout share code copied to clipboard.', 'success');
+      setTimeout(() => setCopiedShareCode(false), 2000);
+    } catch {
+      onShowToast('Clipboard Error', 'Failed to copy share code to clipboard.', 'warning');
     }
   };
 
@@ -221,17 +235,46 @@ export const BsiteExportModal: React.FC<BsiteExportModalProps> = ({
               ))}
             </div>
           </div>
+
+          {/* Compact Share Code Preview */}
+          <div className="bg-[#121418] border border-[#23272E] rounded p-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#E8EAEE]">
+                Compact Share Code (Discord / Chat)
+              </span>
+              <button
+                type="button"
+                onClick={handleCopyShareCode}
+                className="text-[11px] text-[#EA580C] hover:text-[#F97316] font-semibold flex items-center gap-1 cursor-pointer"
+              >
+                {copiedShareCode ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedShareCode ? 'Copied Share Code' : 'Copy BS- Code'}</span>
+              </button>
+            </div>
+            <div className="bg-[#0C0E12] border border-[#23272E] rounded px-2.5 py-1.5 font-mono text-[11px] text-[#9AA3AF] truncate select-all">
+              {shareCode}
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-[#23272E] bg-[#14161B] flex items-center justify-between shrink-0">
-          <button
-            onClick={handleCopyJson}
-            className="bg-[#20252D] hover:bg-[#282F3A] text-[#E8EAEE] text-xs font-medium px-3 py-1.5 rounded border border-[#2B303C] flex items-center gap-1.5 transition-colors cursor-pointer"
-          >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>{copied ? 'Copied Manifest' : 'Copy Manifest JSON'}</span>
-          </button>
+        <div className="px-5 py-3 border-t border-[#23272E] bg-[#14161B] flex items-center justify-between gap-2 shrink-0 flex-wrap">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopyShareCode}
+              className="bg-[#20252D] hover:bg-[#282F3A] text-[#E8EAEE] text-xs font-medium px-3 py-1.5 rounded border border-[#2B303C] flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              {copiedShareCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-[#EA580C]" />}
+              <span>{copiedShareCode ? 'Copied Share Code' : 'Copy Share Code'}</span>
+            </button>
+            <button
+              onClick={handleCopyJson}
+              className="bg-[#20252D] hover:bg-[#282F3A] text-[#E8EAEE] text-xs font-medium px-3 py-1.5 rounded border border-[#2B303C] flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copied ? 'Copied Manifest' : 'Copy JSON'}</span>
+            </button>
+          </div>
 
           <div className="flex items-center gap-2">
             <button
