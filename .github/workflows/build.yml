@@ -61,6 +61,17 @@ jobs:
             release/*.zip
             release/*.blockmap
 
+      - name: Refresh Release Tag for Latest Source Code Archives
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh release delete v2.1.0-latest --yes --cleanup-tag 2>$null
+          git tag -f v2.1.0-latest ${{ github.sha }}
+          git push origin -f refs/tags/v2.1.0-latest
+
       - name: Publish or Update GitHub Release
         uses: softprops/action-gh-release@v2
         if: success()
@@ -68,6 +79,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: v2.1.0-latest
+          target_commitish: ${{ github.sha }}
           name: "Blacksite Mod Manager v2.1.0 - Windows Desktop (.exe & .zip)"
           body: |
             ### 🛡️ Blacksite Mod Manager Windows Standalone Release

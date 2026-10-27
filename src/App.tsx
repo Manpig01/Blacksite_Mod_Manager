@@ -726,7 +726,7 @@ export const App: React.FC = () => {
     const openedPaths: string[] = [];
     const failedPaths: string[] = [];
 
-    const cleanRoot = (settings.sptDirectory || 'C:\\Games\\SPT').replace(/[\\/]+$/, '');
+    const cleanRoot = (settings.sptDirectory || 'C:\\SPT').replace(/[\\/]+$/, '');
 
     for (const item of targets) {
       let relPath = '';
@@ -757,29 +757,35 @@ export const App: React.FC = () => {
           console.error('Failed to open folder:', err);
           errorLogService.logError('DiskRouter', `Failed opening folder: ${fullPath}`, stack || message);
         }
-      } else {
-        openedPaths.push(fullPath);
       }
     }
 
-    if (bridge?.openFolder && openedPaths.length === 0 && failedPaths.length > 0) {
+    if (!bridge?.openFolder) {
+      showToast(
+        'Desktop .EXE Required',
+        `Browser preview cannot launch Windows File Explorer directly.\nTarget path: ${fullPaths.join(' / ')}`,
+        'info'
+      );
+      return;
+    }
+
+    if (openedPaths.length === 0 && failedPaths.length > 0) {
       showToast(
         'Directory Not Found on Disk',
-        `Could not locate folder in File Explorer:\n${failedPaths.join('\n')}\nVerify your SPT root directory in Settings.`,
+        `Folder does not exist on disk:\n${failedPaths.join('\n')}\nClick "Set SPT Directory" to select your actual SPT installation folder.`,
         'warning'
       );
       return;
     }
 
-    const displayPaths = openedPaths.length > 0 ? openedPaths : fullPaths;
-    if (displayPaths.length > 1) {
+    if (openedPaths.length > 1) {
       showToast(
-        'Dual Locations Opened',
-        `Opened both BepInEx and Server mods folders:\n${displayPaths.join('\n')}`,
+        'Opened Mod Locations',
+        `Opened ${openedPaths.length} folders in File Explorer:\n${openedPaths.join('\n')}`,
         'success'
       );
-    } else if (displayPaths.length === 1) {
-      showToast('Directory Explorer', `Opened folder in File Explorer: ${displayPaths[0]}`, 'success');
+    } else if (openedPaths.length === 1) {
+      showToast('Directory Explorer', `Opened folder in File Explorer: ${openedPaths[0]}`, 'success');
     }
   };
 

@@ -202,9 +202,15 @@ export function useInstallQueue({
           );
           setStatusText('Ready');
 
-          const resolvedKind = extraMeta?.kind || installResult.kind || 'Both';
+          const resolvedKind =
+            installResult.serverPath && installResult.clientPath
+              ? 'Both'
+              : installResult.serverPath
+              ? 'Server'
+              : installResult.clientPath
+              ? 'Client'
+              : installResult.kind || extraMeta?.kind || 'Client';
           const isServer = resolvedKind === 'Server' || resolvedKind === 'Both';
-          const isClient = resolvedKind === 'Client' || resolvedKind === 'Both';
 
           setInstalledMods((prev) => {
             const existingIdx = prev.findIndex((m) => m.id === targetGuid);
@@ -221,12 +227,8 @@ export function useInstallQueue({
               sptVersion: extraMeta?.sptVersion || settings.sptVersion,
               fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
               installDate: new Date().toISOString().split('T')[0],
-              serverPath:
-                installResult.serverPath ||
-                (isServer ? `${settings.serverModPath}/${modName.replace(/\s+/g, '')}` : undefined),
-              clientPath:
-                installResult.clientPath ||
-                (isClient ? `BepInEx/plugins/${modName.replace(/\s+/g, '')}.dll` : undefined),
+              serverPath: installResult.serverPath || undefined,
+              clientPath: installResult.clientPath || undefined,
               isDisabled: false,
               hasUpdate: false,
               latestVersion: version,
@@ -421,11 +423,24 @@ export function useInstallQueue({
             );
             setStatusText('Ready');
 
-            const resolvedKind =
-              extraMeta?.kind || (modName.toLowerCase().includes('server') ? 'Server' : 'Both');
-            const isServerMod = resolvedKind === 'Server' || resolvedKind === 'Both';
-            const serverDir = settings.serverModPath || 'user/mods';
+            const knownMeta =
+              getKnownDependencyMeta(targetGuid) ||
+              getKnownDependencyMeta(modName) ||
+              getKnownDependencyMeta(modId);
+            const catLower = (extraMeta?.categoryTitle || '').toLowerCase();
+            const inferredKind =
+              extraMeta?.kind ||
+              knownMeta?.kind ||
+              (catLower.includes('ui') || catLower.includes('client') || catLower.includes('graphics') || catLower.includes('audio')
+                ? 'Client'
+                : modName.toLowerCase().includes('server') || catLower.includes('server') || catLower.includes('trader')
+                ? 'Server'
+                : 'Client');
+            const isServerMod = inferredKind === 'Server' || inferredKind === 'Both';
+            const isClientMod = inferredKind === 'Client' || inferredKind === 'Both';
+            const serverDir = settings.serverModPath || 'SPT_Runtime/user/mods';
             const clientDir = settings.clientModPath || 'BepInEx/plugins';
+            const cleanModToken = modName.replace(/\s+/g, '');
 
             setInstalledMods((prev) => {
               const existingIdx = prev.findIndex((m) => m.id === targetGuid);
@@ -437,15 +452,15 @@ export function useInstallQueue({
                 author:
                   author && author !== 'Forge Dependency' ? author : extraMeta?.author || 'Community Author',
                 version,
-                kind: resolvedKind,
+                kind: inferredKind,
                 thumbnail: thumbnail || extraMeta?.thumbnail,
                 categoryTitle: extraMeta?.categoryTitle || (isServerMod ? 'Overhauls' : 'Tools'),
                 teaser: extraMeta?.teaser,
                 sptVersion: extraMeta?.sptVersion || settings.sptVersion,
                 fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
                 installDate: new Date().toISOString().split('T')[0],
-                serverPath: `${serverDir}/${modName.replace(/\s+/g, '')}`,
-                clientPath: `${clientDir}/${modName.replace(/\s+/g, '')}.dll`,
+                serverPath: isServerMod ? `${serverDir}/${cleanModToken}` : undefined,
+                clientPath: isClientMod ? `${clientDir}/${cleanModToken}.dll` : undefined,
                 isDisabled: false,
                 hasUpdate: false,
                 latestVersion: version,

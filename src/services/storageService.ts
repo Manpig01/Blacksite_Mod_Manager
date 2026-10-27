@@ -119,15 +119,41 @@ export const storageService = {
 
         return parsed.map((m, idx) => {
           const known = getKnownDependencyMeta(m.id) || getKnownDependencyMeta(m.name) || getKnownDependencyMeta(m.modId);
+          const cleanToken = (m.name || '').replace(/\s+/g, '');
+          const catLower = (m.categoryTitle || known?.categoryTitle || '').toLowerCase();
+          const isSyntheticDual =
+            m.kind === 'Both' &&
+            Boolean(cleanToken) &&
+            m.serverPath?.endsWith(`/${cleanToken}`) &&
+            m.clientPath?.endsWith(`/${cleanToken}.dll`);
+
+          let serverPath = m.serverPath;
+          let clientPath = m.clientPath;
+          let kind = m.kind || known?.kind || 'Client';
+
+          if (isSyntheticDual && known?.kind && known.kind !== 'Both') {
+            kind = known.kind;
+            if (kind === 'Client') serverPath = undefined;
+            if (kind === 'Server') clientPath = undefined;
+          } else if (
+            isSyntheticDual &&
+            (catLower === 'ui' || catLower.includes('client') || catLower.includes('graphics') || catLower.includes('audio'))
+          ) {
+            kind = 'Client';
+            serverPath = undefined;
+          }
+
           return {
             ...m,
+            serverPath,
+            clientPath,
             thumbnail: m.thumbnail || known?.thumbnail || (m.modId ? `https://files.sp-mod.com/mods/${m.modId}.png` : undefined),
             author: (m.author && m.author !== 'Forge Dependency' && m.author !== 'Community Author')
               ? m.author
               : known?.author || m.author || 'Community Author',
-            categoryTitle: m.categoryTitle || known?.categoryTitle || (m.kind === 'Server' ? 'Overhauls' : 'Tools'),
+            categoryTitle: m.categoryTitle || known?.categoryTitle || (kind === 'Server' ? 'Overhauls' : 'Tools'),
             teaser: m.teaser || known?.teaser,
-            kind: m.kind || known?.kind || 'Both',
+            kind,
             loadOrder: typeof m.loadOrder === 'number' ? m.loadOrder : idx + 1,
             dependencies: m.dependencies ?? DEFAULT_KNOWN_DEPS[m.id] ?? [],
             tags: m.tags ?? [],

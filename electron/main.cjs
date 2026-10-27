@@ -327,7 +327,7 @@ if (!singleInstanceLock) {
   ipcMain.handle('shell:open-folder', async (_event, targetPath) => {
     if (!targetPath || typeof targetPath !== 'string') return false;
     try {
-      const normalizedInput = path.normalize(targetPath.trim().replace(/[\\/]+/g, path.sep));
+      const normalizedInput = path.resolve(targetPath.trim().replace(/[\\/]+/g, path.sep));
       const candidatePaths = [normalizedInput];
 
       // Also check .disabled variant and SPT 3.x / 4.x server mod layout variants
@@ -339,6 +339,8 @@ if (!singleInstanceLock) {
       const layoutVariants = [
         [`SPT_Runtime${path.sep}user${path.sep}mods`, `SPT${path.sep}user${path.sep}mods`],
         [`SPT_Runtime${path.sep}user${path.sep}mods`, `user${path.sep}mods`],
+        [`SPT${path.sep}user${path.sep}mods`, `SPT_Runtime${path.sep}user${path.sep}mods`],
+        [`SPT${path.sep}user${path.sep}mods`, `user${path.sep}mods`],
         [`user${path.sep}mods`, `SPT${path.sep}user${path.sep}mods`],
         [`user${path.sep}mods`, `SPT_Runtime${path.sep}user${path.sep}mods`],
       ];
@@ -351,13 +353,15 @@ if (!singleInstanceLock) {
 
       let pathToOpen = candidatePaths.find((p) => fs.existsSync(p)) || null;
 
-      // Walk up parent directories (up to 3 levels) if a specific mod folder doesn't exist yet
+      // Walk up parent directories (up to 4 levels, stopping before bare drive root like C:\)
       if (!pathToOpen) {
         for (const baseCandidate of candidatePaths) {
           let current = baseCandidate;
-          for (let depth = 0; depth < 3; depth++) {
+          for (let depth = 0; depth < 4; depth++) {
             const parentDir = path.dirname(current);
             if (!parentDir || parentDir === current) break;
+            // Avoid opening bare drive root (e.g. "C:\") if the configured SPT folder itself does not exist
+            if (/^[a-zA-Z]:\\?$/.test(parentDir)) break;
             if (fs.existsSync(parentDir)) {
               pathToOpen = parentDir;
               break;
@@ -373,15 +377,26 @@ if (!singleInstanceLock) {
         return false;
       }
 
-      const stat = fs.statSync(pathToOpen);
+      const resolvedOpenPath = path.resolve(pathToOpen);
+      const stat = fs.statSync(resolvedOpenPath);
       if (stat.isFile()) {
-        shell.showItemInFolder(pathToOpen);
+        shell.showItemInFolder(resolvedOpenPath);
         return true;
       }
 
-      const err = await shell.openPath(pathToOpen);
+      const err = await shell.openPath(resolvedOpenPath);
       if (err) {
-        console.error('shell.openPath error:', err);
+        console.warn('shell.openPath warning, trying explorer.exe fallback:', err);
+        if (process.platform === 'win32') {
+          const { spawn } = require('child_process');
+          const child = spawn('explorer.exe', [resolvedOpenPath], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: false,
+          });
+          child.unref();
+          return true;
+        }
         return false;
       }
       return true;
@@ -392,11 +407,12 @@ if (!singleInstanceLock) {
   });
 
   // Highlight specific file in native OS File Explorer
-  ipcMain.handle('shell:show-item-in-folder', async (event, fullPath) => {
+  ipcMain.handle('shell:show-item-in-folder', async (_event, fullPath) => {
     if (!fullPath || typeof fullPath !== 'string') return false;
     try {
-      if (fs.existsSync(fullPath)) {
-        shell.showItemInFolder(fullPath);
+      const resolved = path.resolve(fullPath.trim().replace(/[\\/]+/g, path.sep));
+      if (fs.existsSync(resolved)) {
+        shell.showItemInFolder(resolved);
         return true;
       }
       return false;
