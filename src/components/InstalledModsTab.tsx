@@ -42,6 +42,8 @@ interface InstalledModsTabProps {
   installedMods: InstalledMod[];
   collisions: FileCollision[];
   sptVersion?: string;
+  serverModPath?: string;
+  clientModPath?: string;
   onToggleMod: (modId: string) => void;
   onUninstallMod: (modId: string) => void;
   onUpdateMod: (mod: InstalledMod) => Promise<boolean | void> | void;
@@ -74,6 +76,8 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
   installedMods,
   collisions,
   sptVersion,
+  serverModPath = 'SPT/user/mods',
+  clientModPath = 'BepInEx/plugins',
   onToggleMod,
   onUninstallMod,
   onUpdateMod,
@@ -667,7 +671,7 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
       {
         id: 'group-server',
         title: 'Server Mods',
-        subtitle: 'SPT_Runtime/user/mods (or user/mods)',
+        subtitle: serverModPath,
         icon: '🖥️',
         bgColor: 'bg-[#3A2415]/40',
         mods: displayed.filter((m) => m.kind === 'Server'),
@@ -675,7 +679,7 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
       {
         id: 'group-both',
         title: 'Dual / Hybrid Mods',
-        subtitle: 'Combined Server scripts & BepInEx Client plugins',
+        subtitle: `Combined ${serverModPath} & ${clientModPath}`,
         icon: '⚡',
         bgColor: 'bg-[#22102A]/40',
         mods: displayed.filter((m) => m.kind === 'Both'),
@@ -683,13 +687,13 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
       {
         id: 'group-client',
         title: 'Client Plugins',
-        subtitle: 'BepInEx/plugins',
+        subtitle: clientModPath,
         icon: '🧩',
         bgColor: 'bg-[#0D2428]/40',
         mods: displayed.filter((m) => m.kind === 'Client'),
       },
     ],
-    [displayed]
+    [displayed, serverModPath, clientModPath]
   );
 
   const dateGroups = useMemo(() => {
@@ -785,6 +789,8 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
       onFilterByTag={setSelectedTagFilter}
       onOpenFolder={onOpenFolder}
       onUninstallMod={onUninstallMod}
+      serverModPath={serverModPath}
+      clientModPath={clientModPath}
     />
   );
 
@@ -815,6 +821,8 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
           setIsBatchModalOpen(true);
         }}
         onOpenExportModal={() => setIsExportModalOpen(true)}
+        clientModPath={clientModPath}
+        serverModPath={serverModPath}
       />
 
       {/* Bulk Action Controls Bar */}

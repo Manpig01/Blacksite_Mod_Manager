@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan to fix the Electron portable desktop bridge crash (sandboxed preload require('os') failure), restore native window controls (Minimize, Maximize, Close), fix File Explorer folder opening and SPT path resolution, and replace unsupported Electron window.prompt calls.",
-  "updatedAt":  "2026-10-26T21:06:44.906788510Z",
+  "summary":  "Security, reliability, and performance hardening plan for Blacksite Mod Manager covering archive extraction safety, TLS/redirect enforcement, SPT 3.x/4.0/4.1 layout detection, VFS hardlink isolation for mutable configs, Electron sandbox/IPC hardening, reproducible CI workflow, API rate-limit backoff, and zero-dependency regression testing.",
+  "updatedAt":  "2026-10-27T04:16:49.308706614Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -139,13 +139,13 @@ export const SptDirectorySection: React.FC<SptDirectorySectionProps> = React.mem
             </div>
           </div>
 
-          {/* SPT 4.x layout indicator */}
+          {/* SPT layout indicator */}
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-[#20252D] border border-[#23272E]">
             <ShieldCheck className="w-4 h-4 text-[#22C55E] shrink-0" />
             <div className="text-xs">
-              <span className="font-semibold text-[#E8EAEE]">SPT 4.x Layout Router: </span>
+              <span className="font-semibold text-[#E8EAEE]">SPT Layout Router: </span>
               <span className="text-[#9AA3AF]">
-                Server mods route to <code className="text-[#22C55E]">SPT_Runtime/user/mods</code>, client plugins to <code className="text-[#22C55E]">BepInEx/plugins</code>, and EscapeFromTarkov_Data overlays to root.
+                Server mods route to <code className="text-[#22C55E]">{settings.serverModPath || 'SPT/user/mods'}</code>, client plugins to <code className="text-[#22C55E]">{settings.clientModPath || 'BepInEx/plugins'}</code>, and EscapeFromTarkov_Data overlays to root.
               </span>
             </div>
           </div>

@@ -29,6 +29,8 @@ interface InstalledModsStatsBarProps {
   onCheckUpdates: () => void;
   onOpenBatchUpdate: () => void;
   onOpenExportModal: () => void;
+  clientModPath?: string;
+  serverModPath?: string;
 }
 
 export const InstalledModsStatsBar: React.FC<InstalledModsStatsBarProps> = React.memo(({
@@ -49,6 +51,8 @@ export const InstalledModsStatsBar: React.FC<InstalledModsStatsBarProps> = React
   onCheckUpdates,
   onOpenBatchUpdate,
   onOpenExportModal,
+  clientModPath = 'BepInEx/plugins',
+  serverModPath = 'SPT/user/mods',
 }) => {
   return (
     <div className="bg-[#181B20] border border-[#23272E] rounded-lg p-2.5 mb-2 flex items-center justify-between flex-wrap gap-2 text-[12.5px] shadow-sm">
@@ -100,7 +104,7 @@ export const InstalledModsStatsBar: React.FC<InstalledModsStatsBarProps> = React
         <button
           onClick={() => onOpenFolder('client')}
           className="bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] px-3 py-1.5 rounded-md border border-[#2A2F38] flex items-center gap-1.5 transition-colors cursor-pointer"
-          title="Open client plugins folder (BepInEx/plugins)"
+          title={`Open client plugins folder (${clientModPath})`}
           type="button"
         >
           <Folder className="w-3.5 h-3.5 text-[#9AA3AF]" />
@@ -110,7 +114,7 @@ export const InstalledModsStatsBar: React.FC<InstalledModsStatsBarProps> = React
         <button
           onClick={() => onOpenFolder('server')}
           className="bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] px-3 py-1.5 rounded-md border border-[#2A2F38] flex items-center gap-1.5 transition-colors cursor-pointer"
-          title="Open server mods folder (SPT_Runtime/user/mods)"
+          title={`Open server mods folder (${serverModPath})`}
           type="button"
         >
           <Folder className="w-3.5 h-3.5 text-[#9AA3AF]" />

@@ -51,9 +51,56 @@ export function isAbortError(err: unknown): boolean {
   );
 }
 
-class RateLimitedClient {
+function parseRetryAfterMs(retryAfterHeader: string | null, defaultMs = 2500, maxDelayMs = 30000): number {
+  if (!retryAfterHeader) return defaultMs;
+  const trimmed = retryAfterHeader.trim();
+  if (!trimmed) return defaultMs;
+
+  // 1. Try integer seconds
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = parseInt(trimmed, 10);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(maxDelayMs, Math.max(500, seconds * 1000));
+    }
+  }
+
+  // 2. Try HTTP-date format (e.g. "Wed, 21 Oct 2026 07:28:00 GMT")
+  const dateMs = Date.parse(trimmed);
+  if (!Number.isNaN(dateMs)) {
+    const deltaMs = dateMs - Date.now();
+    if (deltaMs <= 0) return 500;
+    return Math.min(maxDelayMs, Math.max(500, deltaMs));
+  }
+
+  return defaultMs;
+}
+
+function sleepWithSignal(delayMs: number, signal?: AbortSignal | null): Promise<void> {
+  if (delayMs <= 0) return Promise.resolve();
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Request aborted', 'AbortError'));
+  }
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Request aborted', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+interface QueuedWaiter {
+  activate: () => void;
+  cleanup: () => void;
+}
+
+export class RateLimitedClient {
   private activeCount = 0;
-  private queue: Array<() => void> = [];
+  private queue: QueuedWaiter[] = [];
   private maxConcurrent = 5;
   private rateLimitResetUntil = 0;
   private ttlCache = new Map<string, CacheEntry>();
@@ -134,7 +181,14 @@ class RateLimitedClient {
       throw new DOMException('Request aborted', 'AbortError');
     }
 
-    await this.acquireSlot();
+    await this.acquireSlot(options.signal || undefined);
+    let slotReleased = false;
+    const releaseOnce = () => {
+      if (!slotReleased) {
+        slotReleased = true;
+        this.releaseSlot();
+      }
+    };
 
     try {
       if (options.signal?.aborted) {
@@ -143,8 +197,8 @@ class RateLimitedClient {
 
       const now = Date.now();
       if (now < this.rateLimitResetUntil) {
-        const waitMs = this.rateLimitResetUntil - now;
-        await new Promise((r) => setTimeout(r, waitMs));
+        const waitMs = Math.min(30000, this.rateLimitResetUntil - now);
+        await sleepWithSignal(waitMs, options.signal);
       }
 
       const headers = new Headers(options.headers || {});
@@ -170,43 +224,76 @@ class RateLimitedClient {
 
       if (res.status === 429 && retries > 0) {
         const retryAfterHeader = res.headers.get('Retry-After');
-        let delayMs = 2500;
-        if (retryAfterHeader) {
-          const parsed = parseInt(retryAfterHeader, 10);
-          if (!isNaN(parsed) && parsed > 0) {
-            delayMs = parsed * 1000;
-          }
-        }
+        const delayMs = parseRetryAfterMs(retryAfterHeader, 2500, 30000);
         this.rateLimitResetUntil = Date.now() + delayMs;
         console.warn(`[SP-Mod API] Cloudflare Rate Limited (429). Retrying after ${(delayMs / 1000).toFixed(1)}s...`);
-        await new Promise((r) => setTimeout(r, delayMs));
+        // Release active slot while waiting on retry backoff so queued requests aren't deadlocked
+        releaseOnce();
+        await sleepWithSignal(delayMs, options.signal);
         return this.request(url, options, retries - 1);
       }
 
       return res;
     } finally {
-      this.releaseSlot();
+      releaseOnce();
     }
   }
 
-  private async acquireSlot(): Promise<void> {
+  private async acquireSlot(signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      throw new DOMException('Request aborted', 'AbortError');
+    }
     if (this.activeCount < this.maxConcurrent) {
       this.activeCount++;
       return;
     }
-    return new Promise((resolve) => {
-      this.queue.push(() => {
-        this.activeCount++;
-        resolve();
-      });
+    return new Promise<void>((resolve, reject) => {
+      const waiter: QueuedWaiter = {
+        activate: () => {
+          waiter.cleanup();
+          if (signal?.aborted) {
+            reject(new DOMException('Request aborted', 'AbortError'));
+            // Immediately pass the slot to the next non-aborted waiter if any
+            if (this.queue.length > 0 && this.activeCount < this.maxConcurrent) {
+              const next = this.queue.shift();
+              next?.activate();
+            }
+            return;
+          }
+          this.activeCount++;
+          resolve();
+        },
+        cleanup: () => {
+          if (signal) {
+            signal.removeEventListener('abort', onAbort);
+          }
+        },
+      };
+
+      const onAbort = () => {
+        waiter.cleanup();
+        const idx = this.queue.indexOf(waiter);
+        if (idx !== -1) {
+          this.queue.splice(idx, 1);
+        }
+        reject(new DOMException('Request aborted', 'AbortError'));
+      };
+
+      if (signal) {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      this.queue.push(waiter);
     });
   }
 
   private releaseSlot(): void {
-    this.activeCount--;
-    if (this.queue.length > 0 && this.activeCount < this.maxConcurrent) {
+    this.activeCount = Math.max(0, this.activeCount - 1);
+    while (this.queue.length > 0 && this.activeCount < this.maxConcurrent) {
       const next = this.queue.shift();
-      if (next) next();
+      if (next) {
+        next.activate();
+      }
     }
   }
 }

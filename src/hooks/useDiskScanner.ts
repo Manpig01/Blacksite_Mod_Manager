@@ -45,10 +45,15 @@ export function useDiskScanner({
         let resolvedPath = rawTarget;
         let detectedVersion: string | null = null;
         let detectedBinary: string | null = null;
+        let activeServerModPath = settings.serverModPath || 'SPT/user/mods';
+        let layoutWarningText: string | null = null;
 
         if (bridge.inspectSptDirectory) {
           try {
-            const info = await bridge.inspectSptDirectory(rawTarget);
+            const info = await bridge.inspectSptDirectory(rawTarget, {
+              preferredSptVersion: settings.sptVersion,
+              preferredServerModPath: settings.serverModPath,
+            });
             if (info) {
               if (info.normalizedPath) resolvedPath = info.normalizedPath;
               const settingsPatch: Partial<SettingsState> = {
@@ -63,13 +68,23 @@ export function useDiskScanner({
                 detectedBinary = info.detectedServerBinary;
               }
               if (info.serverModPath) {
-                settingsPatch.serverModPath = info.serverModPath;
+                // If layout is ambiguous and user already configured a valid serverModPath, preserve it
+                if (info.layoutAmbiguous && settings.serverModPath) {
+                  settingsPatch.serverModPath = settings.serverModPath;
+                  activeServerModPath = settings.serverModPath;
+                } else {
+                  settingsPatch.serverModPath = info.serverModPath;
+                  activeServerModPath = info.serverModPath;
+                }
               }
               if (info.clientModPath) {
                 settingsPatch.clientModPath = info.clientModPath;
               }
               if (typeof info.isSpt4xLayout === 'boolean') {
                 settingsPatch.isSpt4xLayout = info.isSpt4xLayout;
+              }
+              if (info.layoutWarning) {
+                layoutWarningText = info.layoutWarning;
               }
               onUpdateSettings(settingsPatch);
             }
@@ -81,7 +96,10 @@ export function useDiskScanner({
           onUpdateSettings({ sptDirectory: resolvedPath });
         }
 
-        const diskMods = await bridge.scanInstalledMods({ sptDirectory: resolvedPath });
+        const diskMods = await bridge.scanInstalledMods({
+          sptDirectory: resolvedPath,
+          preferredServerModPath: activeServerModPath,
+        });
         if (Array.isArray(diskMods)) {
           setInstalledMods((prev) => {
             const prevByKey = new Map<string, InstalledMod>();
@@ -131,6 +149,7 @@ export function useDiskScanner({
                 serverPath: resolvedServerPath,
                 clientPath: resolvedClientPath,
                 clientPaths: dm.clientPaths,
+                duplicateLocations: dm.duplicateLocations,
                 inferredGuid: dm.inferredGuid ?? existing?.inferredGuid,
                 isPatcher: dm.isPatcher ?? existing?.isPatcher,
                 modId: dm.modId ?? existing?.modId ?? known?.id,
@@ -175,6 +194,10 @@ export function useDiskScanner({
             storageService.saveProfiles(updatedProfiles);
             return updatedProfiles;
           });
+
+          if (layoutWarningText) {
+            showToast('SPT Layout Warning', layoutWarningText, 'warning');
+          }
 
           if (showNotification) {
             const verBadge = detectedVersion

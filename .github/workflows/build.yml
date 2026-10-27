@@ -7,12 +7,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-windows:
     name: Package Windows Executable (Installer & Portable)
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -22,13 +28,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: 'npm'
 
-      - name: Install Dependencies
+      - name: Install Dependencies Reproducibly
         shell: pwsh
         run: |
-          if (Test-Path package-lock.json) { Remove-Item package-lock.json }
-          npm install --include=optional
-          npm install --no-save @rollup/rollup-win32-x64-msvc lightningcss-win32-x64-msvc @esbuild/win32-x64 @tailwindcss/oxide-win32-x64-msvc
+          npm ci --include=optional
 
       - name: Compile Web Application
         run: npm run build
@@ -36,7 +41,7 @@ jobs:
       - name: Package Windows Binary with electron-builder
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --x64
+        run: npx electron-builder --win --x64 --publish never
 
       - name: Create Installer Standalone ZIP Archive
         shell: pwsh

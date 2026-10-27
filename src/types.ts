@@ -93,9 +93,10 @@ export interface InstalledMod {
   sptVersion?: string;
   fikaCompatibility?: boolean;
   installDate: string;
-  serverPath?: string; // relative to SPT root, e.g. SPT_Runtime/user/mods/xyz
+  serverPath?: string; // relative to SPT root, e.g. SPT/user/mods/xyz
   clientPath?: string; // relative to SPT root, e.g. BepInEx/plugins/xyz.dll
   clientPaths?: string[];
+  duplicateLocations?: string[];
   isDisabled: boolean;
   hasUpdate?: boolean;
   latestVersion?: string;
@@ -471,6 +472,11 @@ export interface DesktopSptDirectoryInfo {
   serverModPath?: string;
   clientModPath?: string;
   isSpt4xLayout?: boolean;
+  layoutEvidence?: string;
+  layoutAmbiguous?: boolean;
+  layoutWarning?: string | null;
+  populatedServerLayouts?: { relPath: string; count: number; mods: string[] }[];
+  duplicateMods?: { name: string; locations: string[] }[];
 }
 
 export interface DesktopInstallProgressEvent {
@@ -487,6 +493,7 @@ export interface DesktopInstallModParams {
   queueId: string;
   sptDirectory: string;
   sptVersion: string;
+  preferredServerModPath?: string;
   modName: string;
   author: string;
   version: string;
@@ -570,17 +577,23 @@ export interface DesktopBridgeAPI {
   version: string;
   cpuCount: number;
   selectDirectory?: (defaultPath?: string) => Promise<string | null>;
-  inspectSptDirectory?: (targetPath: string) => Promise<DesktopSptDirectoryInfo | null>;
+  inspectSptDirectory?: (
+    targetPath: string,
+    options?: { preferredSptVersion?: string; preferredServerModPath?: string }
+  ) => Promise<DesktopSptDirectoryInfo | null>;
   fetchImageDataUrl?: (url: string) => Promise<string | null>;
   openFolder?: (targetPath: string) => Promise<boolean>;
   showItemInFolder?: (targetPath: string) => Promise<boolean>;
   openExternal?: (url: string) => Promise<boolean>;
   installMod?: (params: DesktopInstallModParams) => Promise<DesktopInstallModResult>;
   onInstallProgress?: (callback: (data: DesktopInstallProgressEvent) => void) => () => void;
-  uninstallMod?: (params: DesktopUninstallModParams) => Promise<void>;
-  uninstallAllMods?: (params: { sptDirectory: string }) => Promise<void>;
+  uninstallMod?: (params: DesktopUninstallModParams) => Promise<any>;
+  uninstallAllMods?: (params: { sptDirectory: string }) => Promise<any>;
   toggleDisableMod?: (params: DesktopToggleDisableParams) => Promise<DesktopToggleDisableResult | null>;
-  scanInstalledMods?: (params: { sptDirectory: string }) => Promise<Partial<InstalledMod>[]>;
+  scanInstalledMods?: (params: {
+    sptDirectory: string;
+    preferredServerModPath?: string;
+  }) => Promise<Partial<InstalledMod>[]>;
   saveModConfigFile?: (params: { sptDirectory: string; relativePath: string; content: string }) => Promise<void>;
   relinkVfsProfile?: (params: {
     sptDirectory: string;

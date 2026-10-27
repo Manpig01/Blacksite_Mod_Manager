@@ -49,9 +49,15 @@ interface InstalledModRowCardProps {
   onFilterByTag: (tagName: string) => void;
   onOpenFolder: (target: 'client' | 'server' | string | string[]) => void;
   onUninstallMod: (modId: string) => void;
+  serverModPath?: string;
+  clientModPath?: string;
 }
 
-const getModFolderPaths = (mod: InstalledMod): string[] => {
+const getModFolderPaths = (
+  mod: InstalledMod,
+  serverModPath = 'SPT/user/mods',
+  clientModPath = 'BepInEx/plugins'
+): string[] => {
   const paths: string[] = [];
 
   if (mod.serverPath || mod.clientPath) {
@@ -67,11 +73,13 @@ const getModFolderPaths = (mod: InstalledMod): string[] => {
     return Array.from(new Set(paths));
   }
 
-  if (mod.kind === 'Server' || mod.kind === 'Both') {
-    paths.push('SPT_Runtime/user/mods');
-  }
-  if (mod.kind === 'Client' || mod.kind === 'Both') {
-    paths.push('BepInEx/plugins');
+  if (mod.kind === 'Server') {
+    paths.push(serverModPath);
+  } else if (mod.kind === 'Both') {
+    paths.push(serverModPath);
+    paths.push(clientModPath);
+  } else {
+    paths.push(clientModPath);
   }
 
   return Array.from(new Set(paths));
@@ -127,10 +135,12 @@ export const InstalledModRowCard: React.FC<InstalledModRowCardProps> = React.mem
   onFilterByTag,
   onOpenFolder,
   onUninstallMod,
+  serverModPath = 'SPT/user/mods',
+  clientModPath = 'BepInEx/plugins',
 }) => {
   const hasMissingDeps = depStatus.hasMissing;
-  const paths = getModFolderPaths(mod);
-  const hasBothFolders = paths.length > 1;
+  const paths = getModFolderPaths(mod, serverModPath, clientModPath);
+  const hasBothFolders = Boolean(mod.serverPath && mod.clientPath && paths.length > 1);
 
   return (
     <div
@@ -471,7 +481,7 @@ export const InstalledModRowCard: React.FC<InstalledModRowCardProps> = React.mem
                 if (hasBothFolders) {
                   onOpenFolder(paths);
                 } else {
-                  onOpenFolder(paths[0] || 'BepInEx/plugins');
+                  onOpenFolder(paths[0] || clientModPath);
                 }
               }}
               className={`p-1.5 rounded transition-colors cursor-pointer relative ${
@@ -481,17 +491,17 @@ export const InstalledModRowCard: React.FC<InstalledModRowCardProps> = React.mem
               }`}
               title={
                 hasBothFolders
-                  ? `Show in folders: Open both BepInEx and SPT_Runtime/user/mods folders in File Explorer (${paths.join(' + ')})`
+                  ? `Show in folders: Open both client and server mod folders in File Explorer (${paths.join(' + ')})`
                   : `Show in folder: Open ${paths[0] || 'mod folder'} in File Explorer`
               }
               type="button"
-              aria-label={hasBothFolders ? 'Show in folders: open both BepInEx and server mods folders' : 'Show in folder'}
+              aria-label={hasBothFolders ? 'Show in folders: open both client and server mod folders' : 'Show in folder'}
             >
               <Folder className="w-3.5 h-3.5" />
               {hasBothFolders && (
                 <span
                   className="absolute -top-1 -right-1 bg-[#0284C7] text-white text-[8px] font-mono font-bold px-1 py-0.2 rounded-full leading-none shadow-xs"
-                  title="Both BepInEx & SPT_Runtime/user/mods folders will open"
+                  title={`Both folders will open: ${paths.join(' + ')}`}
                 >
                   2
                 </span>

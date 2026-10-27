@@ -160,6 +160,7 @@ export function useInstallQueue({
             queueId,
             sptDirectory: settings.sptDirectory,
             sptVersion: settings.sptVersion,
+            preferredServerModPath: settings.serverModPath,
             modName,
             author,
             version,
@@ -437,14 +438,12 @@ export function useInstallQueue({
                 ? 'Server'
                 : 'Client');
             const isServerMod = inferredKind === 'Server' || inferredKind === 'Both';
-            const isClientMod = inferredKind === 'Client' || inferredKind === 'Both';
-            const serverDir = settings.serverModPath || 'SPT_Runtime/user/mods';
-            const clientDir = settings.clientModPath || 'BepInEx/plugins';
-            const cleanModToken = modName.replace(/\s+/g, '');
 
             setInstalledMods((prev) => {
               const existingIdx = prev.findIndex((m) => m.id === targetGuid);
 
+              // In browser preview (no desktop bridge), do not invent synthetic serverPath/clientPath values
+              // since no files were extracted or verified on disk.
               const newInstalledMod: InstalledMod = {
                 id: targetGuid,
                 modId,
@@ -459,8 +458,8 @@ export function useInstallQueue({
                 sptVersion: extraMeta?.sptVersion || settings.sptVersion,
                 fikaCompatibility: extraMeta?.fikaCompatibility ?? true,
                 installDate: new Date().toISOString().split('T')[0],
-                serverPath: isServerMod ? `${serverDir}/${cleanModToken}` : undefined,
-                clientPath: isClientMod ? `${clientDir}/${cleanModToken}.dll` : undefined,
+                serverPath: extraMeta?.serverPath || undefined,
+                clientPath: extraMeta?.clientPath || undefined,
                 isDisabled: false,
                 hasUpdate: false,
                 latestVersion: version,
@@ -608,7 +607,7 @@ export function useInstallQueue({
           dep.author && dep.author !== 'Forge Dependency' && dep.author !== 'Community Author'
             ? dep.author
             : known?.author || 'Community Author';
-        const kind = dep.kind || known?.kind || 'Both';
+        const kind = dep.kind || known?.kind || 'Client';
         const categoryTitle =
           dep.categoryTitle || known?.categoryTitle || (kind === 'Server' ? 'Overhauls' : 'Tools');
         const teaser = dep.teaser || known?.teaser || '';
@@ -711,7 +710,7 @@ export function useInstallQueue({
           name: addon.name,
           author: addon.authors?.[0]?.name || 'Addon Author',
           version: version.version,
-          kind: 'Both',
+          kind: undefined,
           thumbnail: addon.thumbnail || addon.mod?.thumbnail || '',
           categoryTitle: 'Addons & Presets',
           teaser: addon.teaser || addon.description || `Addon for ${addon.mod?.name || 'SPT'}`,

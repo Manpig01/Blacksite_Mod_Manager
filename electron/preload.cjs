@@ -5,18 +5,15 @@ function getSafeCpuCount() {
     if (typeof navigator !== 'undefined' && Number(navigator.hardwareConcurrency) > 0) {
       return Number(navigator.hardwareConcurrency);
     }
-    const os = require('os');
-    return os.cpus()?.length || 4;
-  } catch (_) {
-    return 4;
-  }
+  } catch (_) {}
+  return 4;
 }
 
-// Expose safe desktop environment flags and helper APIs to renderer process
+// Expose safe desktop environment flags and helper APIs to sandboxed renderer process
 contextBridge.exposeInMainWorld('desktopBridge', {
   isElectron: true,
-  platform: typeof process !== 'undefined' && process.platform ? process.platform : 'win32',
-  version: (typeof process !== 'undefined' && process.env && process.env.npm_package_version) || '2.1.0',
+  platform: (typeof process !== 'undefined' && process.platform) || 'win32',
+  version: '2.1.0',
   cpuCount: getSafeCpuCount(),
   selectDirectory: (defaultPath) => ipcRenderer.invoke('dialog:select-directory', defaultPath),
   inspectSptDirectory: (targetPath) => ipcRenderer.invoke('spt:inspect-directory', targetPath),

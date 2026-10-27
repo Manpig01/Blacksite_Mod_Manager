@@ -733,7 +733,7 @@ export const App: React.FC = () => {
       if (item === 'client') {
         relPath = settings.clientModPath || 'BepInEx/plugins';
       } else if (item === 'server') {
-        relPath = settings.serverModPath || (isSpt4 ? 'SPT_Runtime/user/mods' : 'user/mods');
+        relPath = settings.serverModPath || (isSpt4 ? 'SPT/user/mods' : 'user/mods');
       } else {
         relPath = item;
       }
@@ -1110,6 +1110,8 @@ export const App: React.FC = () => {
             installedMods={sortedInstalledMods}
             collisions={conflictReport.collisions}
             sptVersion={settings.sptVersion}
+            serverModPath={settings.serverModPath}
+            clientModPath={settings.clientModPath}
             activeSortField={installedSortField}
             activeSortDirection={installedSortDirection}
             onSortChange={handleInstalledSortChange}

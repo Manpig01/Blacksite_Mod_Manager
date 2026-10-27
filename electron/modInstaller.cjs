@@ -446,14 +446,449 @@ function isProtectedCoreItem(nameOrRelPath) {
   return false;
 }
 
+const DEFAULT_RESOURCE_LIMITS = {
+  maxDownloadBytes: 8 * 1024 * 1024 * 1024, // 8 GB
+  maxExtractedBytes: 20 * 1024 * 1024 * 1024, // 20 GB
+  maxFiles: 100000, // 100,000 files
+  maxCompressionRatio: 200, // 200:1 ratio ceiling (when uncompressed > 10 MB)
+  ratioThresholdBytes: 10 * 1024 * 1024, // 10 MB
+};
+
+function resolveResourceLimits(custom = {}) {
+  return {
+    maxDownloadBytes:
+      Number(custom?.maxDownloadBytes || process.env.BLACKSITE_MAX_DOWNLOAD_BYTES) ||
+      DEFAULT_RESOURCE_LIMITS.maxDownloadBytes,
+    maxExtractedBytes:
+      Number(custom?.maxExtractedBytes || process.env.BLACKSITE_MAX_EXTRACTED_BYTES) ||
+      DEFAULT_RESOURCE_LIMITS.maxExtractedBytes,
+    maxFiles:
+      Number(custom?.maxFiles || process.env.BLACKSITE_MAX_ARCHIVE_FILES) ||
+      DEFAULT_RESOURCE_LIMITS.maxFiles,
+    maxCompressionRatio:
+      Number(custom?.maxCompressionRatio || process.env.BLACKSITE_MAX_COMPRESSION_RATIO) ||
+      DEFAULT_RESOURCE_LIMITS.maxCompressionRatio,
+    ratioThresholdBytes:
+      Number(custom?.ratioThresholdBytes) || DEFAULT_RESOURCE_LIMITS.ratioThresholdBytes,
+  };
+}
+
 /**
- * Robust non-blocking archive extraction with live percentage progress streaming.
- * Prioritizes high-speed multi-threaded 7za with -bsp1 live progress streaming,
- * falls back cleanly to native Windows bsdtar for ZIP/TAR, PowerShell without file copy lag,
- * and chunked non-blocking AdmZip, ensuring the Electron UI event loop never freezes.
+ * Validates a single archive entry path and metadata before extraction (fail-closed).
+ * Rejects absolute paths, drive letters, UNC paths, parent traversal (..),
+ * Windows Alternate Data Streams (:), null bytes, and symbolic/hard/reparse links.
  */
-async function extractArchive(archivePath, destinationDir, performanceMode = 'balanced', onProgress = null) {
+function validateArchiveEntryPath(rawEntryPath, options = {}) {
+  if (typeof rawEntryPath !== 'string' || !rawEntryPath.trim()) {
+    const err = new Error('Unsafe archive entry: empty or non-string entry path');
+    err.code = 'ERR_UNSAFE_ARCHIVE';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  if (rawEntryPath.includes('\0')) {
+    const err = new Error(`Unsafe archive entry (null byte rejected): "${rawEntryPath}"`);
+    err.code = 'ERR_UNSAFE_ARCHIVE';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  // Reject symlink / hardlink / reparse point entries
+  if (
+    options.isSymlink ||
+    options.isHardlink ||
+    options.isReparsePoint ||
+    (typeof options.attributes === 'string' &&
+      /\b(symbol|reparse|junction|symlink)\b/i.test(options.attributes)) ||
+    (typeof options.typeFlag === 'string' && ['l', 'h', '2', '1'].includes(options.typeFlag))
+  ) {
+    const err = new Error(`Unsafe archive entry (symbolic link or reparse point rejected): "${rawEntryPath}"`);
+    err.code = 'ERR_UNSAFE_ARCHIVE';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  // Check POSIX mode bits for symlink (S_IFLNK = 0o120000)
+  if (typeof options.posixMode === 'number' && (options.posixMode & 0o170000) === 0o120000) {
+    const err = new Error(`Unsafe archive entry (POSIX symlink rejected): "${rawEntryPath}"`);
+    err.code = 'ERR_UNSAFE_ARCHIVE';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  // Reject UNC paths (\\server\share or //server/share) and leading slashes (absolute paths)
+  if (/^(\\\\|\/\/)/.test(rawEntryPath) || /^[/\\]/.test(rawEntryPath)) {
+    const err = new Error(`Unsafe archive entry (absolute or UNC path rejected): "${rawEntryPath}"`);
+    err.code = 'ERR_UNSAFE_ARCHIVE';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  // Reject Windows drive letters (C:...) and Windows Alternate Data Streams (file.txt:stream)
+  if (rawEntryPath.includes(':')) {
+    const err = new Error(
+      `Unsafe archive entry (drive path or Windows Alternate Data Stream rejected): "${rawEntryPath}"`
+    );
+    err.code = 'ERR_UNSAFE_ARCHIVE';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  const normalized = rawEntryPath.replace(/\\/g, '/');
+  const segments = normalized.split('/');
+  for (const seg of segments) {
+    if (seg === '..') {
+      const err = new Error(`Unsafe archive entry (path traversal ".." rejected): "${rawEntryPath}"`);
+      err.code = 'ERR_UNSAFE_ARCHIVE';
+      err.canManualExtract = false;
+      throw err;
+    }
+  }
+
+  if (options.destinationDir) {
+    const resolvedDest = path.resolve(options.destinationDir);
+    const resolvedTarget = path.resolve(resolvedDest, normalized);
+    const rel = path.relative(resolvedDest, resolvedTarget);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      const err = new Error(`Unsafe archive entry (escapes staging directory): "${rawEntryPath}"`);
+      err.code = 'ERR_UNSAFE_ARCHIVE';
+      err.canManualExtract = false;
+      throw err;
+    }
+  }
+
+  return normalized;
+}
+
+/**
+ * Enforces resource limits across an archive's entry manifest.
+ */
+function assertArchiveManifestWithinLimits(stats, compressedBytes, limits) {
+  if (stats.fileCount > limits.maxFiles) {
+    const err = new Error(
+      `Archive exceeds maximum file count limit (${stats.fileCount.toLocaleString()} files > ${limits.maxFiles.toLocaleString()} allowed).`
+    );
+    err.code = 'ERR_ARCHIVE_LIMIT_EXCEEDED';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  if (stats.totalUncompressedBytes > limits.maxExtractedBytes) {
+    const err = new Error(
+      `Archive exceeds maximum uncompressed size limit (${(stats.totalUncompressedBytes / (1024 * 1024 * 1024)).toFixed(2)} GB > ${(limits.maxExtractedBytes / (1024 * 1024 * 1024)).toFixed(2)} GB allowed).`
+    );
+    err.code = 'ERR_ARCHIVE_LIMIT_EXCEEDED';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  if (
+    stats.totalUncompressedBytes > limits.ratioThresholdBytes &&
+    compressedBytes > 0
+  ) {
+    const ratio = stats.totalUncompressedBytes / compressedBytes;
+    if (ratio > limits.maxCompressionRatio) {
+      const err = new Error(
+        `Archive rejected due to extreme compression ratio (${ratio.toFixed(1)}:1 exceeds ${limits.maxCompressionRatio}:1 safety limit).`
+      );
+      err.code = 'ERR_ARCHIVE_LIMIT_EXCEEDED';
+      err.canManualExtract = false;
+      throw err;
+    }
+  }
+}
+
+/**
+ * Inspects and validates all entries of an archive before extraction.
+ * Supports 7za (-slt), AdmZip, tar (-tvf), and PowerShell ZipFile inspection.
+ */
+async function inspectAndValidateArchive(archivePath, format, destinationDir, limits) {
+  const archiveStat = fs.statSync(archivePath);
+  const compressedBytes = archiveStat.size;
+
+  if (compressedBytes > limits.maxDownloadBytes) {
+    const err = new Error(
+      `Archive size (${(compressedBytes / (1024 * 1024 * 1024)).toFixed(2)} GB) exceeds maximum download limit (${(limits.maxDownloadBytes / (1024 * 1024 * 1024)).toFixed(2)} GB).`
+    );
+    err.code = 'ERR_ARCHIVE_LIMIT_EXCEEDED';
+    err.canManualExtract = false;
+    throw err;
+  }
+
+  // 1. For ZIP archives under 1 GB, AdmZip central directory inspection is fast and synchronous in memory
+  if ((format === 'zip' || (!format && archivePath.toLowerCase().endsWith('.zip'))) && compressedBytes < 1024 * 1024 * 1024) {
+    let zip;
+    try {
+      zip = new AdmZip(archivePath);
+    } catch (zipOpenErr) {
+      // Fall through to 7za/tar if AdmZip cannot parse header (e.g. ZIP64 or non-standard zip)
+      zip = null;
+    }
+    if (zip) {
+      const entries = zip.getEntries();
+      let fileCount = 0;
+      let totalUncompressedBytes = 0;
+
+      for (const entry of entries) {
+        const attr = entry.header ? entry.header.attr : 0;
+        const posixMode = (attr >>> 16) & 0xffff;
+        const isSymlink = (posixMode & 0o170000) === 0o120000;
+
+        validateArchiveEntryPath(entry.entryName, {
+          destinationDir,
+          posixMode,
+          isSymlink,
+        });
+
+        if (!entry.isDirectory) {
+          fileCount++;
+          const entrySize = Math.max(0, Number(entry.header?.size || 0));
+          totalUncompressedBytes += entrySize;
+        }
+        assertArchiveManifestWithinLimits({ fileCount, totalUncompressedBytes }, compressedBytes, limits);
+      }
+
+      return { fileCount, totalUncompressedBytes };
+    }
+  }
+
+  // 2. Inspect via 7za `l -slt` if 7za binary is available
+  const bin7za = resolve7zaBinary();
+  if (bin7za) {
+    const listResult = await new Promise((resolve, reject) => {
+      const child = spawn(bin7za, ['l', '-slt', '-ba', archivePath], { windowsHide: true });
+      let fileCount = 0;
+      let totalUncompressedBytes = 0;
+      let remainder = '';
+      let currentEntry = {};
+      let abortedErr = null;
+
+      const processBlockLine = (line) => {
+        if (abortedErr) return;
+        const trimmed = line.replace(/\r$/, '');
+        if (!trimmed) {
+          if (currentEntry.path !== undefined) {
+            try {
+              const isDir = currentEntry.folder === '+' || (currentEntry.attributes || '').startsWith('D');
+              const isSymlink =
+                Boolean(currentEntry.symbolicLink) ||
+                Boolean(currentEntry.posixLink) ||
+                /\b(l|symlink|reparse)\b/i.test(currentEntry.attributes || '');
+              validateArchiveEntryPath(currentEntry.path, {
+                destinationDir,
+                isSymlink,
+                attributes: currentEntry.attributes,
+              });
+              if (!isDir) {
+                fileCount++;
+                totalUncompressedBytes += Math.max(0, Number(currentEntry.size || 0));
+              }
+              assertArchiveManifestWithinLimits({ fileCount, totalUncompressedBytes }, compressedBytes, limits);
+            } catch (vErr) {
+              abortedErr = vErr;
+              try { child.kill(); } catch (_) {}
+            }
+          }
+          currentEntry = {};
+          return;
+        }
+
+        const eqIdx = trimmed.indexOf(' = ');
+        if (eqIdx > 0) {
+          const key = trimmed.slice(0, eqIdx).trim().toLowerCase();
+          const val = trimmed.slice(eqIdx + 3);
+          if (key === 'path') currentEntry.path = val;
+          else if (key === 'size') currentEntry.size = parseInt(val, 10) || 0;
+          else if (key === 'folder') currentEntry.folder = val.trim();
+          else if (key === 'attributes') currentEntry.attributes = val.trim();
+          else if (key === 'symbolic link') currentEntry.symbolicLink = val.trim();
+          else if (key === 'mode' && val.trim().startsWith('l')) currentEntry.posixLink = true;
+        }
+      };
+
+      if (child.stdout) {
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', (chunk) => {
+          remainder += chunk;
+          const lines = remainder.split('\n');
+          remainder = lines.pop() || '';
+          for (const l of lines) {
+            processBlockLine(l);
+          }
+        });
+      }
+
+      child.on('error', (err) => reject(err));
+      child.on('close', (code) => {
+        if (remainder) {
+          processBlockLine(remainder);
+          processBlockLine('');
+        } else if (currentEntry.path !== undefined) {
+          processBlockLine('');
+        }
+        if (abortedErr) return reject(abortedErr);
+        if (code === 0 || code === 1) {
+          return resolve({ fileCount, totalUncompressedBytes });
+        }
+        reject(new Error(`7za manifest inspection exited with code ${code}`));
+      });
+    }).catch((err) => {
+      if (err.code === 'ERR_UNSAFE_ARCHIVE' || err.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+        throw err;
+      }
+      return null;
+    });
+
+    if (listResult) return listResult;
+  }
+
+  // 3. Inspect via tar -tvf if tar is available and format is zip or tar.gz
+  if (format !== '7z' && format !== 'rar') {
+    const tarBin = process.platform === 'win32' ? resolveWindowsTar() : 'tar';
+    if (tarBin) {
+      const tarResult = await new Promise((resolve, reject) => {
+        execFile(
+          tarBin,
+          ['-tvf', archivePath],
+          { maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+          (err, stdout) => {
+            if (err) return reject(err);
+            let fileCount = 0;
+            let totalUncompressedBytes = 0;
+            const lines = String(stdout || '').split(/\r?\n/).filter(Boolean);
+            for (const line of lines) {
+              const firstChar = line[0];
+              const isLink = firstChar === 'l' || firstChar === 'h' || line.includes(' -> ');
+              const isDir = firstChar === 'd';
+              // Parse tar -tvf line: permissions links owner group size date time pathname
+              const parts = line.trim().split(/\s+/);
+              const sizeVal = parts.length >= 5 ? parseInt(parts[4], 10) || 0 : 0;
+              const entryPath = parts.slice(parts.length >= 8 ? 7 : parts.length - 1).join(' ');
+
+              validateArchiveEntryPath(entryPath, {
+                destinationDir,
+                isSymlink: isLink,
+                typeFlag: firstChar,
+              });
+
+              if (!isDir) {
+                fileCount++;
+                totalUncompressedBytes += Math.max(0, sizeVal);
+              }
+              assertArchiveManifestWithinLimits({ fileCount, totalUncompressedBytes }, compressedBytes, limits);
+            }
+            resolve({ fileCount, totalUncompressedBytes });
+          }
+        );
+      }).catch((err) => {
+        if (err.code === 'ERR_UNSAFE_ARCHIVE' || err.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+          throw err;
+        }
+        return null;
+      });
+
+      if (tarResult) return tarResult;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Post-extraction staging tree verification:
+ * Walks the extracted staging directory using lstatSync to reject any symbolic link,
+ * special device file, path escaping staging, or resource limit violation.
+ */
+function verifyExtractedStagingTree(destinationDir, limits) {
+  const resolvedDest = path.resolve(destinationDir);
+  if (!fs.existsSync(resolvedDest)) return { fileCount: 0, totalBytes: 0 };
+
+  let fileCount = 0;
+  let totalBytes = 0;
+
+  function walk(currentDir) {
+    const entries = fs.readdirSync(currentDir);
+    for (const name of entries) {
+      if (name.includes(':')) {
+        const err = new Error(`Unsafe extracted entry (Alternate Data Stream rejected): "${name}"`);
+        err.code = 'ERR_UNSAFE_ARCHIVE';
+        err.canManualExtract = false;
+        throw err;
+      }
+
+      const fullPath = path.join(currentDir, name);
+      const rel = path.relative(resolvedDest, fullPath);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        const err = new Error(`Unsafe extracted entry (escaped staging root): "${rel}"`);
+        err.code = 'ERR_UNSAFE_ARCHIVE';
+        err.canManualExtract = false;
+        throw err;
+      }
+
+      const lstat = fs.lstatSync(fullPath);
+      if (lstat.isSymbolicLink()) {
+        const err = new Error(`Unsafe extracted entry (symbolic link rejected in staging): "${rel}"`);
+        err.code = 'ERR_UNSAFE_ARCHIVE';
+        err.canManualExtract = false;
+        throw err;
+      }
+
+      if (lstat.isDirectory()) {
+        walk(fullPath);
+      } else if (lstat.isFile()) {
+        fileCount++;
+        totalBytes += lstat.size;
+        if (fileCount > limits.maxFiles) {
+          const err = new Error(
+            `Extracted file count (${fileCount.toLocaleString()}) exceeds limit (${limits.maxFiles.toLocaleString()}).`
+          );
+          err.code = 'ERR_ARCHIVE_LIMIT_EXCEEDED';
+          err.canManualExtract = false;
+          throw err;
+        }
+        if (totalBytes > limits.maxExtractedBytes) {
+          const err = new Error(
+            `Extracted total size (${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB) exceeds limit (${(limits.maxExtractedBytes / (1024 * 1024 * 1024)).toFixed(2)} GB).`
+          );
+          err.code = 'ERR_ARCHIVE_LIMIT_EXCEEDED';
+          err.canManualExtract = false;
+          throw err;
+        }
+      } else {
+        const err = new Error(`Unsafe extracted entry (unsupported special file type): "${rel}"`);
+        err.code = 'ERR_UNSAFE_ARCHIVE';
+        err.canManualExtract = false;
+        throw err;
+      }
+    }
+  }
+
+  walk(resolvedDest);
+  return { fileCount, totalBytes };
+}
+
+/**
+ * Robust non-blocking archive extraction with pre-extraction manifest validation,
+ * resource limits enforcement, and live percentage progress streaming.
+ * Never uses the unsafe 7za -spf switch. Fails closed and wipes partial output on error.
+ */
+async function extractArchive(
+  archivePath,
+  destinationDir,
+  performanceMode = 'balanced',
+  onProgress = null,
+  customLimits = {}
+) {
+  const limits = resolveResourceLimits(customLimits);
   fs.mkdirSync(destinationDir, { recursive: true });
+
+  const wipeDestinationDir = () => {
+    try {
+      if (destinationDir && fs.existsSync(destinationDir)) {
+        fs.rmSync(destinationDir, { recursive: true, force: true });
+      }
+    } catch (_) {}
+  };
 
   const format = detectArchiveFormat(archivePath);
   let extractionProgress = 5;
@@ -472,7 +907,6 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
     }
   };
 
-  // Start active heartbeat timer to guarantee continuous UI updates during decompression
   heartbeatTimer = setInterval(() => {
     const elapsed = (Date.now() - startTime) / 1000;
     const targetPct = Math.min(95, 10 + Math.floor(85 * (1 - Math.exp(-elapsed / 6))));
@@ -489,25 +923,24 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
   };
 
   try {
-    // 1. Try precompiled 7za binary FIRST (Multi-threaded, supports .zip, .7z, .rar, .tar.gz, LZMA, Deflate64)
-    // Ensures destination directory exists before spawning process
-    fs.mkdirSync(destinationDir, { recursive: true });
-
     let bin7za = resolve7zaBinary();
     if (!bin7za && (format === '7z' || format === 'rar' || !format)) {
       bin7za = await ensure7zaBinary(onProgress);
     }
 
+    // Pre-validate archive manifest before extracting a single byte (fail-closed)
+    await inspectAndValidateArchive(archivePath, format, destinationDir, limits);
+
+    // 1. Try precompiled 7za binary FIRST (strictly without -spf)
     if (bin7za) {
+      fs.mkdirSync(destinationDir, { recursive: true });
       const threadCount = getExtractionThreadCount(performanceMode);
       const cleanDest = destinationDir.replace(/[\\/]+$/, '');
 
-      // Try primary extraction (standard multi-threaded extraction with overwrite and constant-memory streaming)
-      const tryExtraction = (useSpf = false) => {
+      const runSafe7zaExtraction = () => {
         return new Promise((resolve, reject) => {
-          const args = ['x', archivePath, '-y', '-aoa', '-bb0', '-bso0', '-bsp1'];
-          if (useSpf) args.push('-spf');
-          args.push(`-o${cleanDest}`, `-mmt=${threadCount}`);
+          // Security invariant: NEVER pass -spf to 7za
+          const args = ['x', archivePath, '-y', '-aoa', '-bb0', '-bso0', '-bsp1', `-o${cleanDest}`, `-mmt=${threadCount}`];
 
           const stderrRing = new DiagnosticRingBuffer(40);
           const stdoutRing = new DiagnosticRingBuffer(40);
@@ -524,7 +957,6 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           if (child.stdout) {
             child.stdout.setEncoding('utf8');
             child.stdout.on('data', (chunk) => {
-              // Parse progress percentage without large string retention
               const matches = chunk.matchAll(/(\d+)%/g);
               for (const m of matches) {
                 const parsed = parseInt(m[1], 10);
@@ -532,7 +964,6 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
                   reportProgress(parsed, `Extracting (7-Zip Multi-core) ${parsed}%...`);
                 }
               }
-              // Capture critical diagnostic messages if 7za outputs warnings/errors to stdout
               if (chunk.includes('Error') || chunk.includes('WARNING') || chunk.includes('Can not open')) {
                 stdoutRing.push(chunk);
               }
@@ -544,15 +975,11 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           });
 
           child.on('close', (code) => {
-            // In 7-Zip: exit code 0 = Success, exit code 1 = Non-fatal Warning (e.g. minor file attributes/links)
             if (code === 0 || code === 1) {
-              if (code === 1) {
-                console.warn('[Blacksite Installer] 7za returned non-fatal warning (exit code 1). Extraction considered successful.');
-              }
               return resolve();
             }
-            const diagnostic = stderrRing.toString() || stdoutRing.toString() || `Decompression process exited with code ${code}`;
-            console.error('[Blacksite Installer] 7za extraction error:', diagnostic);
+            const diagnostic =
+              stderrRing.toString() || stdoutRing.toString() || `Decompression process exited with code ${code}`;
             const err = new Error(diagnostic);
             err.exitCode = code;
             reject(err);
@@ -561,29 +988,26 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
       };
 
       try {
-        await tryExtraction(false);
+        await runSafe7zaExtraction();
+        verifyExtractedStagingTree(destinationDir, limits);
         cleanupTimer();
         reportProgress(100, 'Extraction complete');
         return true;
       } catch (firstErr) {
-        console.warn('[Blacksite Installer] 7za primary extraction failed, trying with -spf switch...', firstErr.message);
-        try {
-          await tryExtraction(true);
-          cleanupTimer();
-          reportProgress(100, 'Extraction complete');
-          return true;
-        } catch (secondErr) {
-          console.warn('[Blacksite Installer] 7za extraction failed with both modes:', secondErr.message);
+        wipeDestinationDir();
+        if (firstErr.code === 'ERR_UNSAFE_ARCHIVE' || firstErr.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+          throw firstErr;
         }
+        console.warn('[Blacksite Installer] 7za extraction failed, cleaning staging:', firstErr.message);
       }
     }
 
     // 2. Try Windows Native System32\tar.exe (bsdtar)
-    // Note: Windows tar.exe natively handles .zip and .tar.gz, but CANNOT extract .7z or .rar!
     if (format !== '7z' && format !== 'rar') {
       const winTar = resolveWindowsTar();
       if (winTar) {
         try {
+          fs.mkdirSync(destinationDir, { recursive: true });
           await new Promise((resolve, reject) => {
             execFile(
               winTar,
@@ -595,10 +1019,15 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
               }
             );
           });
+          verifyExtractedStagingTree(destinationDir, limits);
           cleanupTimer();
           reportProgress(100, 'Extraction complete');
           return true;
         } catch (tarErr) {
+          wipeDestinationDir();
+          if (tarErr.code === 'ERR_UNSAFE_ARCHIVE' || tarErr.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+            throw tarErr;
+          }
           console.warn('[Blacksite Installer] Windows tar.exe failed, falling back to next engine...', tarErr.message);
         }
       }
@@ -607,21 +1036,27 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
     // 3. Try standard system tar (macOS / Linux)
     if (process.platform !== 'win32' && format !== '7z' && format !== 'rar') {
       try {
+        fs.mkdirSync(destinationDir, { recursive: true });
         await new Promise((resolve, reject) => {
           execFile('tar', ['-xf', archivePath, '-C', destinationDir], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
             if (error) reject(error);
             else resolve();
           });
         });
+        verifyExtractedStagingTree(destinationDir, limits);
         cleanupTimer();
         reportProgress(100, 'Extraction complete');
         return true;
       } catch (tarErr) {
+        wipeDestinationDir();
+        if (tarErr.code === 'ERR_UNSAFE_ARCHIVE' || tarErr.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+          throw tarErr;
+        }
         console.warn('[Blacksite Installer] System tar failed...', tarErr.message);
       }
     }
 
-    // 4. Try PowerShell Expand-Archive on Windows (ZIP only)
+    // 4. Try PowerShell Expand-Archive on Windows (ZIP only, pre-validated above)
     if (process.platform === 'win32' && (format === 'zip' || !format)) {
       let psZipPath = archivePath;
       let didRename = false;
@@ -635,6 +1070,7 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
       }
 
       try {
+        fs.mkdirSync(destinationDir, { recursive: true });
         await new Promise((resolve, reject) => {
           const psCmd = `Expand-Archive -LiteralPath '${psZipPath.replace(/'/g, "''")}' -DestinationPath '${destinationDir.replace(/'/g, "''")}' -Force`;
           execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { maxBuffer: 100 * 1024 * 1024 }, (error) => {
@@ -645,6 +1081,7 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
         if (didRename) {
           try { fs.renameSync(psZipPath, archivePath); } catch {}
         }
+        verifyExtractedStagingTree(destinationDir, limits);
         cleanupTimer();
         reportProgress(100, 'Extraction complete');
         return true;
@@ -652,11 +1089,15 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
         if (didRename) {
           try { fs.renameSync(psZipPath, archivePath); } catch {}
         }
+        wipeDestinationDir();
+        if (psErr.code === 'ERR_UNSAFE_ARCHIVE' || psErr.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+          throw psErr;
+        }
         console.warn('[Blacksite Installer] PowerShell Expand-Archive failed...', psErr.message);
       }
     }
 
-    // 5. Non-blocking chunked AdmZip fallback (ZIP only, yields on entries so UI event loop never freezes)
+    // 5. Non-blocking chunked AdmZip fallback (ZIP only, fail-closed on any unsafe entry)
     if (format === 'zip' || !format) {
       try {
         const stat = fs.statSync(archivePath);
@@ -666,16 +1107,27 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
           const zip = new AdmZip(archivePath);
           const entries = zip.getEntries();
           const totalEntries = entries.length;
-          const resolvedDest = path.resolve(destinationDir);
+          let fileCount = 0;
+          let totalUncompressedBytes = 0;
 
           for (let i = 0; i < totalEntries; i++) {
             const entry = entries[i];
-            const targetEntryPath = path.resolve(destinationDir, entry.entryName);
-            const relToDest = path.relative(resolvedDest, targetEntryPath);
-            if (relToDest.startsWith('..') || path.isAbsolute(relToDest)) {
-              console.warn(`[Blacksite Installer] Skipping unsafe Zip-Slip entry: ${entry.entryName}`);
-              continue;
+            const attr = entry.header ? entry.header.attr : 0;
+            const posixMode = (attr >>> 16) & 0xffff;
+            const isSymlink = (posixMode & 0o170000) === 0o120000;
+
+            // Fail closed on any unsafe entry rather than skipping
+            validateArchiveEntryPath(entry.entryName, {
+              destinationDir,
+              posixMode,
+              isSymlink,
+            });
+
+            if (!entry.isDirectory) {
+              fileCount++;
+              totalUncompressedBytes += Math.max(0, Number(entry.header?.size || 0));
             }
+            assertArchiveManifestWithinLimits({ fileCount, totalUncompressedBytes }, stat.size, limits);
 
             zip.extractEntryTo(entry, destinationDir, true, true);
             if (i % 20 === 0) {
@@ -683,17 +1135,26 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
               await new Promise((resolve) => setImmediate(resolve));
             }
           }
+
+          verifyExtractedStagingTree(destinationDir, limits);
           cleanupTimer();
           reportProgress(100, 'Extraction complete');
           return true;
         } else {
-          console.warn(`[Blacksite Installer] Archive exceeds 1GB (${(stat.size / (1024 * 1024)).toFixed(1)} MB). Skipping AdmZip in-memory parser to avoid V8 heap exhaustion.`);
+          console.warn(
+            `[Blacksite Installer] Archive exceeds 1GB (${(stat.size / (1024 * 1024)).toFixed(1)} MB). Skipping AdmZip in-memory parser.`
+          );
         }
       } catch (admErr) {
+        wipeDestinationDir();
+        if (admErr.code === 'ERR_UNSAFE_ARCHIVE' || admErr.code === 'ERR_ARCHIVE_LIMIT_EXCEEDED') {
+          throw admErr;
+        }
         console.warn('[Blacksite Installer] AdmZip fallback failed...', admErr.message);
       }
     }
 
+    wipeDestinationDir();
     const stat = fs.existsSync(archivePath) ? fs.statSync(archivePath) : { size: 0 };
     const err = new Error(
       `Unable to extract archive with any available decompression engine. Format: ${format || 'unknown'}, Size: ${(stat.size / (1024 * 1024)).toFixed(1)} MB`
@@ -704,6 +1165,9 @@ async function extractArchive(archivePath, destinationDir, performanceMode = 'ba
     err.destinationDir = destinationDir;
     err.format = format;
     err.archiveSizeMb = (stat.size / (1024 * 1024)).toFixed(1);
+    throw err;
+  } catch (err) {
+    wipeDestinationDir();
     throw err;
   } finally {
     cleanupTimer();
@@ -728,11 +1192,11 @@ function normalizeSptRoot(rawDirectory) {
       fs.existsSync(path.join(dir, 'SPT.Server.exe')) ||
       fs.existsSync(path.join(dir, 'Aki.Server.exe')) ||
       fs.existsSync(path.join(dir, 'SPT_Runtime')) ||
-      fs.existsSync(path.join(dir, 'SPT', 'user'))
+      fs.existsSync(path.join(dir, 'SPT', 'user')) ||
+      fs.existsSync(path.join(dir, 'SPT', 'SPT_Data'))
     );
   };
 
-  // Check if user picked a known subfolder inside the SPT root
   const lowerBase = path.basename(cleaned).toLowerCase();
   const parent1 = path.dirname(cleaned);
   const parent2 = path.dirname(parent1);
@@ -751,7 +1215,7 @@ function normalizeSptRoot(rawDirectory) {
   if (['bepinex', 'user', 'spt_runtime', 'spt_data', 'aki_data'].includes(lowerBase)) {
     if (isSptRootCandidate(parent1)) return parent1;
   }
-  if (lowerBase === 'spt' && fs.existsSync(path.join(parent1, 'BepInEx'))) {
+  if (lowerBase === 'spt' && (fs.existsSync(path.join(parent1, 'BepInEx')) || fs.existsSync(path.join(parent1, 'EscapeFromTarkov.exe')))) {
     return parent1;
   }
 
@@ -761,14 +1225,23 @@ function normalizeSptRoot(rawDirectory) {
 /**
  * Inspects an SPT directory on disk to auto-detect:
  * - Normalized SPT root path
- * - Server binary (SPT.Server.exe, Aki.Server.exe, etc.)
+ * - Server binary (SPT.Server.exe, SPT/SPT.Server.exe, SPT_Runtime/SPT.Server.exe, Aki.Server.exe)
  * - Installed SPT version (from core.json, package.json, or core DLLs/binaries)
- * - Active server mod path (SPT_Runtime/user/mods, SPT/user/mods, or user/mods)
- * - Client mod path (BepInEx/plugins)
+ * - Evidence-backed active server mod path:
+ *     SPT 3.x  -> user/mods
+ *     SPT 4.0  -> SPT/user/mods
+ *     SPT 4.1+ -> SPT_Runtime/user/mods
+ * - Ambiguity & duplicate mod folder detection across layout variants
  */
-function inspectSptDirectory(rawDirectory) {
+function inspectSptDirectory(rawDirectory, options = {}) {
   const normalizedPath = normalizeSptRoot(rawDirectory || '');
   const exists = Boolean(normalizedPath && fs.existsSync(normalizedPath));
+
+  const preferredServerModPath =
+    typeof options?.preferredServerModPath === 'string' &&
+    ['user/mods', 'SPT/user/mods', 'SPT_Runtime/user/mods'].includes(options.preferredServerModPath.replace(/\\/g, '/'))
+      ? options.preferredServerModPath.replace(/\\/g, '/')
+      : null;
 
   const defaultResult = {
     normalizedPath: normalizedPath || rawDirectory || '',
@@ -776,85 +1249,42 @@ function inspectSptDirectory(rawDirectory) {
     isValidSptRoot: false,
     sptVersion: null,
     detectedServerBinary: null,
-    serverModPath: 'user/mods',
+    serverModPath: preferredServerModPath || 'SPT/user/mods',
     clientModPath: 'BepInEx/plugins',
-    isSpt4xLayout: false,
+    isSpt4xLayout: (preferredServerModPath || 'SPT/user/mods') !== 'user/mods',
+    isLayoutAmbiguous: false,
+    ambiguousLayouts: [],
+    duplicateMods: [],
+    layoutWarning: null,
   };
 
   if (!exists) return defaultResult;
 
-  // 1. Detect Server Binary
+  // 1. Detect Server Binary on disk
   const serverBinaryCandidates = [
-    { rel: 'SPT.Server.exe', name: 'SPT.Server.exe' },
-    { rel: path.join('SPT_Runtime', 'SPT.Server.exe'), name: 'SPT_Runtime/SPT.Server.exe' },
-    { rel: path.join('SPT', 'SPT.Server.exe'), name: 'SPT/SPT.Server.exe' },
-    { rel: 'Aki.Server.exe', name: 'Aki.Server.exe' },
-    { rel: 'Server.exe', name: 'Server.exe' },
+    { rel: path.join('SPT_Runtime', 'SPT.Server.exe'), name: 'SPT_Runtime/SPT.Server.exe', layout: 'SPT_Runtime/user/mods' },
+    { rel: path.join('SPT', 'SPT.Server.exe'), name: 'SPT/SPT.Server.exe', layout: 'SPT/user/mods' },
+    { rel: 'SPT.Server.exe', name: 'SPT.Server.exe', layout: null },
+    { rel: 'Aki.Server.exe', name: 'Aki.Server.exe', layout: 'user/mods' },
+    { rel: 'Server.exe', name: 'Server.exe', layout: null },
   ];
 
   let detectedServerBinary = null;
+  let binaryImpliedLayout = null;
   for (const cand of serverBinaryCandidates) {
     if (fs.existsSync(path.join(normalizedPath, cand.rel))) {
       detectedServerBinary = cand.name;
+      binaryImpliedLayout = cand.layout;
       break;
     }
   }
 
-  // 2. Detect Server Mod Path Layout
-  const hasSptRuntime =
-    fs.existsSync(path.join(normalizedPath, 'SPT_Runtime', 'user', 'mods')) ||
-    fs.existsSync(path.join(normalizedPath, 'SPT_Runtime', 'SPT.Server.exe')) ||
-    fs.existsSync(path.join(normalizedPath, 'SPT_Runtime'));
-  const hasSptSubfolder =
-    fs.existsSync(path.join(normalizedPath, 'SPT', 'user', 'mods')) ||
-    fs.existsSync(path.join(normalizedPath, 'SPT', 'SPT_Data'));
-  const hasRootUserMods =
-    fs.existsSync(path.join(normalizedPath, 'user', 'mods')) ||
-    fs.existsSync(path.join(normalizedPath, 'user'));
-
-  let serverModPath = 'user/mods';
-  let isSpt4xLayout = false;
-
-  // Count actual mod subdirectories to prefer the directory where user's mods actually live
-  const countDirs = (dir) => {
-    try {
-      if (!fs.existsSync(dir)) return -1;
-      return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).length;
-    } catch {
-      return -1;
-    }
-  };
-
-  const countRuntimeMods = countDirs(path.join(normalizedPath, 'SPT_Runtime', 'user', 'mods'));
-  const countSptMods = countDirs(path.join(normalizedPath, 'SPT', 'user', 'mods'));
-  const countUserMods = countDirs(path.join(normalizedPath, 'user', 'mods'));
-
-  if (countSptMods > 0 && countSptMods >= countRuntimeMods && countSptMods >= countUserMods) {
-    serverModPath = 'SPT/user/mods';
-    isSpt4xLayout = true;
-  } else if (countRuntimeMods > 0 && countRuntimeMods >= countUserMods) {
-    serverModPath = 'SPT_Runtime/user/mods';
-    isSpt4xLayout = true;
-  } else if (countUserMods > 0) {
-    serverModPath = 'user/mods';
-    isSpt4xLayout = false;
-  } else if (hasSptSubfolder) {
-    serverModPath = 'SPT/user/mods';
-    isSpt4xLayout = true;
-  } else if (hasSptRuntime) {
-    serverModPath = 'SPT_Runtime/user/mods';
-    isSpt4xLayout = true;
-  } else if (hasRootUserMods) {
-    serverModPath = 'user/mods';
-    isSpt4xLayout = false;
-  }
-
-  // 3. Detect SPT Version from configs/core.json, package.json, or core DLLs
+  // 2. Detect SPT Version from configs/core.json, package.json, or core DLLs
   let detectedVersion = null;
   const coreJsonCandidates = [
-    path.join(normalizedPath, 'SPT_Data', 'Server', 'configs', 'core.json'),
-    path.join(normalizedPath, 'SPT', 'SPT_Data', 'Server', 'configs', 'core.json'),
     path.join(normalizedPath, 'SPT_Runtime', 'SPT_Data', 'Server', 'configs', 'core.json'),
+    path.join(normalizedPath, 'SPT', 'SPT_Data', 'Server', 'configs', 'core.json'),
+    path.join(normalizedPath, 'SPT_Data', 'Server', 'configs', 'core.json'),
     path.join(normalizedPath, 'Aki_Data', 'Server', 'configs', 'core.json'),
   ];
 
@@ -874,9 +1304,9 @@ function inspectSptDirectory(rawDirectory) {
 
   if (!detectedVersion) {
     const pkgCandidates = [
-      path.join(normalizedPath, 'SPT_Data', 'Server', 'package.json'),
-      path.join(normalizedPath, 'SPT', 'package.json'),
       path.join(normalizedPath, 'SPT_Runtime', 'package.json'),
+      path.join(normalizedPath, 'SPT', 'package.json'),
+      path.join(normalizedPath, 'SPT_Data', 'Server', 'package.json'),
       path.join(normalizedPath, 'package.json'),
     ];
     for (const pkgPath of pkgCandidates) {
@@ -894,7 +1324,6 @@ function inspectSptDirectory(rawDirectory) {
   }
 
   if (!detectedVersion) {
-    // Fallback: inspect spt-core.dll / aki-core.dll for embedded version string
     const coreDllCandidates = [
       path.join(normalizedPath, 'BepInEx', 'plugins', 'spt', 'spt-core.dll'),
       path.join(normalizedPath, 'BepInEx', 'plugins', 'spt', 'spt-singleplayer.dll'),
@@ -915,13 +1344,143 @@ function inspectSptDirectory(rawDirectory) {
     }
   }
 
+  // 3. Inspect layout directories and detect duplicate mod folders across layouts
+  const hasSptRuntimeStructure =
+    fs.existsSync(path.join(normalizedPath, 'SPT_Runtime', 'SPT.Server.exe')) ||
+    fs.existsSync(path.join(normalizedPath, 'SPT_Runtime', 'SPT_Data')) ||
+    fs.existsSync(path.join(normalizedPath, 'SPT_Runtime', 'user', 'mods'));
+  const hasSpt40Structure =
+    fs.existsSync(path.join(normalizedPath, 'SPT', 'SPT.Server.exe')) ||
+    fs.existsSync(path.join(normalizedPath, 'SPT', 'SPT_Data')) ||
+    fs.existsSync(path.join(normalizedPath, 'SPT', 'user', 'mods'));
+  const hasSpt3Structure =
+    fs.existsSync(path.join(normalizedPath, 'Aki.Server.exe')) ||
+    fs.existsSync(path.join(normalizedPath, 'Aki_Data')) ||
+    fs.existsSync(path.join(normalizedPath, 'user', 'mods'));
+
+  const listModSubdirs = (dir) => {
+    try {
+      if (!fs.existsSync(dir)) return [];
+      return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name.replace(/\.disabled$/i, ''))
+        .filter((name) => !isProtectedCoreItem(name));
+    } catch {
+      return [];
+    }
+  };
+
+  const layoutFolders = [
+    { rel: 'SPT_Runtime/user/mods', abs: path.join(normalizedPath, 'SPT_Runtime', 'user', 'mods') },
+    { rel: 'SPT/user/mods', abs: path.join(normalizedPath, 'SPT', 'user', 'mods') },
+    { rel: 'user/mods', abs: path.join(normalizedPath, 'user', 'mods') },
+  ];
+
+  const populatedLayouts = [];
+  const existingLayouts = [];
+  const modFolderToLayouts = new Map();
+
+  for (const lf of layoutFolders) {
+    if (fs.existsSync(lf.abs)) {
+      existingLayouts.push(lf.rel);
+      const subdirs = listModSubdirs(lf.abs);
+      if (subdirs.length > 0) {
+        populatedLayouts.push(lf.rel);
+        for (const modDir of subdirs) {
+          const key = modDir.toLowerCase();
+          if (!modFolderToLayouts.has(key)) {
+            modFolderToLayouts.set(key, { name: modDir, modName: modDir, locations: [], layouts: [] });
+          }
+          const entry = modFolderToLayouts.get(key);
+          entry.layouts.push(lf.rel);
+          entry.locations.push(`${lf.rel}/${modDir}`);
+        }
+      }
+    }
+  }
+
+  const duplicateMods = [];
+  for (const [, info] of modFolderToLayouts.entries()) {
+    if (info.layouts.length > 1) {
+      duplicateMods.push(info);
+    }
+  }
+
+  // 4. Determine active serverModPath from version and binary evidence (NOT folder counts)
+  let evidenceLayout = null;
+  const effectiveVersion = detectedVersion || (typeof options?.preferredSptVersion === 'string' ? options.preferredSptVersion.trim() : null);
+
+  if (detectedVersion) {
+    if (detectedVersion.startsWith('3.')) {
+      evidenceLayout = 'user/mods';
+    } else if (/^4\.0(\.|$)/.test(detectedVersion)) {
+      evidenceLayout = 'SPT/user/mods';
+    } else if (/^4\.[1-9]\d*(\.|$)/.test(detectedVersion)) {
+      evidenceLayout = 'SPT_Runtime/user/mods';
+    }
+  }
+
+  if (!evidenceLayout && binaryImpliedLayout) {
+    evidenceLayout = binaryImpliedLayout;
+  }
+
+  if (!evidenceLayout) {
+    // Structural marker evidence (SPT_Data/Aki_Data) when version file wasn't found
+    const markerLayouts = [];
+    if (fs.existsSync(path.join(normalizedPath, 'SPT_Runtime', 'SPT_Data'))) markerLayouts.push('SPT_Runtime/user/mods');
+    if (fs.existsSync(path.join(normalizedPath, 'SPT', 'SPT_Data'))) markerLayouts.push('SPT/user/mods');
+    if (fs.existsSync(path.join(normalizedPath, 'Aki_Data'))) markerLayouts.push('user/mods');
+    if (markerLayouts.length === 1) {
+      evidenceLayout = markerLayouts[0];
+    }
+  }
+
+  const isLayoutAmbiguous =
+    populatedLayouts.length > 1 ||
+    (!evidenceLayout && existingLayouts.length > 1);
+
+  let serverModPath = 'SPT/user/mods';
+
+  if (isLayoutAmbiguous && preferredServerModPath && existingLayouts.includes(preferredServerModPath)) {
+    // Preserve user's configured path when layout is ambiguous
+    serverModPath = preferredServerModPath;
+  } else if (evidenceLayout) {
+    serverModPath = evidenceLayout;
+  } else if (preferredServerModPath && existingLayouts.includes(preferredServerModPath)) {
+    serverModPath = preferredServerModPath;
+  } else if (existingLayouts.length === 1) {
+    serverModPath = existingLayouts[0];
+  } else if (effectiveVersion) {
+    if (effectiveVersion.startsWith('3.')) serverModPath = 'user/mods';
+    else if (/^4\.0(\.|$)/.test(effectiveVersion)) serverModPath = 'SPT/user/mods';
+    else if (/^4\.[1-9]/.test(effectiveVersion)) serverModPath = 'SPT_Runtime/user/mods';
+  } else if (hasSpt40Structure) {
+    serverModPath = 'SPT/user/mods';
+  } else if (hasSptRuntimeStructure) {
+    serverModPath = 'SPT_Runtime/user/mods';
+  } else if (hasSpt3Structure) {
+    serverModPath = 'user/mods';
+  }
+
+  const isSpt4xLayout = serverModPath !== 'user/mods';
+
+  let layoutWarning = null;
+  if (duplicateMods.length > 0) {
+    const dupNames = duplicateMods.map((d) => `${d.name} (${d.layouts.join(' & ')})`).join(', ');
+    layoutWarning = `Duplicate server mod folders detected across layouts: ${dupNames}. Using active layout "${serverModPath}".`;
+  } else if (isLayoutAmbiguous) {
+    const dirs = (populatedLayouts.length > 1 ? populatedLayouts : existingLayouts).join(', ');
+    layoutWarning = `Multiple server mod directories exist on disk (${dirs}). Active layout set to "${serverModPath}".`;
+  }
+
   const isValidSptRoot = Boolean(
     detectedServerBinary ||
       fs.existsSync(path.join(normalizedPath, 'EscapeFromTarkov.exe')) ||
       fs.existsSync(path.join(normalizedPath, 'BepInEx')) ||
-      hasSptRuntime ||
-      hasSptSubfolder ||
-      hasRootUserMods
+      hasSptRuntimeStructure ||
+      hasSpt40Structure ||
+      hasSpt3Structure
   );
 
   return {
@@ -935,20 +1494,27 @@ function inspectSptDirectory(rawDirectory) {
     serverModPath,
     clientModPath: 'BepInEx/plugins',
     isSpt4xLayout,
+    isLayoutAmbiguous,
+    ambiguousLayouts: populatedLayouts.length > 1 ? populatedLayouts : existingLayouts,
+    duplicateMods,
+    layoutWarning,
   };
 }
 
 /**
- * Resolves proper SPT directory targets across SPT 3.x, 3.10+, and 4.x:
- * - Server mods: SPT_Runtime/user/mods, SPT/user/mods, or user/mods
+ * Resolves proper SPT directory targets across SPT 3.x, 4.0, and 4.1+:
+ * - Server mods: user/mods (3.x), SPT/user/mods (4.0), or SPT_Runtime/user/mods (4.1+)
  * - Client plugins: BepInEx/plugins (ALWAYS at root SPT)
  * - Client patchers: BepInEx/patchers (ALWAYS at root SPT)
  */
-function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
+function resolveSptPaths(sptDirectory, sptVersion = '4.1.6', preferredServerModPath = null) {
   const normalizedRoot = normalizeSptRoot(sptDirectory);
-  const inspected = inspectSptDirectory(normalizedRoot);
+  const inspected = inspectSptDirectory(normalizedRoot, {
+    preferredSptVersion: sptVersion,
+    preferredServerModPath,
+  });
 
-  const serverModsRelDir = inspected.serverModPath || 'user/mods';
+  const serverModsRelDir = inspected.serverModPath || 'SPT/user/mods';
   const serverModsDir = path.join(normalizedRoot, ...serverModsRelDir.split('/'));
   const hasSptRuntime = serverModsRelDir.startsWith('SPT_Runtime') || serverModsRelDir.startsWith('SPT/');
   const isV4 = String(sptVersion).startsWith('4') || hasSptRuntime;
@@ -968,15 +1534,22 @@ function resolveSptPaths(sptDirectory, sptVersion = '4.1.6') {
     }
   }
 
-  return { serverModsDir, serverModsRelDir, hasSptRuntime, isV4, normalizedRoot };
+  return {
+    serverModsDir,
+    serverModsRelDir,
+    hasSptRuntime,
+    isV4,
+    normalizedRoot,
+    inspected,
+  };
 }
 
 /**
  * Detects whether the target SPT directory uses SPT_Runtime/user/mods, SPT/user/mods, or user/mods.
  */
-async function detectSptServerModsRelativePath(sptRoot) {
-  const inspected = inspectSptDirectory(sptRoot);
-  return inspected.serverModPath || 'user/mods';
+async function detectSptServerModsRelativePath(sptRoot, options = {}) {
+  const inspected = inspectSptDirectory(sptRoot, options);
+  return inspected.serverModPath || 'SPT/user/mods';
 }
 
 const IGNORED_DOTNET_GUID_PREFIXES = [
@@ -1192,10 +1765,41 @@ function sha256File(filePath) {
 
 function isMutableConfigFile(filePath) {
   if (!filePath || typeof filePath !== 'string') return false;
-  const ext = path.extname(filePath).toLowerCase();
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  const ext = path.extname(normalized);
+  if (
+    [
+      '.json',
+      '.jsonc',
+      '.cfg',
+      '.ini',
+      '.yaml',
+      '.yml',
+      '.xml',
+      '.toml',
+      '.txt',
+      '.log',
+      '.csv',
+      '.db',
+      '.sqlite',
+    ].includes(ext)
+  ) {
+    return true;
+  }
+  if (/(\/|^)(config|configs|cfg|settings|saves|profiles|userdata|user_data)(\/|$)/i.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function shouldDeepMergeConfigOnUpdate(filePath) {
+  if (!isMutableConfigFile(filePath)) return false;
   const base = path.basename(filePath).toLowerCase();
-  if (base === 'package.json') return false; // Mod manifest, not user gameplay config
-  return ['.json', '.jsonc', '.cfg', '.ini', '.yaml', '.yml'].includes(ext);
+  if (['package.json', 'package-lock.json', 'manifest.json', 'deps.json', 'tsconfig.json'].includes(base)) {
+    return false;
+  }
+  const ext = path.extname(base);
+  return ['.json', '.jsonc', '.cfg', '.ini'].includes(ext);
 }
 
 /**
@@ -1375,7 +1979,9 @@ class VfsTransactionJournal {
         } else if (op.type === 'backup') {
           if (fs.existsSync(op.backup)) {
             if (fs.existsSync(op.target)) {
-              try { await fs.promises.unlink(op.target); } catch (_) {}
+              try {
+                await fs.promises.unlink(op.target);
+              } catch (_) {}
             }
             await fs.promises.rename(op.backup, op.target);
           }
@@ -1408,7 +2014,9 @@ class VfsTransactionJournal {
 }
 
 /**
- * Intelligent SPT Routing Engine with NTFS Hardlink VFS, Transactional Rollback, and Semantic Config Merging
+ * Intelligent SPT Routing Engine with NTFS Hardlink VFS, Transactional Rollback, and Semantic Config Merging.
+ * Mutable config/data files are ALWAYS copied rather than hardlinked so editing installed configs
+ * can never corrupt the immutable `.blacksite_library` store.
  */
 async function routeExtractedModToSpt(
   extractedDir,
@@ -1417,9 +2025,10 @@ async function routeExtractedModToSpt(
   sptVersion = '4.1.6',
   performanceMode = 'balanced',
   onProgress = null,
-  cleanModIdentifier = null
+  cleanModIdentifier = null,
+  preferredServerModPath = null
 ) {
-  const { serverModsDir, serverModsRelDir } = resolveSptPaths(sptDirectory, sptVersion);
+  const { serverModsDir, serverModsRelDir } = resolveSptPaths(sptDirectory, sptVersion, preferredServerModPath);
   const targetClientPluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
   const targetClientPatchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
 
@@ -1443,8 +2052,10 @@ async function routeExtractedModToSpt(
   };
 
   /**
-   * Deploys single file via zero-copy NTFS hardlink, pre-flighting lock contention (EBUSY)
-   * and deep-merging mutable user configurations.
+   * Deploys single file:
+   * - Immutable binary/asset files use zero-copy NTFS hardlinks (with copy fallback across volumes)
+   * - Mutable config and user data files ALWAYS use independent copies (and deep-merge on update)
+   *   so user edits never mutate `.blacksite_library`.
    */
   async function deployFileWithHardlink(srcFile, destFile) {
     if (!fs.existsSync(srcFile)) return;
@@ -1456,7 +2067,8 @@ async function routeExtractedModToSpt(
       journal.recordMkdir(destDir);
     }
 
-    const isConfig = isMutableConfigFile(destFile);
+    const isMutable = isMutableConfigFile(destFile) || isMutableConfigFile(srcFile);
+    const isMergeableConfig = shouldDeepMergeConfigOnUpdate(destFile);
     const relPathKey = path.relative(sptDirectory, destFile).replace(/\\/g, '/').toLowerCase();
 
     // If destination file exists: pre-flight test with atomic rename to catch EBUSY (game running)
@@ -1474,62 +2086,72 @@ async function routeExtractedModToSpt(
         throw err;
       }
 
-      if (isConfig) {
-        const backupContent = fs.readFileSync(backupPath, 'utf8');
-        const incomingContent = fs.readFileSync(srcFile, 'utf8');
-        const currentHash = sha256Buffer(Buffer.from(backupContent));
-        const baseHash = modMeta.baseHashes ? modMeta.baseHashes[relPathKey] : null;
+      if (isMergeableConfig) {
+        try {
+          const backupContent = await fs.promises.readFile(backupPath, 'utf8');
+          const incomingContent = await fs.promises.readFile(srcFile, 'utf8');
+          const currentHash = sha256Buffer(Buffer.from(backupContent));
+          const baseHash = modMeta.baseHashes ? modMeta.baseHashes[relPathKey] : null;
 
-        // If user customized settings (or no base recorded yet), preserve user settings via deep merge
-        if (baseHash && currentHash !== baseHash) {
-          console.log(`[Blacksite VFS] Deep-merging mutable config: ${relPathKey} (preserving user settings)`);
-          let mergedContent = incomingContent;
-          const ext = path.extname(destFile).toLowerCase();
+          // If user customized settings, preserve user settings via deep merge
+          if (baseHash && currentHash !== baseHash) {
+            console.log(`[Blacksite VFS] Deep-merging mutable config: ${relPathKey} (preserving user settings)`);
+            let mergedContent = incomingContent;
+            const ext = path.extname(destFile).toLowerCase();
 
-          if (ext === '.json' || ext === '.jsonc') {
-            try {
-              const cleanUser = backupContent.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
-              const cleanIncoming = incomingContent.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
-              const userObj = JSON.parse(cleanUser);
-              const incomingObj = JSON.parse(cleanIncoming);
-              const mergedObj = deepMergeJsonObjects(userObj, incomingObj);
-              mergedContent = JSON.stringify(mergedObj, null, 2);
-            } catch (jsonErr) {
-              console.warn('[Blacksite VFS] JSON parse error during merge, keeping user settings:', jsonErr.message);
-              mergedContent = backupContent;
+            if (ext === '.json' || ext === '.jsonc') {
+              try {
+                const cleanUser = backupContent.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
+                const cleanIncoming = incomingContent.replace(/\/\*[\s\S]*?\*\/|([^:]|^)\/\/.*$/gm, '$1');
+                const userObj = JSON.parse(cleanUser);
+                const incomingObj = JSON.parse(cleanIncoming);
+                const mergedObj = deepMergeJsonObjects(userObj, incomingObj);
+                mergedContent = JSON.stringify(mergedObj, null, 2);
+              } catch (jsonErr) {
+                console.warn('[Blacksite VFS] JSON parse error during merge, keeping user settings:', jsonErr.message);
+                mergedContent = backupContent;
+              }
+            } else if (ext === '.cfg' || ext === '.ini') {
+              mergedContent = deepMergeIniStrings(backupContent, incomingContent);
             }
-          } else if (ext === '.cfg' || ext === '.ini') {
-            mergedContent = deepMergeIniStrings(backupContent, incomingContent);
-          }
 
-          await fs.promises.writeFile(destFile, mergedContent, 'utf8');
-          journal.recordCopy(destFile, srcFile);
-          if (!modMeta.baseHashes) modMeta.baseHashes = {};
-          modMeta.baseHashes[relPathKey] = sha256Buffer(Buffer.from(incomingContent));
-          return;
+            await fs.promises.writeFile(destFile, mergedContent, 'utf8');
+            journal.recordCopy(destFile, srcFile);
+            if (!modMeta.baseHashes) modMeta.baseHashes = {};
+            modMeta.baseHashes[relPathKey] = sha256Buffer(Buffer.from(incomingContent));
+            newlyDeployedFiles.push(path.relative(sptDirectory, destFile).replace(/\\/g, '/'));
+            return;
+          }
+        } catch (mergeReadErr) {
+          console.warn('[Blacksite VFS] Non-fatal config inspection error, falling back to clean copy:', mergeReadErr.message);
         }
       }
     }
 
-    // Deploy via zero-copy NTFS hardlink (O(1) linking)
-    try {
-      await fs.promises.link(srcFile, destFile);
-      journal.recordLink(destFile, srcFile);
-    } catch (linkErr) {
-      // Cross-device (EXDEV) or filesystem constraint fallback to copy
+    if (isMutable) {
+      // Mutable config/data files are ALWAYS copied so editing installed files never mutates .blacksite_library
       await fs.promises.copyFile(srcFile, destFile);
       journal.recordCopy(destFile, srcFile);
+      if (isMergeableConfig) {
+        if (!modMeta.baseHashes) modMeta.baseHashes = {};
+        modMeta.baseHashes[relPathKey] = sha256File(srcFile);
+      }
+    } else {
+      // Immutable binary/asset payload: deploy via zero-copy NTFS hardlink (fallback to copy across drives)
+      try {
+        await fs.promises.link(srcFile, destFile);
+        journal.recordLink(destFile, srcFile);
+      } catch (linkErr) {
+        await fs.promises.copyFile(srcFile, destFile);
+        journal.recordCopy(destFile, srcFile);
+      }
     }
 
-    if (isConfig) {
-      if (!modMeta.baseHashes) modMeta.baseHashes = {};
-      modMeta.baseHashes[relPathKey] = sha256File(destFile);
-    }
     newlyDeployedFiles.push(path.relative(sptDirectory, destFile).replace(/\\/g, '/'));
   }
 
   /**
-   * Recursively mirrors directory structure and deploys files via hardlinks
+   * Recursively mirrors directory structure and deploys files via hardlinks/copies
    */
   async function deployDirectoryWithHardlinks(srcDir, destDir) {
     if (!fs.existsSync(srcDir)) return;
@@ -1748,6 +2370,84 @@ async function routeExtractedModToSpt(
 }
 
 /**
+ * Validates a download URL or redirect target:
+ * - Enforces HTTPS by default unless `allowInsecureHttp === true`.
+ * - Rejects HTTPS -> HTTP protocol downgrades on redirect hops.
+ */
+function validateDownloadUrl(targetUrl, { allowInsecureHttp = false, previousUrl = null } = {}) {
+  if (!targetUrl || typeof targetUrl !== 'string') {
+    const err = new Error('Invalid download URL: URL must be a non-empty string.');
+    err.code = 'ERR_INVALID_URL';
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = new URL(targetUrl);
+  } catch (e) {
+    const err = new Error(`Malformed download URL "${targetUrl}": ${e.message}`);
+    err.code = 'ERR_INVALID_URL';
+    throw err;
+  }
+
+  if (previousUrl) {
+    try {
+      const prevParsed = new URL(previousUrl);
+      if (prevParsed.protocol === 'https:' && parsed.protocol === 'http:') {
+        const err = new Error(
+          `Security Error: Blocked insecure redirect downgrade from HTTPS (${prevParsed.hostname}) to HTTP (${parsed.hostname}).`
+        );
+        err.code = 'ERR_HTTPS_DOWNGRADE';
+        throw err;
+      }
+    } catch (downgradeErr) {
+      if (downgradeErr.code === 'ERR_HTTPS_DOWNGRADE') throw downgradeErr;
+    }
+  }
+
+  if (parsed.protocol !== 'https:') {
+    if (parsed.protocol === 'http:' && allowInsecureHttp === true) {
+      return parsed;
+    }
+    const err = new Error(
+      `Security Error: Refusing to download over insecure protocol "${parsed.protocol}" (${parsed.hostname}). HTTPS is required unless insecure sources are explicitly enabled.`
+    );
+    err.code = 'ERR_INSECURE_PROTOCOL';
+    throw err;
+  }
+
+  return parsed;
+}
+
+function isTlsCertificateError(err) {
+  if (!err) return false;
+  const code = String(err.code || err.cause?.code || '');
+  const msg = String(err.message || err.cause?.message || '');
+  return (
+    code.startsWith('CERT_') ||
+    code.startsWith('ERR_TLS_') ||
+    code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+    code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+    code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+    code === 'HOSTNAME_MISMATCH' ||
+    /certificate|self[- ]signed|unable to verify|tls|ssl/i.test(msg)
+  );
+}
+
+function formatTlsError(err, targetUrl) {
+  let host = targetUrl;
+  try {
+    host = new URL(targetUrl).hostname;
+  } catch (_) {}
+  const rawCode = err?.code || err?.cause?.code || 'ERR_TLS_CERT_INVALID';
+  const formatted = new Error(
+    `TLS certificate validation failed for "${host}" (${rawCode}). The server presented an expired, self-signed, or mismatched SSL certificate. Connection was aborted to protect your installation.`
+  );
+  formatted.code = 'ERR_TLS_CERT_INVALID';
+  formatted.originalCode = rawCode;
+  return formatted;
+}
+
+/**
  * Resolves safe HTTP request headers for mod downloads.
  * Uses an authentic application client User-Agent and strips 'Referer' on external git/CDN
  * mirrors (Codeberg, GitHub, GitLab, S3) to guarantee HTTP 200 responses.
@@ -1792,22 +2492,57 @@ function getDownloadHeaders(targetUrl, strategy = 'default') {
   return headers;
 }
 
+function safeUnlinkPartialFile(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (_) {}
+}
+
 /**
- * Native Node.js HTTP/HTTPS streaming downloader with permissive TLS agent.
- * Handles broken SSL certificates (e.g. author external hosts), redirects,
- * and throttles live download progress.
+ * Native Node.js HTTPS/HTTP streaming downloader with strict TLS verification,
+ * redirect downgrade protection, streaming size limits, and partial file cleanup.
  */
-function downloadViaNodeHttp(requestUrl, destFilePath, headers = {}, onProgress = null, redirectDepth = 0) {
+function downloadViaNodeHttp(
+  requestUrl,
+  destFilePath,
+  headers = {},
+  onProgress = null,
+  redirectDepth = 0,
+  options = {}
+) {
+  const limits = resolveResourceLimits(options.resourceLimits || options);
+  const allowInsecureHttp = Boolean(options.allowInsecureHttp);
+  const signal = options.signal || null;
+
   return new Promise((resolve, reject) => {
+    const failAndCleanup = (err) => {
+      safeUnlinkPartialFile(destFilePath);
+      reject(err);
+    };
+
+    if (signal?.aborted) {
+      const abortErr = new Error('Download cancelled by user.');
+      abortErr.code = 'ERR_DOWNLOAD_ABORTED';
+      return failAndCleanup(abortErr);
+    }
+
     if (redirectDepth > 10) {
-      return reject(new Error('Too many HTTP redirects (exceeded 10 hops).'));
+      const redirErr = new Error('Too many HTTP redirects (exceeded 10 hops).');
+      redirErr.code = 'ERR_TOO_MANY_REDIRECTS';
+      return failAndCleanup(redirErr);
     }
 
     let parsed;
     try {
-      parsed = new URL(requestUrl);
+      parsed = validateDownloadUrl(requestUrl, {
+        allowInsecureHttp,
+        previousUrl: options.previousUrl || null,
+      });
     } catch (urlErr) {
-      return reject(urlErr);
+      return failAndCleanup(urlErr);
     }
 
     const isHttps = parsed.protocol === 'https:';
@@ -1828,57 +2563,120 @@ function downloadViaNodeHttp(requestUrl, destFilePath, headers = {}, onProgress 
 
     if (isHttps) {
       reqOptions.agent = new https.Agent({
-        rejectUnauthorized: false,
+        rejectUnauthorized: true,
         keepAlive: true,
-        checkServerIdentity: () => undefined,
       });
     }
 
     const req = client.request(reqOptions, (res) => {
-      // Follow 301, 302, 303, 307, 308 redirects
+      // Follow 301, 302, 303, 307, 308 redirects with strict protocol validation
       if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
         const location = res.headers['location'];
         if (!location) {
           res.resume();
-          return reject(new Error(`HTTP ${res.statusCode} redirect without Location header.`));
+          return failAndCleanup(new Error(`HTTP ${res.statusCode} redirect without Location header.`));
         }
         res.resume();
-        const nextUrl = new URL(location, requestUrl).toString();
-        return downloadViaNodeHttp(nextUrl, destFilePath, headers, onProgress, redirectDepth + 1)
+        let nextUrl;
+        try {
+          nextUrl = new URL(location, requestUrl).toString();
+          validateDownloadUrl(nextUrl, {
+            allowInsecureHttp,
+            previousUrl: requestUrl,
+          });
+        } catch (redirValidationErr) {
+          return failAndCleanup(redirValidationErr);
+        }
+
+        return downloadViaNodeHttp(nextUrl, destFilePath, headers, onProgress, redirectDepth + 1, {
+          ...options,
+          previousUrl: requestUrl,
+        })
           .then(resolve)
-          .catch(reject);
+          .catch(failAndCleanup);
       }
 
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
         const httpErr = new Error(
-          `Download failed with HTTP status ${res.statusCode}: ${res.statusMessage || (res.statusCode === 404 ? 'Not Found' : 'Download Error')}`
+          `Download failed with HTTP status ${res.statusCode}: ${
+            res.statusMessage || (res.statusCode === 404 ? 'Not Found' : 'Download Error')
+          }`
         );
         httpErr.statusCode = res.statusCode;
         if (res.statusCode === 404) httpErr.code = 'ERR_NOT_FOUND_404';
-        return reject(httpErr);
+        return failAndCleanup(httpErr);
       }
 
       const contentType = res.headers['content-type'] || '';
-      // Guard against HTML error pages masquerading as archives
       if (contentType.includes('text/html') && !requestUrl.includes('github') && !requestUrl.includes('codeberg')) {
         res.resume();
         const htmlErr = new Error('Download failed: remote host returned an HTML web page instead of a mod archive file.');
         htmlErr.statusCode = 404;
         htmlErr.code = 'ERR_NOT_FOUND_404';
-        return reject(htmlErr);
+        return failAndCleanup(htmlErr);
       }
 
       const contentLengthHeader = res.headers['content-length'];
       const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+      if (totalBytes > limits.maxDownloadBytes) {
+        res.resume();
+        const limitErr = new Error(
+          `Download size (${(totalBytes / (1024 * 1024)).toFixed(1)} MB) exceeds maximum allowed limit (${(
+            limits.maxDownloadBytes /
+            (1024 * 1024)
+          ).toFixed(1)} MB).`
+        );
+        limitErr.code = 'ERR_DOWNLOAD_LIMIT_EXCEEDED';
+        return failAndCleanup(limitErr);
+      }
+
       const fileStream = fs.createWriteStream(destFilePath);
 
       let receivedBytes = 0;
       let lastProgressTime = Date.now();
       let lastBytesInWindow = 0;
+      let abortedOrFailed = false;
+
+      const abortStreamWithError = (err) => {
+        if (abortedOrFailed) return;
+        abortedOrFailed = true;
+        try {
+          res.destroy();
+        } catch (_) {}
+        try {
+          req.destroy();
+        } catch (_) {}
+        fileStream.destroy();
+        fileStream.once('close', () => failAndCleanup(err));
+        setImmediate(() => failAndCleanup(err));
+      };
+
+      if (signal) {
+        signal.addEventListener(
+          'abort',
+          () => {
+            const abortErr = new Error('Download cancelled by user.');
+            abortErr.code = 'ERR_DOWNLOAD_ABORTED';
+            abortStreamWithError(abortErr);
+          },
+          { once: true }
+        );
+      }
 
       res.on('data', (chunk) => {
+        if (abortedOrFailed) return;
         receivedBytes += chunk.length;
+
+        if (receivedBytes > limits.maxDownloadBytes) {
+          const limitErr = new Error(
+            `Download stream exceeded maximum allowed size (${(limits.maxDownloadBytes / (1024 * 1024)).toFixed(1)} MB).`
+          );
+          limitErr.code = 'ERR_DOWNLOAD_LIMIT_EXCEEDED';
+          abortStreamWithError(limitErr);
+          return;
+        }
+
         const canContinue = fileStream.write(chunk);
         if (!canContinue) {
           res.pause();
@@ -1916,7 +2714,7 @@ function downloadViaNodeHttp(requestUrl, destFilePath, headers = {}, onProgress 
 
       let isFinished = false;
       const finishDownload = () => {
-        if (isFinished) return;
+        if (isFinished || abortedOrFailed) return;
         isFinished = true;
         if (onProgress) {
           onProgress({
@@ -1931,7 +2729,9 @@ function downloadViaNodeHttp(requestUrl, destFilePath, headers = {}, onProgress 
       };
 
       res.on('end', () => {
-        fileStream.end();
+        if (!abortedOrFailed) {
+          fileStream.end();
+        }
       });
 
       fileStream.on('finish', () => {
@@ -1943,38 +2743,65 @@ function downloadViaNodeHttp(requestUrl, destFilePath, headers = {}, onProgress 
       });
 
       res.on('error', (err) => {
-        fileStream.destroy();
-        reject(err);
+        abortStreamWithError(isTlsCertificateError(err) ? formatTlsError(err, requestUrl) : err);
       });
 
       fileStream.on('error', (err) => {
-        reject(err);
+        abortStreamWithError(err);
       });
     });
 
     req.on('timeout', () => {
-      req.destroy(new Error('Download connection timed out after 45 seconds.'));
+      const timeoutErr = new Error('Download connection timed out after 45 seconds.');
+      timeoutErr.code = 'ETIMEDOUT';
+      req.destroy(timeoutErr);
     });
 
     req.on('error', (err) => {
-      reject(err);
+      failAndCleanup(isTlsCertificateError(err) ? formatTlsError(err, requestUrl) : err);
     });
 
     req.end();
   });
 }
 
+function isNonRetryableDownloadError(err) {
+  if (!err) return false;
+  const nonRetryableCodes = new Set([
+    'ERR_TLS_CERT_INVALID',
+    'ERR_HTTPS_DOWNGRADE',
+    'ERR_INSECURE_PROTOCOL',
+    'ERR_INVALID_URL',
+    'ERR_DOWNLOAD_LIMIT_EXCEEDED',
+    'ERR_DOWNLOAD_ABORTED',
+    'ERR_NOT_FOUND_404',
+  ]);
+  return nonRetryableCodes.has(err.code) || err.statusCode === 404;
+}
+
 /**
- * Streams a remote file directly to disk in 64KB chunks with throttled progress events.
- * Handles manual redirect hops across hosts, automatically recovers from broken TLS,
- * and handles 404 fallbacks.
+ * Streams a remote file directly to disk with strict TLS verification, redirect protocol checks,
+ * streaming size limits, and automatic partial file cleanup on error.
  */
-async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRetries = 3) {
+async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRetries = 3, options = {}) {
+  const limits = resolveResourceLimits(options.resourceLimits || options);
+  const allowInsecureHttp = Boolean(options.allowInsecureHttp);
+  const signal = options.signal || null;
+
+  // Validate initial URL up front before any network call
+  validateDownloadUrl(initialUrl, { allowInsecureHttp });
+
   let attempt = 0;
-  let currentUrl = initialUrl;
 
   while (attempt <= maxRetries) {
+    let currentUrl = initialUrl;
     try {
+      if (signal?.aborted) {
+        const abortErr = new Error('Download cancelled by user.');
+        abortErr.code = 'ERR_DOWNLOAD_ABORTED';
+        throw abortErr;
+      }
+
       let redirects = 0;
       const maxRedirects = 10;
       let response = null;
@@ -1987,46 +2814,78 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
       const strategy = attempt === 0 ? 'default' : attempt === 1 ? 'fallback_curl' : 'browser';
 
       while (redirects <= maxRedirects) {
-        let headers = getDownloadHeaders(currentUrl, strategy);
+        validateDownloadUrl(currentUrl, { allowInsecureHttp });
+        const headers = getDownloadHeaders(currentUrl, strategy);
 
         try {
           response = await fetchFn(currentUrl, {
             headers,
             redirect: 'manual',
+            signal,
           });
         } catch (fetchErr) {
-          console.warn(`[Blacksite Installer] Fetch engine threw error on ${currentUrl} (${fetchErr.message}). Switching to native HTTPS agent...`);
-          return await downloadViaNodeHttp(currentUrl, destFilePath, headers, onProgress);
+          if (signal?.aborted || fetchErr.name === 'AbortError') {
+            const abortErr = new Error('Download cancelled by user.');
+            abortErr.code = 'ERR_DOWNLOAD_ABORTED';
+            throw abortErr;
+          }
+          if (isTlsCertificateError(fetchErr)) {
+            throw formatTlsError(fetchErr, currentUrl);
+          }
+          return await downloadViaNodeHttp(currentUrl, destFilePath, headers, onProgress, 0, {
+            ...options,
+            resourceLimits: limits,
+            allowInsecureHttp,
+            signal,
+          });
         }
 
-        // Explicitly handle HTTP 301, 302, 303, 307, 308 redirects
+        // Explicitly handle HTTP 301, 302, 303, 307, 308 redirects with downgrade checks
         if ([301, 302, 303, 307, 308].includes(response.status)) {
           const location = response.headers.get('location');
           if (!location) {
             throw new Error(`HTTP ${response.status} redirect without Location header.`);
           }
-          currentUrl = new URL(location, currentUrl).toString();
+          const nextUrl = new URL(location, currentUrl).toString();
+          validateDownloadUrl(nextUrl, {
+            allowInsecureHttp,
+            previousUrl: currentUrl,
+          });
+          currentUrl = nextUrl;
           redirects++;
           continue;
         }
 
         // If 403 Forbidden is encountered on this hop, immediately try with tool fallback
         if (response.status === 403 && strategy !== 'fallback_curl') {
-          console.warn(`[Blacksite Installer] HTTP 403 on ${currentUrl}, retrying with tool fallback headers...`);
           const fallbackHeaders = getDownloadHeaders(currentUrl, 'fallback_curl');
           try {
             response = await fetchFn(currentUrl, {
               headers: fallbackHeaders,
               redirect: 'manual',
+              signal,
             });
           } catch (fetchErr) {
-            return await downloadViaNodeHttp(currentUrl, destFilePath, fallbackHeaders, onProgress);
+            if (isTlsCertificateError(fetchErr)) {
+              throw formatTlsError(fetchErr, currentUrl);
+            }
+            return await downloadViaNodeHttp(currentUrl, destFilePath, fallbackHeaders, onProgress, 0, {
+              ...options,
+              resourceLimits: limits,
+              allowInsecureHttp,
+              signal,
+            });
           }
 
           if ([301, 302, 303, 307, 308].includes(response.status)) {
             const location = response.headers.get('location');
             if (location) {
-              currentUrl = new URL(location, currentUrl).toString();
+              const nextUrl = new URL(location, currentUrl).toString();
+              validateDownloadUrl(nextUrl, {
+                allowInsecureHttp,
+                previousUrl: currentUrl,
+              });
+              currentUrl = nextUrl;
               redirects++;
               continue;
             }
@@ -2036,17 +2895,20 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
         break;
       }
 
+      if (redirects > maxRedirects) {
+        const redirErr = new Error('Too many HTTP redirects (exceeded 10 hops).');
+        redirErr.code = 'ERR_TOO_MANY_REDIRECTS';
+        throw redirErr;
+      }
+
       if (!response.ok) {
-        // Automatic 404 Recovery: If direct CDN link files.sp-mod.com/mods/{id}.zip returns 404,
-        // try the Forge gateway route: https://sp-mod.com/mod/download/{id}
         if (response.status === 404 && currentUrl.includes('files.sp-mod.com/mods/')) {
           const modIdMatch = currentUrl.match(/mods\/(\d+)\.zip/);
           if (modIdMatch && modIdMatch[1]) {
             const fallbackForgeUrl = `https://sp-mod.com/mod/download/${modIdMatch[1]}`;
-            console.log(`[Blacksite Installer] Direct CDN returned 404. Attempting Forge download fallback: ${fallbackForgeUrl}`);
             try {
-              return await streamDownloadToFile(fallbackForgeUrl, destFilePath, onProgress, 1);
-            } catch (fbErr) {
+              return await streamDownloadToFile(fallbackForgeUrl, destFilePath, onProgress, 1, options);
+            } catch (_) {
               // Let original 404 error propagate if fallback also failed
             }
           }
@@ -2064,6 +2926,16 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
 
       const contentLengthHeader = response.headers.get('content-length');
       const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : 0;
+      if (totalBytes > limits.maxDownloadBytes) {
+        const limitErr = new Error(
+          `Download size (${(totalBytes / (1024 * 1024)).toFixed(1)} MB) exceeds maximum allowed limit (${(
+            limits.maxDownloadBytes /
+            (1024 * 1024)
+          ).toFixed(1)} MB).`
+        );
+        limitErr.code = 'ERR_DOWNLOAD_LIMIT_EXCEEDED';
+        throw limitErr;
+      }
 
       const fileStream = fs.createWriteStream(destFilePath);
       const readable = Readable.fromWeb(response.body);
@@ -2072,10 +2944,45 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
       let lastProgressTime = Date.now();
       let lastBytesInWindow = 0;
       let downloadSpeed = 'Calculating...';
+      let abortedOrFailed = false;
 
       await new Promise((resolve, reject) => {
+        const failStream = (err) => {
+          if (abortedOrFailed) return;
+          abortedOrFailed = true;
+          try {
+            readable.destroy();
+          } catch (_) {}
+          fileStream.destroy();
+          safeUnlinkPartialFile(destFilePath);
+          reject(err);
+        };
+
+        if (signal) {
+          signal.addEventListener(
+            'abort',
+            () => {
+              const abortErr = new Error('Download cancelled by user.');
+              abortErr.code = 'ERR_DOWNLOAD_ABORTED';
+              failStream(abortErr);
+            },
+            { once: true }
+          );
+        }
+
         readable.on('data', (chunk) => {
+          if (abortedOrFailed) return;
           receivedBytes += chunk.length;
+
+          if (receivedBytes > limits.maxDownloadBytes) {
+            const limitErr = new Error(
+              `Download stream exceeded maximum allowed size (${(limits.maxDownloadBytes / (1024 * 1024)).toFixed(1)} MB).`
+            );
+            limitErr.code = 'ERR_DOWNLOAD_LIMIT_EXCEEDED';
+            failStream(limitErr);
+            return;
+          }
+
           const canContinue = fileStream.write(chunk);
           if (!canContinue) {
             readable.pause();
@@ -2114,7 +3021,7 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
 
         let isFinished = false;
         const finishDownload = () => {
-          if (isFinished) return;
+          if (isFinished || abortedOrFailed) return;
           isFinished = true;
           if (onProgress) {
             onProgress({
@@ -2129,7 +3036,9 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
         };
 
         readable.on('end', () => {
-          fileStream.end();
+          if (!abortedOrFailed) {
+            fileStream.end();
+          }
         });
 
         fileStream.on('finish', () => {
@@ -2141,28 +3050,28 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
         });
 
         readable.on('error', (err) => {
-          fileStream.destroy();
-          reject(err);
+          failStream(err);
         });
 
         fileStream.on('error', (err) => {
-          reject(err);
+          failStream(err);
         });
       });
 
       return { totalBytes: totalBytes || receivedBytes };
     } catch (err) {
-      if (err.message && (err.message.includes('fetch failed') || err.message.includes('SSL') || err.message.includes('CERT_'))) {
-        try {
-          console.warn(`[Blacksite Installer] Fetch failed on attempt ${attempt + 1}. Retrying via Node native HTTPS agent...`);
-          return await downloadViaNodeHttp(currentUrl, destFilePath, getDownloadHeaders(currentUrl, 'default'), onProgress);
-        } catch (nodeHttpErr) {
-          err = nodeHttpErr;
-        }
+      safeUnlinkPartialFile(destFilePath);
+
+      if (isTlsCertificateError(err) && err.code !== 'ERR_TLS_CERT_INVALID') {
+        err = formatTlsError(err, currentUrl);
+      }
+
+      if (isNonRetryableDownloadError(err)) {
+        throw err;
       }
 
       attempt++;
-      if (attempt > maxRetries || err.statusCode === 404 || err.code === 'ERR_NOT_FOUND_404') {
+      if (attempt > maxRetries) {
         throw err;
       }
       console.warn(`[Blacksite Installer] Download attempt ${attempt} failed, retrying in 1.2s...`, err.message);
@@ -2179,12 +3088,13 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
 }
 
 /**
- * Downloads and installs a mod with zero-lag direct-to-disk streaming and SPT 4.x routing
+ * Downloads and installs a mod with isolated staging extraction, VFS hardlink/copy deployment, and SPT 3.x/4.0/4.1+ routing
  */
 async function installMod({
   queueId,
   sptDirectory,
   sptVersion = '4.1.6',
+  preferredServerModPath = null,
   modName,
   author,
   version,
@@ -2192,11 +3102,16 @@ async function installMod({
   archiveBase64,
   archiveFileName,
   performanceMode = 'balanced',
+  allowInsecureHttp = false,
+  resourceLimits = {},
+  signal = null,
   onProgress,
 }) {
   if (!sptDirectory || typeof sptDirectory !== 'string') {
     throw new Error('Valid SPT root directory is required.');
   }
+
+  const limits = resolveResourceLimits(resourceLimits);
 
   let tempWorkDir;
   let isSameDriveStaging = false;
@@ -2210,7 +3125,7 @@ async function installMod({
     const osTemp = os.tmpdir();
     tempWorkDir = fs.mkdtempSync(path.join(osTemp, 'blacksite-inst-'));
   }
-  const tempArchiveFile = path.join(tempWorkDir, archiveFileName || 'mod-download.archive');
+  const tempArchiveFile = path.join(tempWorkDir, path.basename(archiveFileName || 'mod-download.archive'));
   const tempExtractDir = path.join(tempWorkDir, 'extracted');
   let finalArchiveFile = tempArchiveFile;
 
@@ -2227,10 +3142,25 @@ async function installMod({
         });
       }
 
-      await streamDownloadToFile(downloadUrl, tempArchiveFile, onProgress);
+      await streamDownloadToFile(downloadUrl, tempArchiveFile, onProgress, 3, {
+        allowInsecureHttp,
+        resourceLimits: limits,
+        signal,
+      });
     } else if (archiveBase64) {
       console.log(`[Blacksite Installer] Writing local archive buffer to disk...`);
-      fs.writeFileSync(tempArchiveFile, Buffer.from(archiveBase64, 'base64'));
+      const buf = Buffer.from(archiveBase64, 'base64');
+      if (buf.length > limits.maxDownloadBytes) {
+        const limitErr = new Error(
+          `Archive size (${(buf.length / (1024 * 1024)).toFixed(1)} MB) exceeds maximum allowed limit (${(
+            limits.maxDownloadBytes /
+            (1024 * 1024)
+          ).toFixed(1)} MB).`
+        );
+        limitErr.code = 'ERR_DOWNLOAD_LIMIT_EXCEEDED';
+        throw limitErr;
+      }
+      fs.writeFileSync(tempArchiveFile, buf);
     } else {
       throw new Error('Neither downloadUrl nor archiveBase64 was provided.');
     }
@@ -2289,25 +3219,14 @@ async function installMod({
       return routeResult;
     }
 
-    // Extraction stage - Dedicated Immutable Library Depot (<SPT_ROOT>/.blacksite_library/<modId>_<version>/)
-    console.log(`[Blacksite Installer] Extracting archive to Library Depot (Performance mode: ${performanceMode})...`);
+    // 1. Extract into isolated staging directory FIRST (`tempExtractDir`)
+    console.log(`[Blacksite Installer] Extracting archive into isolated staging (Performance mode: ${performanceMode})...`);
     if (onProgress) {
       onProgress({
         stage: 'extracting',
         percent: 5,
         downloadSpeed: `Starting decompression (${performanceMode} mode)...`,
       });
-    }
-
-    const cleanModId = (modName || 'mod').replace(/[^\w.-]/g, '_');
-    const cleanVer = (version || '1.0.0').replace(/[^\w.-]/g, '_');
-    const cleanModIdentifier = `${cleanModId}_${cleanVer}`;
-    const libraryDepotDir = path.join(sptDirectory, '.blacksite_library', cleanModIdentifier);
-    let targetExtractDir = path.join(libraryDepotDir, 'extracted');
-    try {
-      fs.mkdirSync(targetExtractDir, { recursive: true });
-    } catch (depotErr) {
-      targetExtractDir = tempExtractDir;
     }
 
     const detectedFmt = detectArchiveFormat(tempArchiveFile);
@@ -2319,9 +3238,28 @@ async function installMod({
       } catch (_) {}
     }
 
-    await extractArchive(finalArchiveFile, targetExtractDir, performanceMode, onProgress);
+    await extractArchive(finalArchiveFile, tempExtractDir, performanceMode, onProgress, limits);
 
-    // Routing stage via NTFS Hardlink VFS
+    // 2. Promote verified staging tree into `.blacksite_library/<modId>_<version>/extracted`
+    const cleanModId = (modName || 'mod').replace(/[^\w.-]/g, '_');
+    const cleanVer = (version || '1.0.0').replace(/[^\w.-]/g, '_');
+    const cleanModIdentifier = `${cleanModId}_${cleanVer}`;
+    const libraryDepotDir = path.join(sptDirectory, '.blacksite_library', cleanModIdentifier);
+    let sourceDeployDir = tempExtractDir;
+    try {
+      const targetLibraryExtractDir = path.join(libraryDepotDir, 'extracted');
+      if (fs.existsSync(targetLibraryExtractDir)) {
+        fs.rmSync(targetLibraryExtractDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(libraryDepotDir, { recursive: true });
+      fs.cpSync(tempExtractDir, targetLibraryExtractDir, { recursive: true, force: true });
+      sourceDeployDir = targetLibraryExtractDir;
+    } catch (depotErr) {
+      console.warn('[Blacksite Installer] Library promotion fallback to staging dir:', depotErr.message);
+      sourceDeployDir = tempExtractDir;
+    }
+
+    // 3. Routing stage via NTFS Hardlink VFS (mutable configs copied, immutable binaries hardlinked)
     console.log(`[Blacksite Installer] Deploying files via NTFS Hardlink VFS into SPT: ${sptDirectory}...`);
     if (onProgress) {
       onProgress({
@@ -2331,13 +3269,14 @@ async function installMod({
       });
     }
     const routeResult = await routeExtractedModToSpt(
-      targetExtractDir,
+      sourceDeployDir,
       sptDirectory,
       modName,
       sptVersion,
       performanceMode,
       onProgress,
-      cleanModIdentifier
+      cleanModIdentifier,
+      preferredServerModPath
     );
 
     if (onProgress) {
@@ -2388,37 +3327,49 @@ async function installMod({
 // PROTECTED_CORE_ITEMS, FORBIDDEN_SPT_CORE_PATHS, and isProtectedCoreItem are declared above
 
 /**
- * Permanently removes mod files from SPT_Runtime/user/mods, user/mods, or BepInEx/plugins
+ * Permanently removes mod files from SPT/user/mods, SPT_Runtime/user/mods, user/mods,
+ * BepInEx/plugins, and BepInEx/patchers with core SPT file safeguards and detailed reporting.
  */
 async function uninstallMod({ sptDirectory, serverPath, clientPath, modName, clientPaths }) {
   if (!sptDirectory) return { success: false, error: 'SPT Directory not set' };
+  const normalizedRoot = normalizeSptRoot(sptDirectory);
+
+  const deletedPaths = [];
+  const skippedProtected = [];
+  const failedRemovals = [];
 
   const deletePath = (relOrAbs) => {
-    if (!relOrAbs) return;
-    const full = path.isAbsolute(relOrAbs) ? relOrAbs : path.join(sptDirectory, relOrAbs);
+    if (!relOrAbs || typeof relOrAbs !== 'string') return;
+    const full = path.isAbsolute(relOrAbs) ? relOrAbs : path.join(normalizedRoot, relOrAbs);
+    const relLabel = path.relative(normalizedRoot, full).replace(/\\/g, '/');
+
     try {
-      assertSafeSptTarget(full, sptDirectory);
+      assertSafeSptTarget(full, normalizedRoot);
     } catch (err) {
       console.warn(`[Blacksite Uninstall] Skipped deletion of protected/invalid target: ${full}`, err.message);
+      skippedProtected.push(relLabel);
       return;
     }
 
-    const basename = path.basename(full);
-    if (isProtectedCoreItem(basename) || isProtectedCoreItem(full)) return; // Never delete protected core files
-
-    if (fs.existsSync(full)) {
-      try {
-        fs.rmSync(full, { recursive: true, force: true });
-      } catch (err) {
-        console.warn(`Failed removing ${full}:`, err.message);
-      }
+    const basename = path.basename(full).replace(/\.disabled$/i, '');
+    if (isProtectedCoreItem(basename) || isProtectedCoreItem(full)) {
+      skippedProtected.push(relLabel);
+      return;
     }
-    const disabledFull = full.endsWith('.disabled') ? full : full + '.disabled';
-    if (fs.existsSync(disabledFull)) {
-      try {
-        fs.rmSync(disabledFull, { recursive: true, force: true });
-      } catch (err) {
-        console.warn(`Failed removing ${disabledFull}:`, err.message);
+
+    const candidates = [full, full.endsWith('.disabled') ? full.slice(0, -9) : `${full}.disabled`];
+    for (const target of new Set(candidates)) {
+      if (fs.existsSync(target)) {
+        try {
+          fs.rmSync(target, { recursive: true, force: true });
+          deletedPaths.push(path.relative(normalizedRoot, target).replace(/\\/g, '/'));
+        } catch (err) {
+          console.warn(`Failed removing ${target}:`, err.message);
+          failedRemovals.push({
+            path: path.relative(normalizedRoot, target).replace(/\\/g, '/'),
+            error: err.message,
+          });
+        }
       }
     }
   };
@@ -2432,15 +3383,25 @@ async function uninstallMod({ sptDirectory, serverPath, clientPath, modName, cli
     }
   }
 
-  // Fallback cleanup by modName if folder exists in plugins or user/mods
+  // Fallback cleanup by modName across all supported server & client layouts
   if (modName && typeof modName === 'string') {
     const cleanModName = modName.trim();
-    if (!isProtectedCoreItem(cleanModName)) {
+    if (
+      cleanModName &&
+      !cleanModName.includes('/') &&
+      !cleanModName.includes('\\') &&
+      cleanModName !== '.' &&
+      cleanModName !== '..' &&
+      !isProtectedCoreItem(cleanModName)
+    ) {
       const candidatePaths = [
-        path.join(sptDirectory, 'BepInEx', 'plugins', cleanModName),
-        path.join(sptDirectory, 'BepInEx', 'plugins', cleanModName + '.dll'),
-        path.join(sptDirectory, 'user', 'mods', cleanModName),
-        path.join(sptDirectory, 'SPT_Runtime', 'user', 'mods', cleanModName),
+        path.join(normalizedRoot, 'SPT', 'user', 'mods', cleanModName),
+        path.join(normalizedRoot, 'SPT_Runtime', 'user', 'mods', cleanModName),
+        path.join(normalizedRoot, 'user', 'mods', cleanModName),
+        path.join(normalizedRoot, 'BepInEx', 'plugins', cleanModName),
+        path.join(normalizedRoot, 'BepInEx', 'plugins', `${cleanModName}.dll`),
+        path.join(normalizedRoot, 'BepInEx', 'patchers', cleanModName),
+        path.join(normalizedRoot, 'BepInEx', 'patchers', `${cleanModName}.dll`),
       ];
       for (const cand of candidatePaths) {
         deletePath(cand);
@@ -2448,24 +3409,66 @@ async function uninstallMod({ sptDirectory, serverPath, clientPath, modName, cli
     }
   }
 
-  return { success: true };
+  return {
+    success: failedRemovals.length === 0,
+    deletedCount: deletedPaths.length,
+    deletedPaths,
+    skippedProtected,
+    failedRemovals,
+    ...(failedRemovals.length > 0
+      ? { error: `Failed to remove ${failedRemovals.length} item(s): ${failedRemovals[0].error}` }
+      : {}),
+  };
 }
 
 /**
- * Deep purges all user mods from user/mods, SPT_Runtime/user/mods, and BepInEx/plugins
- * Strictly safeguards SPT core system files (e.g. BepInEx/plugins/spt/).
+ * Deep purges all user mods from SPT/user/mods, SPT_Runtime/user/mods, user/mods,
+ * BepInEx/plugins, and BepInEx/patchers.
+ * Strictly safeguards SPT core system files (e.g. BepInEx/plugins/spt/) and reports skipped/failed items.
  */
 async function uninstallAllMods({ sptDirectory }) {
-  if (!sptDirectory || !fs.existsSync(sptDirectory)) {
+  const normalizedRoot = normalizeSptRoot(sptDirectory);
+  if (!normalizedRoot || !fs.existsSync(normalizedRoot)) {
     return { success: false, error: 'SPT Directory not set or does not exist' };
   }
 
   let deletedCount = 0;
+  const deletedPaths = [];
+  const skippedProtected = [];
+  const failedRemovals = [];
 
-  // 1. Clear server mods in both SPT_Runtime and legacy user/mods
+  const removeEntrySafely = (targetPath) => {
+    const relLabel = path.relative(normalizedRoot, targetPath).replace(/\\/g, '/');
+    const cleanName = path.basename(targetPath).replace(/\.disabled$/i, '');
+
+    if (isProtectedCoreItem(cleanName) || isProtectedCoreItem(targetPath)) {
+      console.log(`[Blacksite Purge] Safeguarding core SPT item: ${relLabel}`);
+      skippedProtected.push(relLabel);
+      return;
+    }
+
+    try {
+      assertSafeSptTarget(targetPath, normalizedRoot);
+    } catch (safeErr) {
+      skippedProtected.push(relLabel);
+      return;
+    }
+
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true });
+      deletedCount++;
+      deletedPaths.push(relLabel);
+    } catch (err) {
+      console.warn(`[Blacksite Purge] Failed removing ${relLabel}:`, err.message);
+      failedRemovals.push({ path: relLabel, error: err.message });
+    }
+  };
+
+  // 1. Clear server mods across all supported SPT layouts (4.0 SPT/user/mods, 4.1+ SPT_Runtime/user/mods, 3.x user/mods)
   const candidateUserDirs = [
-    path.join(sptDirectory, 'SPT_Runtime', 'user', 'mods'),
-    path.join(sptDirectory, 'user', 'mods'),
+    path.join(normalizedRoot, 'SPT', 'user', 'mods'),
+    path.join(normalizedRoot, 'SPT_Runtime', 'user', 'mods'),
+    path.join(normalizedRoot, 'user', 'mods'),
   ];
 
   for (const userModsDir of candidateUserDirs) {
@@ -2474,9 +3477,7 @@ async function uninstallAllMods({ sptDirectory }) {
         const entries = fs.readdirSync(userModsDir, { withFileTypes: true });
         for (const entry of entries) {
           if (entry.isDirectory()) {
-            const targetPath = path.join(userModsDir, entry.name);
-            fs.rmSync(targetPath, { recursive: true, force: true });
-            deletedCount++;
+            removeEntrySafely(path.join(userModsDir, entry.name));
           }
         }
       } catch (err) {
@@ -2486,19 +3487,12 @@ async function uninstallAllMods({ sptDirectory }) {
   }
 
   // 2. Clear client plugins (excluding protected SPT core files like 'spt' folder)
-  const pluginsDir = path.join(sptDirectory, 'BepInEx', 'plugins');
+  const pluginsDir = path.join(normalizedRoot, 'BepInEx', 'plugins');
   if (fs.existsSync(pluginsDir)) {
     try {
       const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
       for (const entry of entries) {
-        const name = entry.name;
-        if (isProtectedCoreItem(name)) {
-          console.log(`[Blacksite Purge] Safeguarding core SPT item: ${name}`);
-          continue;
-        }
-        const targetPath = path.join(pluginsDir, name);
-        fs.rmSync(targetPath, { recursive: true, force: true });
-        deletedCount++;
+        removeEntrySafely(path.join(pluginsDir, entry.name));
       }
     } catch (err) {
       console.warn('Error clearing plugins dir:', err.message);
@@ -2506,24 +3500,29 @@ async function uninstallAllMods({ sptDirectory }) {
   }
 
   // 3. Clear non-core client patchers if any
-  const patchersDir = path.join(sptDirectory, 'BepInEx', 'patchers');
+  const patchersDir = path.join(normalizedRoot, 'BepInEx', 'patchers');
   if (fs.existsSync(patchersDir)) {
     try {
       const entries = fs.readdirSync(patchersDir, { withFileTypes: true });
       for (const entry of entries) {
-        const name = entry.name;
-        if (isProtectedCoreItem(name)) continue;
-        const targetPath = path.join(patchersDir, name);
-        fs.rmSync(targetPath, { recursive: true, force: true });
-        deletedCount++;
+        removeEntrySafely(path.join(patchersDir, entry.name));
       }
     } catch (err) {
       console.warn('Error clearing patchers dir:', err.message);
     }
   }
 
-  console.log(`[Blacksite Purge] Successfully uninstalled all mods (${deletedCount} items removed).`);
-  return { success: true, deletedCount };
+  console.log(`[Blacksite Purge] Uninstalled mods complete (${deletedCount} removed, ${skippedProtected.length} protected, ${failedRemovals.length} failed).`);
+  return {
+    success: failedRemovals.length === 0,
+    deletedCount,
+    deletedPaths,
+    skippedProtected,
+    failedRemovals,
+    ...(failedRemovals.length > 0
+      ? { error: `Failed to remove ${failedRemovals.length} item(s): ${failedRemovals[0].error}` }
+      : {}),
+  };
 }
 
 /**
@@ -2649,9 +3648,9 @@ function resolveModAuthor(pkgData, folderOrFileName, inferredGuid) {
 }
 
 /**
- * Helper: Reads editable config files (.json, .jsonc, .cfg, .ini) inside a mod folder
+ * Helper: Non-blocking async reader for editable config files (.json, .jsonc, .cfg, .ini) inside a mod folder
  */
-function discoverConfigFilesInDir(baseDir, sptRoot, maxFiles = 12) {
+async function discoverConfigFilesInDir(baseDir, sptRoot, maxFiles = 12) {
   const configs = [];
   if (!baseDir || !fs.existsSync(baseDir)) return configs;
 
@@ -2668,7 +3667,7 @@ function discoverConfigFilesInDir(baseDir, sptRoot, maxFiles = 12) {
   for (const dir of candidateDirs) {
     if (!fs.existsSync(dir)) continue;
     try {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (configs.length >= maxFiles) break;
         if (!entry.isFile()) continue;
@@ -2686,9 +3685,9 @@ function discoverConfigFilesInDir(baseDir, sptRoot, maxFiles = 12) {
         seenPaths.add(fullPath);
 
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = await fs.promises.stat(fullPath);
           if (stat.size > 0 && stat.size <= 256 * 1024) {
-            const content = fs.readFileSync(fullPath, 'utf8');
+            const content = await fs.promises.readFile(fullPath, 'utf8');
             const relPath = path.relative(sptRoot, fullPath).replace(/\\/g, '/');
             configs.push({
               id: `cfg-${relPath}`,
@@ -2707,19 +3706,20 @@ function discoverConfigFilesInDir(baseDir, sptRoot, maxFiles = 12) {
 }
 
 /**
- * Deeply scans SPT_Runtime/user/mods, SPT/user/mods, user/mods, BepInEx/plugins,
- * BepInEx/patchers, and BepInEx/config for all installed mods on disk.
- * Automatically pairs hybrid Server + Client mods, extracts .NET BepInPlugin metadata
- * and versions from DLLs, and attaches real editable config files.
+ * Deeply scans SPT/user/mods, SPT_Runtime/user/mods, user/mods, BepInEx/plugins,
+ * BepInEx/patchers, and BepInEx/config for all installed mods on disk using non-blocking async I/O.
+ * Prioritizes the active detected SPT layout first and records `duplicateLocations` when a mod
+ * folder exists across multiple layout variants.
  */
-async function scanInstalledMods({ sptDirectory }) {
+async function scanInstalledMods({ sptDirectory, preferredServerModPath = null } = {}) {
   const normalizedRoot = normalizeSptRoot(sptDirectory);
   if (!normalizedRoot || !fs.existsSync(normalizedRoot)) {
     return [];
   }
 
-  const dirInfo = inspectSptDirectory(normalizedRoot);
+  const dirInfo = inspectSptDirectory(normalizedRoot, { preferredServerModPath });
   const defaultSptVer = dirInfo.sptVersion || (dirInfo.isSpt4xLayout ? '4.x' : '3.x');
+  const activeServerRel = dirInfo.serverModPath || 'SPT/user/mods';
 
   const results = [];
   const usedIds = new Set();
@@ -2741,20 +3741,33 @@ async function scanInstalledMods({ sptDirectory }) {
     return finalId;
   };
 
-  const candidateUserDirs = [
-    { dir: path.join(normalizedRoot, 'SPT_Runtime', 'user', 'mods'), rel: 'SPT_Runtime/user/mods', sptVer: defaultSptVer },
+  const allLayoutCandidates = [
     { dir: path.join(normalizedRoot, 'SPT', 'user', 'mods'), rel: 'SPT/user/mods', sptVer: defaultSptVer },
+    { dir: path.join(normalizedRoot, 'SPT_Runtime', 'user', 'mods'), rel: 'SPT_Runtime/user/mods', sptVer: defaultSptVer },
     { dir: path.join(normalizedRoot, 'user', 'mods'), rel: 'user/mods', sptVer: defaultSptVer },
   ];
+
+  // Order candidate layouts so the active detected/configured layout is always scanned first
+  const candidateUserDirs = [
+    ...allLayoutCandidates.filter((c) => c.rel === activeServerRel),
+    ...allLayoutCandidates.filter((c) => c.rel !== activeServerRel),
+  ];
+
   const pluginsDir = path.join(normalizedRoot, 'BepInEx', 'plugins');
 
-  // 1. Scan server mods across all supported SPT layouts
-  const scannedServerFolders = new Set();
+  // Map duplicate server mod folders across layouts so none are silently hidden
+  const duplicateMap = new Map();
+  for (const dup of dirInfo.duplicateMods || []) {
+    duplicateMap.set(dup.name.toLowerCase(), dup.locations);
+  }
+
+  // 1. Scan server mods across all supported SPT layouts (active layout prioritized)
+  const scannedServerFolders = new Map();
   for (const { dir: userModsDir, rel: relPrefix, sptVer } of candidateUserDirs) {
     if (!fs.existsSync(userModsDir)) continue;
     let entries = [];
     try {
-      entries = fs.readdirSync(userModsDir, { withFileTypes: true });
+      entries = await fs.promises.readdir(userModsDir, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -2764,10 +3777,20 @@ async function scanInstalledMods({ sptDirectory }) {
       const folderName = entry.name;
       const isDisabled = folderName.toLowerCase().endsWith('.disabled');
       const cleanFolderName = isDisabled ? folderName.slice(0, -9) : folderName;
+      const lowerClean = cleanFolderName.toLowerCase();
 
       if (isProtectedCoreItem(cleanFolderName)) continue;
-      if (scannedServerFolders.has(cleanFolderName.toLowerCase())) continue;
-      scannedServerFolders.add(cleanFolderName.toLowerCase());
+      if (scannedServerFolders.has(lowerClean)) {
+        const existingMod = scannedServerFolders.get(lowerClean);
+        const dupLoc = `${relPrefix}/${folderName}`;
+        if (!Array.isArray(existingMod.duplicateLocations)) {
+          existingMod.duplicateLocations = [existingMod.serverPath];
+        }
+        if (!existingMod.duplicateLocations.includes(dupLoc)) {
+          existingMod.duplicateLocations.push(dupLoc);
+        }
+        continue;
+      }
 
       const fullDir = path.join(userModsDir, folderName);
       let pkgJsonPath = path.join(fullDir, 'package.json');
@@ -2775,7 +3798,8 @@ async function scanInstalledMods({ sptDirectory }) {
       // Check 1 level deeper if package.json is nested inside a wrapper folder
       if (!fs.existsSync(pkgJsonPath)) {
         try {
-          const subDirs = fs.readdirSync(fullDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+          const subEntries = await fs.promises.readdir(fullDir, { withFileTypes: true });
+          const subDirs = subEntries.filter((d) => d.isDirectory());
           if (subDirs.length === 1) {
             const nestedPkg = path.join(fullDir, subDirs[0].name, 'package.json');
             if (fs.existsSync(nestedPkg)) pkgJsonPath = nestedPkg;
@@ -2793,7 +3817,7 @@ async function scanInstalledMods({ sptDirectory }) {
 
       if (fs.existsSync(pkgJsonPath)) {
         try {
-          const rawPkg = fs.readFileSync(pkgJsonPath, 'utf8').replace(/^\uFEFF/, '');
+          const rawPkg = (await fs.promises.readFile(pkgJsonPath, 'utf8')).replace(/^\uFEFF/, '');
           const data = JSON.parse(rawPkg);
           if (data.name && typeof data.name === 'string') modName = data.name.trim();
           author = resolveModAuthor(data, cleanFolderName, data.guid || data.id);
@@ -2817,14 +3841,15 @@ async function scanInstalledMods({ sptDirectory }) {
 
       let installDate = new Date().toISOString().split('T')[0];
       try {
-        const stat = fs.statSync(fullDir);
+        const stat = await fs.promises.stat(fullDir);
         if (stat.mtime) installDate = stat.mtime.toISOString().split('T')[0];
       } catch (_) {}
 
-      const configFiles = discoverConfigFilesInDir(fullDir, normalizedRoot);
+      const configFiles = await discoverConfigFilesInDir(fullDir, normalizedRoot);
       const uniqueId = ensureUniqueId(modGuid, 'disk.server', cleanFolderName);
+      const dupLocations = duplicateMap.get(lowerClean);
 
-      results.push({
+      const serverModEntry = {
         id: uniqueId,
         name: modName,
         author,
@@ -2834,6 +3859,9 @@ async function scanInstalledMods({ sptDirectory }) {
         fikaCompatibility: true,
         installDate,
         serverPath: `${relPrefix}/${folderName}`,
+        ...(dupLocations && dupLocations.length > 1
+          ? { duplicateLocations: dupLocations.map((loc) => `${loc}/${folderName}`) }
+          : {}),
         isDisabled,
         hasUpdate: false,
         latestVersion: version,
@@ -2846,7 +3874,11 @@ async function scanInstalledMods({ sptDirectory }) {
           normalizeModMatchKey(modName),
           ...(modGuid ? [normalizeModMatchKey(modGuid)] : []),
         ]),
-      });
+      };
+
+      scannedServerFolders.set(lowerClean, serverModEntry);
+      results.push(serverModEntry);
+      await new Promise((r) => setImmediate(r));
     }
   }
 
@@ -2877,7 +3909,7 @@ async function scanInstalledMods({ sptDirectory }) {
   if (fs.existsSync(pluginsDir)) {
     let entries = [];
     try {
-      entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+      entries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
     } catch {
       entries = [];
     }
@@ -2896,11 +3928,11 @@ async function scanInstalledMods({ sptDirectory }) {
         let detectedAuthor = resolveModAuthor(null, cleanName, null);
         let detectedGuid = null;
 
-        // Check package.json or manifest.json inside plugin folder if present
+        // Check package.json inside plugin folder if present
         const pkgJson = path.join(folderDir, 'package.json');
         if (fs.existsSync(pkgJson)) {
           try {
-            const data = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+            const data = JSON.parse(await fs.promises.readFile(pkgJson, 'utf8'));
             if (data.name) detectedName = data.name;
             if (data.version) detectedVersion = data.version;
             detectedAuthor = resolveModAuthor(data, cleanName, data.guid);
@@ -2910,7 +3942,7 @@ async function scanInstalledMods({ sptDirectory }) {
 
         // Also scan .dll files inside the plugin folder (up to 2 levels deep) for [BepInPlugin] metadata
         try {
-          const subEntries = fs.readdirSync(folderDir, { withFileTypes: true });
+          const subEntries = await fs.promises.readdir(folderDir, { withFileTypes: true });
           const dllFiles = [];
           for (const sub of subEntries) {
             const subClean = sub.name.replace(/\.disabled$/i, '');
@@ -2918,7 +3950,7 @@ async function scanInstalledMods({ sptDirectory }) {
               dllFiles.push(path.join(folderDir, sub.name));
             } else if (sub.isDirectory()) {
               try {
-                const nested = fs.readdirSync(path.join(folderDir, sub.name), { withFileTypes: true });
+                const nested = await fs.promises.readdir(path.join(folderDir, sub.name), { withFileTypes: true });
                 for (const n of nested) {
                   if (n.isFile() && n.name.replace(/\.disabled$/i, '').toLowerCase().endsWith('.dll')) {
                     dllFiles.push(path.join(folderDir, sub.name, n.name));
@@ -2948,7 +3980,7 @@ async function scanInstalledMods({ sptDirectory }) {
         }
 
         const relClientPath = `BepInEx/plugins/${name}`;
-        const folderConfigs = discoverConfigFilesInDir(folderDir, normalizedRoot);
+        const folderConfigs = await discoverConfigFilesInDir(folderDir, normalizedRoot);
 
         // Check if this client plugin folder pairs with an already scanned server mod
         const pairedMod = findMatchingServerOrClientMod(cleanName, detectedName, detectedGuid);
@@ -2976,7 +4008,7 @@ async function scanInstalledMods({ sptDirectory }) {
 
         let installDate = new Date().toISOString().split('T')[0];
         try {
-          const stat = fs.statSync(folderDir);
+          const stat = await fs.promises.stat(folderDir);
           if (stat.mtime) installDate = stat.mtime.toISOString().split('T')[0];
         } catch (_) {}
 
@@ -3035,7 +4067,7 @@ async function scanInstalledMods({ sptDirectory }) {
 
         let installDate = new Date().toISOString().split('T')[0];
         try {
-          const stat = fs.statSync(fullDll);
+          const stat = await fs.promises.stat(fullDll);
           if (stat.mtime) installDate = stat.mtime.toISOString().split('T')[0];
         } catch (_) {}
 
@@ -3064,6 +4096,7 @@ async function scanInstalledMods({ sptDirectory }) {
           ]),
         });
       }
+      await new Promise((r) => setImmediate(r));
     }
   }
 
@@ -3072,7 +4105,7 @@ async function scanInstalledMods({ sptDirectory }) {
   if (fs.existsSync(clientPatchersDir)) {
     let patcherEntries = [];
     try {
-      patcherEntries = fs.readdirSync(clientPatchersDir);
+      patcherEntries = await fs.promises.readdir(clientPatchersDir);
     } catch {
       patcherEntries = [];
     }
@@ -3131,7 +4164,7 @@ async function scanInstalledMods({ sptDirectory }) {
   const bepInExConfigDir = path.join(normalizedRoot, 'BepInEx', 'config');
   if (fs.existsSync(bepInExConfigDir)) {
     try {
-      const cfgFiles = fs.readdirSync(bepInExConfigDir, { withFileTypes: true });
+      const cfgFiles = await fs.promises.readdir(bepInExConfigDir, { withFileTypes: true });
       for (const entry of cfgFiles) {
         if (!entry.isFile()) continue;
         const ext = path.extname(entry.name).toLowerCase();
@@ -3146,7 +4179,7 @@ async function scanInstalledMods({ sptDirectory }) {
         if (matchedMod && (!matchedMod.configFiles || matchedMod.configFiles.length < 15)) {
           const fullCfgPath = path.join(bepInExConfigDir, entry.name);
           try {
-            const stat = fs.statSync(fullCfgPath);
+            const stat = await fs.promises.stat(fullCfgPath);
             if (stat.size > 0 && stat.size <= 256 * 1024) {
               const relPath = `BepInEx/config/${entry.name}`;
               if (!matchedMod.configFiles.some((c) => c.relativePath === relPath)) {
@@ -3155,7 +4188,7 @@ async function scanInstalledMods({ sptDirectory }) {
                   name: entry.name,
                   relativePath: relPath,
                   format: ext === '.json' ? 'json' : 'ini',
-                  content: fs.readFileSync(fullCfgPath, 'utf8'),
+                  content: await fs.promises.readFile(fullCfgPath, 'utf8'),
                 });
               }
             }
@@ -3174,7 +4207,8 @@ async function scanInstalledMods({ sptDirectory }) {
 }
 
 /**
- * Persists edited configuration file content directly to disk inside the SPT directory
+ * Persists edited configuration file content directly to disk inside the SPT directory.
+ * Breaks any existing hardlink first so editing a config can never mutate `.blacksite_library`.
  */
 async function saveModConfigFile({ sptDirectory, relativePath, content }) {
   const normalizedRoot = normalizeSptRoot(sptDirectory);
@@ -3187,6 +4221,15 @@ async function saveModConfigFile({ sptDirectory, relativePath, content }) {
   try {
     assertSafeSptTarget(fullTarget, normalizedRoot);
     fs.mkdirSync(path.dirname(fullTarget), { recursive: true });
+    // Break any potential hardlink before writing so .blacksite_library is never mutated
+    if (fs.existsSync(fullTarget)) {
+      try {
+        const st = fs.statSync(fullTarget);
+        if (st.nlink > 1) {
+          fs.unlinkSync(fullTarget);
+        }
+      } catch (_) {}
+    }
     fs.writeFileSync(fullTarget, content, 'utf8');
     return { success: true, savedPath: fullTarget };
   } catch (err) {
@@ -3383,6 +4426,7 @@ module.exports = {
   relinkVfsProfile,
   clearTempDirectories,
   inspectSptDirectory,
+  resolveSptPaths,
   normalizeSptRoot,
   saveModConfigFile,
   detectSptServerModsRelativePath,
@@ -3391,6 +4435,20 @@ module.exports = {
   purgeDeprecatedModFiles,
   assertSafeSptTarget,
   isProtectedCoreItem,
+  isMutableConfigFile,
+  shouldDeepMergeConfigOnUpdate,
+  validateArchiveEntryPath,
+  assertArchiveManifestWithinLimits,
+  inspectAndValidateArchive,
+  verifyExtractedStagingTree,
+  extractArchive,
+  routeExtractedModToSpt,
+  validateDownloadUrl,
+  downloadViaNodeHttp,
+  streamDownloadToFile,
+  resolveResourceLimits,
+  DEFAULT_RESOURCE_LIMITS,
   DiagnosticRingBuffer,
 };
+
 

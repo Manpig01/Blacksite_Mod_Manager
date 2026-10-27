@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: SettingsState = {
   sptVersion: '4.1.6',
   detectedServerBinary: 'SPT.Server.exe',
   clientModPath: 'BepInEx/plugins',
-  serverModPath: 'SPT_Runtime/user/mods',
+  serverModPath: 'SPT/user/mods',
   isSpt4xLayout: true,
   activeProfileId: 'prof-default',
   autoCheckUpdates: true,
@@ -78,6 +78,96 @@ function isLegacyDemoProfile(p: ModProfile): boolean {
   return false;
 }
 
+export function migrateAndNormalizeInstalledMods(rawMods: InstalledMod[]): {
+  mods: InstalledMod[];
+  didMutate: boolean;
+} {
+  if (!Array.isArray(rawMods)) return { mods: [], didMutate: false };
+
+  let didMutate = false;
+  const filtered = rawMods.filter((m) => {
+    if (isLegacyFixtureDemoMod(m)) {
+      didMutate = true;
+      return false;
+    }
+    return true;
+  });
+
+  const mods = filtered.map((m, idx) => {
+    const known = getKnownDependencyMeta(m.id) || getKnownDependencyMeta(m.name) || getKnownDependencyMeta(m.modId);
+    const cleanToken = (m.name || '').replace(/\s+/g, '');
+    const catLower = (m.categoryTitle || known?.categoryTitle || '').toLowerCase();
+
+    const normServerPath = m.serverPath ? m.serverPath.replace(/\\/g, '/') : undefined;
+    const normClientPath = m.clientPath ? m.clientPath.replace(/\\/g, '/') : undefined;
+    if (normServerPath !== m.serverPath || normClientPath !== m.clientPath) {
+      didMutate = true;
+    }
+
+    // Detect legacy synthetic dual paths created by older browser-preview simulation:
+    // specifically `<serverDir>/<cleanToken>` AND `<clientDir>/<cleanToken>.dll`
+    const isSyntheticDual =
+      m.kind === 'Both' &&
+      Boolean(cleanToken) &&
+      Boolean(normServerPath?.endsWith(`/${cleanToken}`)) &&
+      Boolean(normClientPath?.endsWith(`/${cleanToken}.dll`));
+
+    let serverPath = normServerPath;
+    let clientPath = normClientPath;
+    let kind = m.kind || known?.kind || 'Client';
+
+    if (isSyntheticDual) {
+      if (known?.kind === 'Client') {
+        kind = 'Client';
+        serverPath = undefined;
+        didMutate = true;
+      } else if (known?.kind === 'Server') {
+        kind = 'Server';
+        clientPath = undefined;
+        didMutate = true;
+      } else if (!known) {
+        // Unknown mod with synthetic `<cleanToken>` + `<cleanToken>.dll` paths from older web fallback
+        if (catLower.includes('server') || catLower.includes('trader') || catLower.includes('overhaul')) {
+          kind = 'Server';
+          clientPath = undefined;
+          didMutate = true;
+        } else if (
+          catLower === 'ui' ||
+          catLower.includes('client') ||
+          catLower.includes('graphics') ||
+          catLower.includes('audio') ||
+          catLower.includes('tools') ||
+          catLower.includes('addons')
+        ) {
+          kind = 'Client';
+          serverPath = undefined;
+          didMutate = true;
+        }
+      }
+      // Note: if known?.kind === 'Both', or if paths are genuine non-synthetic disk paths, preserve Both + paths!
+    }
+
+    return {
+      ...m,
+      serverPath,
+      clientPath,
+      thumbnail: m.thumbnail || known?.thumbnail || (m.modId ? `https://files.sp-mod.com/mods/${m.modId}.png` : undefined),
+      author:
+        m.author && m.author !== 'Forge Dependency' && m.author !== 'Community Author'
+          ? m.author
+          : known?.author || m.author || 'Community Author',
+      categoryTitle: m.categoryTitle || known?.categoryTitle || (kind === 'Server' ? 'Overhauls' : 'Tools'),
+      teaser: m.teaser || known?.teaser,
+      kind,
+      loadOrder: typeof m.loadOrder === 'number' ? m.loadOrder : idx + 1,
+      dependencies: m.dependencies ?? DEFAULT_KNOWN_DEPS[m.id] ?? [],
+      tags: m.tags ?? [],
+    };
+  });
+
+  return { mods, didMutate };
+}
+
 export const storageService = {
   loadSettings(): SettingsState {
     try {
@@ -107,58 +197,14 @@ export const storageService = {
     try {
       const saved = localStorage.getItem(INSTALLED_MODS_KEY);
       if (saved) {
-        let parsed: InstalledMod[] = JSON.parse(saved);
+        const parsed: InstalledMod[] = JSON.parse(saved);
         if (!Array.isArray(parsed)) return [];
 
-        // Strip any hardcoded demo fixture mods that were persisted by older builds
-        const hadDemoMods = parsed.some(isLegacyFixtureDemoMod);
-        if (hadDemoMods) {
-          parsed = parsed.filter((m) => !isLegacyFixtureDemoMod(m));
-          localStorage.setItem(INSTALLED_MODS_KEY, JSON.stringify(parsed));
+        const { mods, didMutate } = migrateAndNormalizeInstalledMods(parsed);
+        if (didMutate) {
+          localStorage.setItem(INSTALLED_MODS_KEY, JSON.stringify(mods));
         }
-
-        return parsed.map((m, idx) => {
-          const known = getKnownDependencyMeta(m.id) || getKnownDependencyMeta(m.name) || getKnownDependencyMeta(m.modId);
-          const cleanToken = (m.name || '').replace(/\s+/g, '');
-          const catLower = (m.categoryTitle || known?.categoryTitle || '').toLowerCase();
-          const isSyntheticDual =
-            m.kind === 'Both' &&
-            Boolean(cleanToken) &&
-            m.serverPath?.endsWith(`/${cleanToken}`) &&
-            m.clientPath?.endsWith(`/${cleanToken}.dll`);
-
-          let serverPath = m.serverPath;
-          let clientPath = m.clientPath;
-          let kind = m.kind || known?.kind || 'Client';
-
-          if (isSyntheticDual && known?.kind && known.kind !== 'Both') {
-            kind = known.kind;
-            if (kind === 'Client') serverPath = undefined;
-            if (kind === 'Server') clientPath = undefined;
-          } else if (
-            isSyntheticDual &&
-            (catLower === 'ui' || catLower.includes('client') || catLower.includes('graphics') || catLower.includes('audio'))
-          ) {
-            kind = 'Client';
-            serverPath = undefined;
-          }
-
-          return {
-            ...m,
-            serverPath,
-            clientPath,
-            thumbnail: m.thumbnail || known?.thumbnail || (m.modId ? `https://files.sp-mod.com/mods/${m.modId}.png` : undefined),
-            author: (m.author && m.author !== 'Forge Dependency' && m.author !== 'Community Author')
-              ? m.author
-              : known?.author || m.author || 'Community Author',
-            categoryTitle: m.categoryTitle || known?.categoryTitle || (kind === 'Server' ? 'Overhauls' : 'Tools'),
-            teaser: m.teaser || known?.teaser,
-            kind,
-            loadOrder: typeof m.loadOrder === 'number' ? m.loadOrder : idx + 1,
-            dependencies: m.dependencies ?? DEFAULT_KNOWN_DEPS[m.id] ?? [],
-            tags: m.tags ?? [],
-          };
-        });
+        return mods;
       }
     } catch {
       // ignore
