@@ -4,12 +4,17 @@
   "author": "Blacksite Development Team",
   "private": true,
   "version": "2.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Manpig01/Blacksite_Mod_Manager.git"
+  },
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "tsc -b && vite build",
     "lint": "tsc -b",
+    "test": "node --test tests/securityAndLayout.test.cjs",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "package:win": "tsc -b && vite build && electron-builder --win --x64",
     "release": "tsc -b && vite build && electron-builder --win --x64 --publish never"

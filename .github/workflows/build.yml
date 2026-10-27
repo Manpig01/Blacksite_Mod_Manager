@@ -34,6 +34,11 @@ jobs:
         shell: pwsh
         run: |
           npm ci --include=optional
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "package-lock.json is out of sync with package.json (AI Studio GitHub export may skip lockfiles). Synchronizing dependencies with npm install --include=optional..."
+            npm install --include=optional
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: Compile Web Application
         run: npm run build
