@@ -139,6 +139,56 @@ export const SptDirectorySection: React.FC<SptDirectorySectionProps> = React.mem
             </div>
           </div>
 
+          {/* Quick Layout Presets */}
+          <div className="flex items-center gap-2 pt-1 flex-wrap">
+            <span className="text-[11px] text-[#9AA3AF] font-medium">Quick Presets:</span>
+            <button
+              type="button"
+              onClick={() => {
+                onUpdateSettings({ serverModPath: 'SPT_Runtime/user/mods', clientModPath: 'BepInEx/plugins' });
+                onShowToast('Preset Applied', 'Configured for SPT 4.1+ (SPT_Runtime/user/mods).', 'success');
+              }}
+              className={`px-2.5 py-1 text-xs rounded border transition-colors cursor-pointer font-mono ${
+                settings.serverModPath === 'SPT_Runtime/user/mods'
+                  ? 'bg-[#EA580C] text-white border-[#EA580C] font-bold shadow-xs'
+                  : 'bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] border-[#2A2F38]'
+              }`}
+              title="Apply SPT 4.1+ structure (SPT_Runtime/user/mods & BepInEx/plugins)"
+            >
+              SPT 4.1+ (SPT_Runtime)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onUpdateSettings({ serverModPath: 'SPT/user/mods', clientModPath: 'BepInEx/plugins' });
+                onShowToast('Preset Applied', 'Configured for SPT 4.0 (SPT/user/mods).', 'success');
+              }}
+              className={`px-2.5 py-1 text-xs rounded border transition-colors cursor-pointer font-mono ${
+                settings.serverModPath === 'SPT/user/mods'
+                  ? 'bg-[#EA580C] text-white border-[#EA580C] font-bold shadow-xs'
+                  : 'bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] border-[#2A2F38]'
+              }`}
+              title="Apply SPT 4.0 structure (SPT/user/mods & BepInEx/plugins)"
+            >
+              SPT 4.0 (SPT/user/mods)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onUpdateSettings({ serverModPath: 'user/mods', clientModPath: 'BepInEx/plugins' });
+                onShowToast('Preset Applied', 'Configured for Legacy SPT 3.x (user/mods).', 'info');
+              }}
+              className={`px-2.5 py-1 text-xs rounded border transition-colors cursor-pointer font-mono ${
+                settings.serverModPath === 'user/mods'
+                  ? 'bg-[#EA580C] text-white border-[#EA580C] font-bold shadow-xs'
+                  : 'bg-[#20252D] hover:bg-[#2A2F38] text-[#E8EAEE] border-[#2A2F38]'
+              }`}
+              title="Apply Legacy SPT 3.x structure (user/mods & BepInEx/plugins)"
+            >
+              SPT 3.x (Legacy)
+            </button>
+          </div>
+
           {/* SPT layout indicator */}
           <div className="flex items-center gap-2 p-2.5 rounded-lg bg-[#20252D] border border-[#23272E]">
             <ShieldCheck className="w-4 h-4 text-[#22C55E] shrink-0" />
