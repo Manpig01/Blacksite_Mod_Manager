@@ -52,6 +52,7 @@ export const InstalledSearchBar: React.FC<InstalledSearchBarProps> = ({
       {/* Input */}
       <input
         ref={inputRef}
+        data-global-search="true"
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}

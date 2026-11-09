@@ -666,15 +666,23 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
     });
   };
 
-  const categoryGroups = useMemo(
-    () => [
+  const categoryGroups = useMemo(() => {
+    const serverMods: InstalledMod[] = [];
+    const bothMods: InstalledMod[] = [];
+    const clientMods: InstalledMod[] = [];
+    for (const m of displayed) {
+      if (m.kind === 'Server') serverMods.push(m);
+      else if (m.kind === 'Both') bothMods.push(m);
+      else if (m.kind === 'Client') clientMods.push(m);
+    }
+    return [
       {
         id: 'group-server',
         title: 'Server Mods',
         subtitle: serverModPath,
         icon: '🖥️',
         bgColor: 'bg-[#3A2415]/40',
-        mods: displayed.filter((m) => m.kind === 'Server'),
+        mods: serverMods,
       },
       {
         id: 'group-both',
@@ -682,7 +690,7 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
         subtitle: `Combined ${serverModPath} & ${clientModPath}`,
         icon: '⚡',
         bgColor: 'bg-[#22102A]/40',
-        mods: displayed.filter((m) => m.kind === 'Both'),
+        mods: bothMods,
       },
       {
         id: 'group-client',
@@ -690,11 +698,10 @@ export const InstalledModsTab: React.FC<InstalledModsTabProps> = ({
         subtitle: clientModPath,
         icon: '🧩',
         bgColor: 'bg-[#0D2428]/40',
-        mods: displayed.filter((m) => m.kind === 'Client'),
+        mods: clientMods,
       },
-    ],
-    [displayed, serverModPath, clientModPath]
-  );
+    ];
+  }, [displayed, serverModPath, clientModPath]);
 
   const dateGroups = useMemo(() => {
     const now = Date.now();

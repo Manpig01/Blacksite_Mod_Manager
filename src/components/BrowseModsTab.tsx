@@ -117,27 +117,34 @@ export const BrowseModsTab: React.FC<BrowseModsTabProps> = ({
     if (modsToFetch.length === 0) return;
 
     let isMounted = true;
-    const fetchPromises = modsToFetch.slice(0, 5).map(async (m) => {
-      try {
-        const verList = await apiService.getModVersions(m.id);
-        return { id: m.id, versions: verList };
-      } catch {
-        return null;
-      }
-    });
-
-    Promise.all(fetchPromises).then((results) => {
-      if (!isMounted) return;
-      const newEntries: Record<number, ModVersion[]> = {};
-      for (const res of results) {
-        if (res && res.versions.length > 0) {
-          newEntries[res.id] = res.versions;
+    const processInChunks = async () => {
+      const chunkSize = 5;
+      for (let i = 0; i < modsToFetch.length; i += chunkSize) {
+        if (!isMounted) break;
+        const chunk = modsToFetch.slice(i, i + chunkSize);
+        const results = await Promise.all(
+          chunk.map(async (m) => {
+            try {
+              const verList = await apiService.getModVersions(m.id);
+              return { id: m.id, versions: verList };
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (!isMounted) break;
+        const newEntries: Record<number, ModVersion[]> = {};
+        for (const res of results) {
+          if (res && res.versions.length > 0) {
+            newEntries[res.id] = res.versions;
+          }
+        }
+        if (Object.keys(newEntries).length > 0) {
+          setModVersionsCache((prev) => ({ ...prev, ...newEntries }));
         }
       }
-      if (Object.keys(newEntries).length > 0) {
-        setModVersionsCache((prev) => ({ ...prev, ...newEntries }));
-      }
-    });
+    };
+    processInChunks();
 
     return () => {
       isMounted = false;

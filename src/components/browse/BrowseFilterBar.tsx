@@ -97,6 +97,12 @@ export const BrowseFilterBar: React.FC<BrowseFilterBarProps> = ({
             type="text"
             value={searchText}
             onChange={(e) => onSearchChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                onSearchChange('');
+                searchInputRef.current?.blur();
+              }
+            }}
             placeholder="Search mods or type @Author..."
             className="w-full bg-[#0E1013] border border-[#23272E] rounded-md pl-8 pr-14 py-1.5 text-[13px] text-[#E8EAEE] placeholder-[#6B7480] focus:outline-none focus:border-[#EA580C]"
           />
