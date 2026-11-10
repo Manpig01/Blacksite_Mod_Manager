@@ -499,6 +499,7 @@ export interface DesktopInstallModParams {
   version: string;
   downloadUrl?: string;
   archiveBase64?: string;
+  archiveFilePath?: string;
   archiveFileName?: string;
   performanceMode?: ExtractionPerformanceMode;
 }
@@ -576,6 +577,7 @@ export interface DesktopBridgeAPI {
   platform: string;
   version: string;
   cpuCount: number;
+  getPathForFile?: (file: any) => string | null;
   selectDirectory?: (defaultPath?: string) => Promise<string | null>;
   inspectSptDirectory?: (
     targetPath: string,

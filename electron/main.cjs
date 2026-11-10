@@ -1,6 +1,7 @@
 const { app, BrowserWindow, shell, ipcMain, dialog, session, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const pkg = require('../package.json');
 
 // 1. Targeted Windows 11 (24H2/25H2) Stability Flags (Fixes exit code -2147483645)
 app.commandLine.appendSwitch('disable-gpu-sandbox');
@@ -130,7 +131,7 @@ function createWindow() {
     minWidth: 1080,
     minHeight: 680,
     backgroundColor: '#121418',
-    title: 'Blacksite Mod Manager - v2.1.0',
+    title: `Blacksite Mod Manager - v${pkg.version || '2.1.0'}`,
     icon: windowIcon,
     frame: false, // Frameless window - removes duplicate OS titlebar
     autoHideMenuBar: true,

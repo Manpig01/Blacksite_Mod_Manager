@@ -94,7 +94,10 @@ export const BrowseModCard: React.FC<BrowseModCardProps> = React.memo(
                 {mod.name}
               </h3>
               {displayVersion && (
-                <span className="text-[11.5px] font-normal text-[#9AA3AF] shrink-0 font-mono tabular-nums">
+                <span
+                  className="text-[10.5px] font-bold text-[#E8EAEE] bg-[#20252D] border border-[#2A2F38] px-1.5 py-0.2 rounded shrink-0 font-mono tabular-nums shadow-2xs"
+                  title={`Release version: ${displayVersion}`}
+                >
                   {displayVersion}
                 </span>
               )}

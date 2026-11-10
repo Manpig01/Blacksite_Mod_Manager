@@ -9,6 +9,11 @@ const http = require('http');
 const sevenZip = require('7zip-bin');
 const AdmZip = require('adm-zip');
 
+let appVersion = '2.1.0';
+try {
+  appVersion = require('../package.json').version || '2.1.0';
+} catch (_) {}
+
 let electronApp = null;
 try {
   const electron = require('electron');
@@ -412,10 +417,10 @@ function assertSafeSptTarget(targetPath, sptDirectory) {
   const resolvedTarget = path.resolve(targetPath);
   const resolvedSpt = path.resolve(sptDirectory);
 
-  // 1. Path traversal & Zip-Slip validation (must be strictly inside sptDirectory)
+  // 1. Path traversal & Zip-Slip validation (must be strictly inside sptDirectory and cannot target root)
   const rel = path.relative(resolvedSpt, resolvedTarget);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw new Error(`Security Violation: Target path "${targetPath}" escapes SPT root directory "${sptDirectory}"`);
+  if (!rel || rel === '.' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Security Violation: Target path "${targetPath}" escapes or targets SPT root directory "${sptDirectory}" directly.`);
   }
 
   // 2. Canonical case-folded SPT invariant protection
@@ -760,10 +765,10 @@ async function inspectAndValidateArchive(archivePath, format, destinationDir, li
               const firstChar = line[0];
               const isLink = firstChar === 'l' || firstChar === 'h' || line.includes(' -> ');
               const isDir = firstChar === 'd';
-              // Parse tar -tvf line: permissions links owner group size date time pathname
+              // Parse tar -tvf line: permissions links owner group size month day time/year pathname
               const parts = line.trim().split(/\s+/);
               const sizeVal = parts.length >= 5 ? parseInt(parts[4], 10) || 0 : 0;
-              const entryPath = parts.slice(parts.length >= 8 ? 7 : parts.length - 1).join(' ');
+              const entryPath = parts.slice(parts.length >= 9 ? 8 : parts.length - 1).join(' ');
 
               validateArchiveEntryPath(entryPath, {
                 destinationDir,
@@ -2303,11 +2308,14 @@ async function routeExtractedModToSpt(
     }
 
     // 4. Locate standalone client .dll plugins
+    // 4. Locate standalone client .dll plugins
     notifyRoute(98, 'Verifying client plugins...');
-    if (!detectedClientPath && !detectedServerPath) {
+    if (!detectedClientPath) {
       function findDlls(dir, depth = 0) {
         const dlls = [];
         if (depth > 6 || !fs.existsSync(dir)) return dlls;
+        const lowerDir = dir.replace(/\\/g, '/').toLowerCase();
+        if (lowerDir.includes('/user/mods') || lowerDir.includes('/mods')) return dlls;
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
           if (!entry.isDirectory() && entry.name.toLowerCase().endsWith('.dll')) {
@@ -2324,6 +2332,10 @@ async function routeExtractedModToSpt(
         for (const dllPath of foundDlls) {
           const fileName = path.basename(dllPath);
           const { role } = await inspectManagedDll(dllPath);
+          if (role !== 'plugin' && role !== 'patcher') {
+            console.log(`[Blacksite Installer] Skipping non-BepInEx DLL: ${fileName} (role: ${role})`);
+            continue;
+          }
           const isPatcher = role === 'patcher';
           const targetDir = isPatcher ? targetClientPatchersDir : targetClientPluginsDir;
           const destDll = path.join(targetDir, fileName);
@@ -2479,7 +2491,7 @@ function getDownloadHeaders(targetUrl, strategy = 'default') {
 
   // Standard Strategy: Authentic Application Client Identifier (bypasses Codeberg & Forgejo bot blocks)
   const headers = {
-    'User-Agent': 'BlacksiteModManager/2.1.0 (Windows NT 10.0; Win64; x64; SPT-Mod-Manager)',
+    'User-Agent': `BlacksiteModManager/${appVersion} (Windows NT 10.0; Win64; x64; SPT-Mod-Manager)`,
     'Accept': '*/*',
     'Accept-Language': 'en-US,en;q=0.9',
   };
@@ -2715,6 +2727,14 @@ function downloadViaNodeHttp(
       let isFinished = false;
       const finishDownload = () => {
         if (isFinished || abortedOrFailed) return;
+        if (totalBytes > 0 && receivedBytes < totalBytes) {
+          const truncErr = new Error(
+            `Download stream truncated prematurely: received ${receivedBytes} of ${totalBytes} bytes.`
+          );
+          truncErr.code = 'ERR_STREAM_TRUNCATED';
+          abortStreamWithError(truncErr);
+          return;
+        }
         isFinished = true;
         if (onProgress) {
           onProgress({
@@ -3022,6 +3042,14 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
         let isFinished = false;
         const finishDownload = () => {
           if (isFinished || abortedOrFailed) return;
+          if (totalBytes > 0 && receivedBytes < totalBytes) {
+            const truncErr = new Error(
+              `Download stream truncated prematurely: received ${receivedBytes} of ${totalBytes} bytes.`
+            );
+            truncErr.code = 'ERR_STREAM_TRUNCATED';
+            abortStreamWithError(truncErr);
+            return;
+          }
           isFinished = true;
           if (onProgress) {
             onProgress({
@@ -3100,6 +3128,7 @@ async function installMod({
   version,
   downloadUrl,
   archiveBase64,
+  archiveFilePath,
   archiveFileName,
   performanceMode = 'balanced',
   allowInsecureHttp = false,
@@ -3147,6 +3176,27 @@ async function installMod({
         resourceLimits: limits,
         signal,
       });
+    } else if (archiveFilePath) {
+      console.log(`[Blacksite Installer] Using local archive file: "${archiveFilePath}"...`);
+      if (!fs.existsSync(archiveFilePath)) {
+        throw new Error(`Local archive does not exist: "${archiveFilePath}"`);
+      }
+      const st = fs.statSync(archiveFilePath);
+      if (st.size > limits.maxDownloadBytes) {
+        const limitErr = new Error(
+          `Archive size (${(st.size / (1024 * 1024)).toFixed(1)} MB) exceeds maximum allowed limit (${(
+            limits.maxDownloadBytes /
+            (1024 * 1024)
+          ).toFixed(1)} MB).`
+        );
+        limitErr.code = 'ERR_DOWNLOAD_LIMIT_EXCEEDED';
+        throw limitErr;
+      }
+      if (isSameDriveStaging) {
+        fs.copyFileSync(archiveFilePath, tempArchiveFile);
+      } else {
+        await fs.promises.copyFile(archiveFilePath, tempArchiveFile);
+      }
     } else if (archiveBase64) {
       console.log(`[Blacksite Installer] Writing local archive buffer to disk...`);
       const buf = Buffer.from(archiveBase64, 'base64');
@@ -3162,7 +3212,7 @@ async function installMod({
       }
       fs.writeFileSync(tempArchiveFile, buf);
     } else {
-      throw new Error('Neither downloadUrl nor archiveBase64 was provided.');
+      throw new Error('Neither downloadUrl, archiveFilePath, nor archiveBase64 was provided.');
     }
 
     // Check if downloaded payload is directly a standalone Windows DLL (e.g. BepInEx plugin)
@@ -3252,7 +3302,11 @@ async function installMod({
         fs.rmSync(targetLibraryExtractDir, { recursive: true, force: true });
       }
       fs.mkdirSync(libraryDepotDir, { recursive: true });
-      fs.cpSync(tempExtractDir, targetLibraryExtractDir, { recursive: true, force: true });
+      if (isSameDriveStaging) {
+        fs.renameSync(tempExtractDir, targetLibraryExtractDir);
+      } else {
+        await fs.promises.cp(tempExtractDir, targetLibraryExtractDir, { recursive: true, force: true });
+      }
       sourceDeployDir = targetLibraryExtractDir;
     } catch (depotErr) {
       console.warn('[Blacksite Installer] Library promotion fallback to staging dir:', depotErr.message);
@@ -3407,6 +3461,24 @@ async function uninstallMod({ sptDirectory, serverPath, clientPath, modName, cli
         deletePath(cand);
       }
     }
+
+    // Remove backing depot from .blacksite_library to release NTFS hardlinks and reclaim disk space
+    const cleanModId = cleanModName.replace(/[^\w.-]/g, '_');
+    const libraryDir = path.join(normalizedRoot, '.blacksite_library');
+    if (fs.existsSync(libraryDir)) {
+      try {
+        const depotEntries = fs.readdirSync(libraryDir);
+        for (const entry of depotEntries) {
+          if (entry.startsWith(`${cleanModId}_`) || entry.toLowerCase().startsWith(`${cleanModId.toLowerCase()}_`)) {
+            const depotPath = path.join(libraryDir, entry);
+            fs.rmSync(depotPath, { recursive: true, force: true });
+            deletedPaths.push(path.relative(normalizedRoot, depotPath).replace(/\\/g, '/'));
+          }
+        }
+      } catch (depotErr) {
+        console.warn(`[Blacksite Uninstall] Failed removing backing depot for ${modName}:`, depotErr.message);
+      }
+    }
   }
 
   return {
@@ -3509,6 +3581,17 @@ async function uninstallAllMods({ sptDirectory }) {
       }
     } catch (err) {
       console.warn('Error clearing patchers dir:', err.message);
+    }
+  }
+
+  // Purge backing library depot so all NTFS hardlink storage is reclaimed
+  const libraryDir = path.join(normalizedRoot, '.blacksite_library');
+  if (fs.existsSync(libraryDir)) {
+    try {
+      fs.rmSync(libraryDir, { recursive: true, force: true });
+      deletedPaths.push('.blacksite_library');
+    } catch (err) {
+      console.warn('Error clearing .blacksite_library:', err.message);
     }
   }
 
@@ -3860,7 +3943,7 @@ async function scanInstalledMods({ sptDirectory, preferredServerModPath = null }
         installDate,
         serverPath: `${relPrefix}/${folderName}`,
         ...(dupLocations && dupLocations.length > 1
-          ? { duplicateLocations: dupLocations.map((loc) => `${loc}/${folderName}`) }
+          ? { duplicateLocations: dupLocations.map((loc) => (loc.endsWith(`/${folderName}`) ? loc : `${loc}/${folderName}`)) }
           : {}),
         isDisabled,
         hasUpdate: false,

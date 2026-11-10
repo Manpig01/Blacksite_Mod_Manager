@@ -20,6 +20,7 @@ const {
   validateDownloadUrl,
   streamDownloadToFile,
   scanInstalledMods,
+  assertSafeSptTarget,
 } = require('../electron/modInstaller.cjs');
 
 function makeTempDir(prefix = 'blacksite-test-') {
@@ -330,3 +331,31 @@ test('uninstallMod and uninstallAllMods clean all server layouts and BepInEx whi
   assert.equal(fs.existsSync(path.join(sptDir, 'EscapeFromTarkov.exe')), true);
   assert.ok(wipeRes.skippedProtected.length >= 2);
 });
+
+test('Version tagging constants remain synchronized with package.json and semantic format', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  assert.ok(pkg.version, 'package.json must specify a version');
+  assert.match(pkg.version, /^\d+\.\d+\.\d+/, 'version must follow semver format (X.Y.Z)');
+
+  const versionTs = fs.readFileSync(path.join(__dirname, '..', 'src', 'constants', 'appVersion.ts'), 'utf8');
+  assert.ok(versionTs.includes(`APP_VERSION = '${pkg.version}'`), 'appVersion.ts must match package.json version');
+  assert.ok(versionTs.includes('APP_VERSION_TAG = `v${APP_VERSION}`'), 'appVersion.ts must format standard v-tag');
+});
+
+test('assertSafeSptTarget strictly rejects targeting or escaping SPT root directory', () => {
+  const fakeSpt = path.join(os.tmpdir(), 'fake-spt');
+  // Targeting root itself must throw security violation
+  assert.throws(() => assertSafeSptTarget(fakeSpt, fakeSpt), /escapes or targets SPT root directory/i);
+  assert.throws(() => assertSafeSptTarget('.', fakeSpt), /escapes or targets SPT root directory/i);
+  assert.throws(() => assertSafeSptTarget('', fakeSpt), /targetPath and sptDirectory are required/i);
+  assert.throws(() => assertSafeSptTarget('../outside', fakeSpt), /escapes or targets SPT root directory/i);
+
+  // Protected core SPT paths must throw integrity violation
+  assert.throws(() => assertSafeSptTarget(path.join(fakeSpt, 'EscapeFromTarkov.exe'), fakeSpt), /Integrity Protection/i);
+
+  // Safe subpath inside user/mods must succeed and return resolved target
+  const safePath = path.join(fakeSpt, 'user', 'mods', 'MyMod');
+  assert.equal(assertSafeSptTarget(safePath, fakeSpt), path.resolve(safePath));
+});
+
+

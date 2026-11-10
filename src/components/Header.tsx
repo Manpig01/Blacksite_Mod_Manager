@@ -3,6 +3,7 @@ import { Folder, Play, Layers, Download, RefreshCw } from 'lucide-react';
 import { SettingsState, ModProfile } from '../types';
 import { useAppEmblem } from '../hooks/useAppEmblem';
 import { isDesktopEnvironment } from '../services/desktopBridgeService';
+import { APP_VERSION_TAG } from '../constants/appVersion';
 
 interface HeaderProps {
   settings: SettingsState;
@@ -88,7 +89,7 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="text-[15px] text-[#9AA3AF] mt-0.5">Mod Manager</span>
           <div className="bg-[#EA580C]/15 border border-[#EA580C]/35 rounded px-2 py-0.5 ml-2">
             <span className="text-[11px] text-[#EA580C] font-semibold tracking-wide">
-              v2.1.0
+              {APP_VERSION_TAG}
             </span>
           </div>
           <div className="bg-[#20252D] rounded px-2 py-0.5 ml-1">

@@ -20,6 +20,7 @@ import { ManualExtractModal } from './components/ManualExtractModal';
 import { TacticalConfirmModal } from './components/TacticalConfirmModal';
 import { StatusBar } from './components/StatusBar';
 import { ToastContainer } from './components/ToastContainer';
+import { APP_VERSION, APP_VERSION_TAG, APP_FULL_TITLE } from './constants/appVersion';
 
 import {
   Mod,
@@ -48,8 +49,9 @@ export const App: React.FC = () => {
   const [installedMods, setInstalledMods] = useState<InstalledMod[]>(storageService.loadInstalledMods);
   const [profiles, setProfiles] = useState<ModProfile[]>(storageService.loadProfiles);
   const [ignoredConflicts, setIgnoredConflicts] = useState<string[]>(storageService.loadIgnoredConflicts);
-  const [conflictReport, setConflictReport] = useState<ConflictMatrixReport>(() =>
-    conflictResolver.analyzeLoadout(storageService.loadInstalledMods(), storageService.loadIgnoredConflicts())
+  const conflictReport = useMemo(
+    () => conflictResolver.analyzeLoadout(installedMods, ignoredConflicts),
+    [installedMods, ignoredConflicts]
   );
 
   // Toast & Tactical Confirmation Hooks
@@ -201,15 +203,13 @@ export const App: React.FC = () => {
   useEffect(() => {
     apiService.getCategories().then(setCategories);
     apiService.getSptVersions().then(setSptVersions);
-    showToast('Blacksite Ready', 'Blacksite Mod Manager v2.1.0 initialized.', 'info');
+    showToast('Blacksite Ready', `Blacksite Mod Manager ${APP_VERSION_TAG} initialized.`, 'info');
   }, [showToast]);
 
-  // Update tactical conflict matrix and persist installed mods (debounced)
+  // Persist installed mods state changes (debounced)
   useEffect(() => {
-    const report = conflictResolver.analyzeLoadout(installedMods, ignoredConflicts);
-    setConflictReport(report);
     storageService.saveInstalledModsDebounced(installedMods);
-  }, [installedMods, ignoredConflicts]);
+  }, [installedMods]);
 
   // Dynamically update document theme class and data-theme attribute
   useEffect(() => {
@@ -631,21 +631,41 @@ export const App: React.FC = () => {
   const handleBulkEnableMods = async (modIds: string[]) => {
     const idSet = new Set(modIds);
     const bridge = getDesktopBridge();
+    const updatedPathMap = new Map<string, { serverPath?: string; clientPath?: string; clientPaths?: string[] }>();
+
     if (bridge?.toggleDisableMod) {
       const targets = installedMods.filter((m) => idSet.has(m.id) && m.isDisabled);
       for (const m of targets) {
-        await bridge
-          .toggleDisableMod({
+        try {
+          const res = await bridge.toggleDisableMod({
             sptDirectory: settings.sptDirectory,
             serverPath: m.serverPath,
             clientPath: m.clientPath,
+            clientPaths: m.clientPaths || [],
             disable: false,
-          })
-          .catch(() => {});
+          });
+          if (res?.success) {
+            updatedPathMap.set(m.id, {
+              serverPath: res.serverPath || undefined,
+              clientPath: res.clientPath || undefined,
+              clientPaths: res.clientPaths || undefined,
+            });
+          }
+        } catch (_) {}
       }
     }
     setInstalledMods((prev) => {
-      const updated = prev.map((m) => (idSet.has(m.id) ? { ...m, isDisabled: false } : m));
+      const updated = prev.map((m) => {
+        if (!idSet.has(m.id)) return m;
+        const resPath = updatedPathMap.get(m.id);
+        return {
+          ...m,
+          isDisabled: false,
+          serverPath: resPath?.serverPath ?? m.serverPath?.replace(/\.disabled$/i, ''),
+          clientPath: resPath?.clientPath ?? m.clientPath?.replace(/\.disabled$/i, ''),
+          clientPaths: resPath?.clientPaths ?? m.clientPaths?.map((p) => p.replace(/\.disabled$/i, '')),
+        };
+      });
       storageService.saveInstalledModsDebounced(updated);
       return updated;
     });
@@ -655,21 +675,41 @@ export const App: React.FC = () => {
   const handleBulkDisableMods = async (modIds: string[]) => {
     const idSet = new Set(modIds);
     const bridge = getDesktopBridge();
+    const updatedPathMap = new Map<string, { serverPath?: string; clientPath?: string; clientPaths?: string[] }>();
+
     if (bridge?.toggleDisableMod) {
       const targets = installedMods.filter((m) => idSet.has(m.id) && !m.isDisabled);
       for (const m of targets) {
-        await bridge
-          .toggleDisableMod({
+        try {
+          const res = await bridge.toggleDisableMod({
             sptDirectory: settings.sptDirectory,
             serverPath: m.serverPath,
             clientPath: m.clientPath,
+            clientPaths: m.clientPaths || [],
             disable: true,
-          })
-          .catch(() => {});
+          });
+          if (res?.success) {
+            updatedPathMap.set(m.id, {
+              serverPath: res.serverPath || undefined,
+              clientPath: res.clientPath || undefined,
+              clientPaths: res.clientPaths || undefined,
+            });
+          }
+        } catch (_) {}
       }
     }
     setInstalledMods((prev) => {
-      const updated = prev.map((m) => (idSet.has(m.id) ? { ...m, isDisabled: true } : m));
+      const updated = prev.map((m) => {
+        if (!idSet.has(m.id)) return m;
+        const resPath = updatedPathMap.get(m.id);
+        return {
+          ...m,
+          isDisabled: true,
+          serverPath: resPath?.serverPath ?? (m.serverPath && !m.serverPath.endsWith('.disabled') ? `${m.serverPath}.disabled` : m.serverPath),
+          clientPath: resPath?.clientPath ?? (m.clientPath && !m.clientPath.endsWith('.disabled') ? `${m.clientPath}.disabled` : m.clientPath),
+          clientPaths: resPath?.clientPaths ?? m.clientPaths?.map((p) => (!p.endsWith('.disabled') ? `${p}.disabled` : p)),
+        };
+      });
       storageService.saveInstalledModsDebounced(updated);
       return updated;
     });
@@ -739,7 +779,8 @@ export const App: React.FC = () => {
       }
 
       const normalizedRel = relPath.replace(/^[\\/]+/, '').replace(/\//g, '\\');
-      const fullPath = /^[a-zA-Z]:\\/.test(relPath) ? relPath.replace(/\//g, '\\') : `${cleanRoot}\\${normalizedRel}`;
+      const isAbsolute = /^[a-zA-Z]:[/\\]/.test(relPath) || relPath.startsWith('\\\\');
+      const fullPath = isAbsolute ? relPath.replace(/\//g, '\\') : `${cleanRoot}\\${normalizedRel}`;
       fullPaths.push(fullPath);
 
       if (bridge?.openFolder) {
@@ -830,8 +871,6 @@ export const App: React.FC = () => {
 
   // Tactical Conflict Matrix Handlers
   const handleRefreshConflictReport = () => {
-    const report = conflictResolver.analyzeLoadout(installedMods, ignoredConflicts);
-    setConflictReport(report);
     showToast('Matrix Scanned', 'Dependency graph and collision index re-analyzed.', 'info');
   };
 
@@ -889,7 +928,7 @@ export const App: React.FC = () => {
   // Diagnostics Export
   const handleExportDiagnostics = () => {
     const diagnostics = {
-      appVersion: 'Blacksite Mod Manager - v2.1.0',
+      appVersion: APP_FULL_TITLE,
       timestamp: new Date().toISOString(),
       os: getDesktopBridge()?.platform || 'Windows 11 x64',
       sptPath: settings.sptDirectory,
@@ -1313,7 +1352,7 @@ export const App: React.FC = () => {
       <WindowsDownloadModal
         isOpen={isDownloadModalOpen}
         onClose={() => setIsDownloadModalOpen(false)}
-        appVersion="2.1.0"
+        appVersion={APP_VERSION}
         onShowToast={showToast}
       />
 

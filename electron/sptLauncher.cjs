@@ -308,12 +308,17 @@ async function launchSptSequence({
   }
 }
 
+let stoppingPromise = null;
+
 /**
  * Graceful Shutdown Guard:
  * Avoids immediate TerminateProcess so SPT.Server can flush in-memory PMC profile JSON saves
  * to user/profiles/*.json. Falls back to tree termination only if hung after grace period.
  */
 async function stopSptServer(onLog, gracePeriodMs = 5000) {
+  if (stoppingPromise) {
+    return stoppingPromise;
+  }
   if (!activeServerProcess && !activeServerPid) {
     return { success: true, notRunning: true };
   }
@@ -329,11 +334,12 @@ async function stopSptServer(onLog, gracePeriodMs = 5000) {
     });
   }
 
-  return new Promise((resolve) => {
+  stoppingPromise = new Promise((resolve) => {
     let resolved = false;
     const finish = (msg) => {
       if (resolved) return;
       resolved = true;
+      stoppingPromise = null;
       activeServerProcess = null;
       activeServerPid = null;
       hasLaunchedClientThisSession = false;

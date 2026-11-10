@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -51,9 +53,10 @@ jobs:
       - name: Create Installer Standalone ZIP Archive
         shell: pwsh
         run: |
+          $pkgVersion = (Get-Content package.json | ConvertFrom-Json).version
           $setupExe = Get-ChildItem -Path release/*Setup*.exe | Select-Object -First 1
           if ($setupExe) {
-            $zipPath = "release/Blacksite-Mod-Manager-Setup-2.1.0.zip"
+            $zipPath = "release/Blacksite-Mod-Manager-Setup-$pkgVersion.zip"
             Write-Host "Creating zip archive containing setup executable: $($setupExe.Name) -> $zipPath"
             Compress-Archive -Path $setupExe.FullName -DestinationPath $zipPath -Force
             if (Test-Path $zipPath) {
@@ -61,6 +64,7 @@ jobs:
               Write-Host "Successfully created $zipPath ($size bytes)"
             }
           }
+          echo "PKG_VERSION=$pkgVersion" >> $env:GITHUB_ENV
 
       - name: Upload Windows Binaries Artifacts
         uses: actions/upload-artifact@v4
@@ -78,9 +82,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          gh release delete v2.1.0-latest --yes --cleanup-tag 2>$null
-          git tag -f v2.1.0-latest ${{ github.sha }}
-          git push origin -f refs/tags/v2.1.0-latest
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v$env:PKG_VERSION" }
+          $latestTag = "v$env:PKG_VERSION-latest"
+          gh release delete $latestTag --yes --cleanup-tag 2>$null
+          git tag -f $latestTag ${{ github.sha }}
+          git push origin -f refs/tags/$latestTag
+          if ($env:GITHUB_REF_TYPE -ne 'tag') {
+            git tag -f $tag ${{ github.sha }} 2>$null
+            git push origin -f refs/tags/$tag 2>$null
+          }
+          echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
 
       - name: Publish or Update GitHub Release
         uses: softprops/action-gh-release@v2
@@ -88,9 +99,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v2.1.0-latest
+          tag_name: ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
-          name: "Blacksite Mod Manager v2.1.0 - Windows Desktop (.exe & .zip)"
+          name: "Blacksite Mod Manager v${{ env.PKG_VERSION }} - Windows Desktop (.exe & .zip)"
           body: |
             ### 🛡️ Blacksite Mod Manager Windows Standalone Release
 
@@ -99,11 +110,11 @@ jobs:
             ---
 
             #### 📦 Available Downloads:
-            - **Setup Installer (`Blacksite-Mod-Manager-Setup-2.1.0.exe`)**
+            - **Setup Installer (`Blacksite-Mod-Manager-Setup-${{ env.PKG_VERSION }}.exe`)**
               *Standard Windows installer with Start Menu shortcuts and uninstaller support.*
-            - **Setup Installer ZIP (`Blacksite-Mod-Manager-Setup-2.1.0.zip`)**
-              *Standalone ZIP archive containing solely Blacksite-Mod-Manager-Setup-2.1.0.exe.*
-            - **Portable Executable (`Blacksite-Mod-Manager-Portable-2.1.0.exe`)**
+            - **Setup Installer ZIP (`Blacksite-Mod-Manager-Setup-${{ env.PKG_VERSION }}.zip`)**
+              *Standalone ZIP archive containing solely Blacksite-Mod-Manager-Setup-${{ env.PKG_VERSION }}.exe.*
+            - **Portable Executable (`Blacksite-Mod-Manager-Portable-${{ env.PKG_VERSION }}.exe`)**
               *Zero-install standalone binary. Run directly from any folder or USB drive.*
 
             ---

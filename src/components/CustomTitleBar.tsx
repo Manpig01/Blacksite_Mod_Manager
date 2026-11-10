@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Minus, Square, Copy, X, Sun, Moon } from 'lucide-react';
 import { useAppEmblem } from '../hooks/useAppEmblem';
 import { getDesktopBridge } from '../services/desktopBridgeService';
+import { APP_FULL_TITLE } from '../constants/appVersion';
 
 interface CustomTitleBarProps {
   theme?: 'dark' | 'light';
@@ -101,7 +102,7 @@ export const CustomTitleBar: React.FC<CustomTitleBarProps> = ({
           className="w-[22px] h-[22px] object-contain drop-shadow rounded-sm"
         />
         <span className="text-[12.5px] font-semibold text-[#E8EAEE] tracking-tight">
-          Blacksite Mod Manager - v2.1.0
+          {APP_FULL_TITLE}
         </span>
       </div>
 

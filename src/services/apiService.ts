@@ -630,12 +630,24 @@ async function syncCatalogDifferential(force = false): Promise<number> {
         localStorage.setItem(LAST_SYNC_KEY, String(latestTimestampEncountered || now));
         rebuildCatalogIndex();
 
-        // Persist top items to localStorage for immediate hydration
+        // Persist top items to localStorage for immediate hydration (pruned to protect quota)
         try {
           const allMods = Array.from(catalogMap.values());
           const trimmed = allMods
             .sort((a, b) => (b.downloads || 0) - (a.downloads || 0))
-            .slice(0, 300);
+            .slice(0, 100)
+            .map((m) => ({
+              id: m.id,
+              name: m.name,
+              slug: m.slug,
+              thumbnail: m.thumbnail,
+              teaser: m.teaser,
+              owner: m.owner ? { id: m.owner.id, name: m.owner.name } : undefined,
+              downloads: m.downloads,
+              category_id: m.category_id,
+              guid: m.guid,
+              latest_version: m.versions?.[0]?.version,
+            }));
           localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(trimmed));
         } catch {
           // Ignore quota errors
@@ -1001,8 +1013,16 @@ export const apiService = {
             throw new Error(`HTTP ${res.status}`);
           }
           const json = await res.json();
-          if (!json || !Array.isArray(json.data) || json.data.length === 0) {
-            throw new Error('Empty live catalog result');
+          if (!json || !Array.isArray(json.data)) {
+            throw new Error('Malformed live catalog response: expected data array');
+          }
+          if (json.data.length === 0) {
+            return {
+              normalizedMods: [],
+              total: json.meta?.total ?? 0,
+              currentPage: json.meta?.current_page ?? page,
+              lastPage: json.meta?.last_page ?? 1,
+            };
           }
           const normalizedMods: Mod[] = [];
           for (const raw of json.data) {

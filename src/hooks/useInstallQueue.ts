@@ -97,9 +97,8 @@ export function useInstallQueue({
             return item;
           })
         );
-        if (data.downloadSpeed) {
-          const pct = typeof data.percent === 'number' && data.stage === 'downloading' ? ` (${data.percent}%)` : '';
-          setStatusText(`${data.modName || 'Mod'}: ${data.downloadSpeed}${pct}`);
+        if (data.stage === 'installed' || data.stage === 'extracting') {
+          setStatusText(`${data.modName || 'Mod'}: ${data.downloadSpeed || data.stage}`);
         }
       });
       return () => {
@@ -120,7 +119,8 @@ export function useInstallQueue({
       archiveBase64?: string,
       archiveFileName?: string,
       sourceMod?: Mod,
-      extraMeta?: Partial<InstalledMod>
+      extraMeta?: Partial<InstalledMod>,
+      archiveFilePath?: string
     ): Promise<boolean> => {
       const queueId = `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const targetGuid = guid || `mod.${modName.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
@@ -166,6 +166,7 @@ export function useInstallQueue({
             version,
             downloadUrl,
             archiveBase64,
+            archiveFilePath,
             archiveFileName: archiveFileName || `${targetGuid}-${version}.archive`,
             performanceMode: settings.extractionPerformanceMode || 'balanced',
           });
@@ -835,7 +836,38 @@ export function useInstallQueue({
 
   const handleInstallFromFile = useCallback(
     (file: File) => {
-      const cleanName = file.name.replace(/\.(zip|7z|rar)$/i, '');
+      const cleanName = file.name.replace(/\.(zip|7z|rar|tar\.gz)$/i, '');
+      const bridge = getDesktopBridge();
+      const localDiskPath = bridge?.getPathForFile ? bridge.getPathForFile(file) : (file as any).path;
+
+      if (localDiskPath && typeof localDiskPath === 'string' && localDiskPath.trim()) {
+        queueInstall(
+          cleanName,
+          'Local Archive',
+          '1.0.0',
+          '',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          file.name,
+          undefined,
+          undefined,
+          localDiskPath
+        );
+        return;
+      }
+
+      // Web preview fallback capped at 100MB to avoid V8 heap exhaustion
+      if (file.size > 100 * 1024 * 1024) {
+        showToast(
+          'Archive Too Large for Browser',
+          'Web preview supports archives under 100MB. Please use the Blacksite Desktop app for large mods.',
+          'error'
+        );
+        return;
+      }
+
       const reader = new FileReader();
 
       reader.onerror = () => {

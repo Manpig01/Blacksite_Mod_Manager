@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { InstalledMod } from '../types';
+import { APP_FULL_TITLE, APP_VERSION } from '../constants/appVersion';
 
 export type ExportFormat = 'json' | 'csv';
 export type ExportScope = 'all' | 'selected' | 'enabled';
@@ -63,8 +64,9 @@ export const ExportModsModal: React.FC<ExportModsModalProps> = ({
   const jsonPayload = useMemo(() => {
     const data = {
       manifestVersion: '1.0.0',
+      appVersion: APP_VERSION,
       exportedAt: new Date().toISOString(),
-      generator: 'Blacksite Mod Manager v2.1.0',
+      generator: APP_FULL_TITLE,
       exportScope: scope,
       summary: {
         totalExported: targetMods.length,

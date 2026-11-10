@@ -350,6 +350,26 @@ export const InstalledModRowCard: React.FC<InstalledModRowCardProps> = React.mem
                 </span>
               </>
             )}
+
+            {/* Target Layout Version Tag */}
+            {mod.serverPath?.includes('SPT_Runtime') ? (
+              <span className="bg-[#162B35] text-[#38BDF8] border border-[#0284C7]/40 text-[9.5px] font-mono font-semibold px-1.5 py-0.2 rounded" title="SPT 4.1+ (SPT_Runtime)">
+                SPT 4.1+
+              </span>
+            ) : mod.serverPath?.includes('SPT/user/mods') || (mod.kind === 'Server' && serverModPath.startsWith('SPT/')) ? (
+              <span className="bg-[#2D1F14] text-[#FB923C] border border-[#EA580C]/40 text-[9.5px] font-mono font-semibold px-1.5 py-0.2 rounded" title="SPT 4.0 Standard Server">
+                SPT 4.0
+              </span>
+            ) : mod.serverPath ? (
+              <span className="bg-[#2A2016] text-[#F59E0B] border border-[#D97706]/40 text-[9.5px] font-mono font-semibold px-1.5 py-0.2 rounded" title="SPT 3.x Legacy Server">
+                SPT 3.x
+              </span>
+            ) : null}
+            {mod.clientPath && (
+              <span className="bg-[#0D2428] text-[#22D3EE] border border-[#06B6D4]/40 text-[9.5px] font-mono font-semibold px-1.5 py-0.2 rounded" title="BepInEx 5.x Plugin">
+                BepInEx
+              </span>
+            )}
           </div>
 
           {/* Custom Tags Row */}
@@ -389,28 +409,36 @@ export const InstalledModRowCard: React.FC<InstalledModRowCardProps> = React.mem
             </button>
           </div>
 
-          {/* Version & path stats */}
-          <div className="text-[11px] text-[#9AA3AF] mt-1 truncate">
-            <span>v{mod.version}</span>
+          {/* Version Tag Badge & path stats */}
+          <div className="flex items-center gap-1.5 text-[11px] text-[#9AA3AF] mt-1.5 truncate">
+            {mod.hasUpdate ? (
+              <span
+                className="inline-flex items-center gap-1 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#EA580C]/20 text-[#EA580C] border border-[#EA580C]/50 shadow-2xs"
+                title={`Installed: v${mod.version} · Update available: v${mod.latestVersion}`}
+              >
+                <ArrowUpCircle className="w-3 h-3 text-[#EA580C]" />
+                <span>v{mod.version.replace(/^v/i, '')} → v{mod.latestVersion?.replace(/^v/i, '')}</span>
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#181B20] text-[#E8EAEE] border border-[#2A2F38] shadow-2xs"
+                title={`Installed version: v${mod.version}`}
+              >
+                v{mod.version.replace(/^v/i, '')}
+              </span>
+            )}
+
             {mod.serverPath && (
-              <span className="text-[#6B7480] ml-1.5">
+              <span className="text-[#6B7480] truncate font-mono text-[10px]">
                 · <HighlightText text={mod.serverPath.split('/').pop() || ''} query={searchText} />
               </span>
             )}
             {mod.clientPath && !mod.serverPath && (
-              <span className="text-[#6B7480] ml-1.5">
+              <span className="text-[#6B7480] truncate font-mono text-[10px]">
                 · <HighlightText text={mod.clientPath.split('/').pop() || ''} query={searchText} />
               </span>
             )}
           </div>
-
-          {/* Update Notice */}
-          {mod.hasUpdate && (
-            <div className="flex items-center gap-1 text-[11px] text-[#EA580C] font-semibold mt-1">
-              <ArrowUpCircle className="w-3 h-3" />
-              <span>Update available: v{mod.latestVersion}</span>
-            </div>
-          )}
         </div>
 
         {/* Action Row */}

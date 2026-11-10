@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 function getSafeCpuCount() {
   try {
@@ -9,12 +9,25 @@ function getSafeCpuCount() {
   return 4;
 }
 
+let appVersion = '2.1.0';
+try {
+  appVersion = require('../package.json').version || '2.1.0';
+} catch (_) {}
+
 // Expose safe desktop environment flags and helper APIs to sandboxed renderer process
 contextBridge.exposeInMainWorld('desktopBridge', {
   isElectron: true,
   platform: (typeof process !== 'undefined' && process.platform) || 'win32',
-  version: '2.1.0',
+  version: appVersion,
   cpuCount: getSafeCpuCount(),
+  getPathForFile: (file) => {
+    try {
+      if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        return webUtils.getPathForFile(file);
+      }
+    } catch (_) {}
+    return (file && file.path) || null;
+  },
   selectDirectory: (defaultPath) => ipcRenderer.invoke('dialog:select-directory', defaultPath),
   inspectSptDirectory: (targetPath) => ipcRenderer.invoke('spt:inspect-directory', targetPath),
   fetchImageDataUrl: (url) => ipcRenderer.invoke('forge:fetch-image-data-url', url),

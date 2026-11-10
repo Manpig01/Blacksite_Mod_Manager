@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 
 import { EmblemUploader } from './EmblemUploader';
+import { APP_VERSION } from '../constants/appVersion';
 
 interface WindowsDownloadModalProps {
   isOpen: boolean;
@@ -28,11 +29,11 @@ interface WindowsDownloadModalProps {
 export const WindowsDownloadModal: React.FC<WindowsDownloadModalProps> = ({
   isOpen,
   onClose,
-  appVersion = '2.1.0',
+  appVersion = APP_VERSION,
   onShowToast,
 }) => {
   const [activeTab, setActiveTab] = useState<'downloads' | 'pipeline' | 'guide'>('downloads');
-  const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager-TEST');
+  const [repoSlug, setRepoSlug] = useState('Manpig01/Blacksite_Mod_Manager');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const { emblemSrc, defaultEmblem, fallbackEmblem } = useAppEmblem();
 
