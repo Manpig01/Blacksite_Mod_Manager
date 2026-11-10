@@ -178,7 +178,7 @@ export const profileService = {
       required: true,
       loadPriority: profile.customLoadOrder?.[mod.id] ?? mod.loadOrder ?? 100,
       kind: mod.kind,
-      downloadUrl: mod.modId ? `https://files.sp-mod.com/mods/${mod.id}-${mod.version}.zip` : undefined,
+      downloadUrl: mod.modId ? `https://files.sp-mod.com/mods/${mod.modId}.zip` : undefined,
     }));
 
     const configOverrides: Record<string, string> = {};

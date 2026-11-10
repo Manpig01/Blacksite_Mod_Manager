@@ -181,7 +181,10 @@ export function isSptVersionCompatible(constraint?: string | null, targetSptVers
   }
 
   // Exact/version prefix match without operator (e.g. "3.8.0" or "4.0")
-  if (baseParts.length >= 2) {
+  if (baseParts.length >= 3) {
+    return tMajor === bMajor && tMinor === bMinor && tPatch === bPatch;
+  }
+  if (baseParts.length === 2) {
     return tMajor === bMajor && tMinor === bMinor;
   }
   return tMajor === bMajor;

@@ -20,6 +20,7 @@ import {
   sortModVersionsByMostRecent,
   isSptVersionCompatible,
   findMatchingModVersion,
+  compareVersionsDesc,
 } from '../utils/versionUtils';
 
 const API_BASE = 'https://sp-mod.com/api/v0';
@@ -1782,7 +1783,7 @@ export const apiService = {
 
       if (catalogMod && catalogMod.versions && catalogMod.versions.length > 0) {
         const matchingVer = findMatchingModVersion(catalogMod.versions, cleanSpt) || catalogMod.versions[0];
-        if (matchingVer && matchingVer.version && matchingVer.version !== m.version) {
+        if (matchingVer && matchingVer.version && compareVersionsDesc(matchingVer.version, m.version) < 0) {
           updatedModsMap.set(m.id, {
             installedModId: m.id,
             modId: catalogMod.id,

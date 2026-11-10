@@ -21,6 +21,7 @@ const {
   streamDownloadToFile,
   scanInstalledMods,
   assertSafeSptTarget,
+  toggleModDisable,
 } = require('../electron/modInstaller.cjs');
 
 function makeTempDir(prefix = 'blacksite-test-') {
@@ -356,6 +357,43 @@ test('assertSafeSptTarget strictly rejects targeting or escaping SPT root direct
   // Safe subpath inside user/mods must succeed and return resolved target
   const safePath = path.join(fakeSpt, 'user', 'mods', 'MyMod');
   assert.equal(assertSafeSptTarget(safePath, fakeSpt), path.resolve(safePath));
+});
+
+test('toggleModDisable enforces assertSafeSptTarget and safely renames mod folders', async (t) => {
+  const tmpRoot = makeTempDir('blacksite-toggle-');
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  const modDir = path.join(tmpRoot, 'user', 'mods', 'TestToggleMod');
+  fs.mkdirSync(modDir, { recursive: true });
+  fs.writeFileSync(path.join(modDir, 'package.json'), '{"name":"TestToggleMod"}');
+
+  // Disabling mod appends .disabled
+  const disRes = await toggleModDisable({
+    sptDirectory: tmpRoot,
+    serverPath: 'user/mods/TestToggleMod',
+    disable: true,
+  });
+  assert.equal(disRes.serverPath, 'user/mods/TestToggleMod.disabled');
+  assert.equal(fs.existsSync(path.join(tmpRoot, 'user', 'mods', 'TestToggleMod.disabled')), true);
+  assert.equal(fs.existsSync(modDir), false);
+
+  // Enabling mod removes .disabled
+  const enRes = await toggleModDisable({
+    sptDirectory: tmpRoot,
+    serverPath: 'user/mods/TestToggleMod.disabled',
+    disable: false,
+  });
+  assert.equal(enRes.serverPath, 'user/mods/TestToggleMod');
+  assert.equal(fs.existsSync(modDir), true);
+  assert.equal(fs.existsSync(path.join(tmpRoot, 'user', 'mods', 'TestToggleMod.disabled')), false);
+
+  // Traversal path outside sptDirectory must be rejected safely
+  const escapeRes = await toggleModDisable({
+    sptDirectory: tmpRoot,
+    serverPath: '../../outside-payload',
+    disable: true,
+  });
+  assert.equal(escapeRes.serverPath, '../../outside-payload');
 });
 
 

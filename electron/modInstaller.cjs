@@ -3047,7 +3047,7 @@ async function streamDownloadToFile(initialUrl, destFilePath, onProgress, maxRet
               `Download stream truncated prematurely: received ${receivedBytes} of ${totalBytes} bytes.`
             );
             truncErr.code = 'ERR_STREAM_TRUNCATED';
-            abortStreamWithError(truncErr);
+            failStream(truncErr);
             return;
           }
           isFinished = true;
@@ -3617,6 +3617,14 @@ async function toggleModDisable({ sptDirectory, serverPath, clientPath, clientPa
   function handlePath(targetPath) {
     if (!targetPath) return null;
     const full = path.isAbsolute(targetPath) ? targetPath : path.join(sptDirectory, targetPath);
+
+    try {
+      assertSafeSptTarget(full, sptDirectory);
+    } catch (e) {
+      console.warn('[toggleModDisable] Target path failed safety check:', e.message);
+      return targetPath;
+    }
+
     const basename = path.basename(full);
     if (isProtectedCoreItem(basename)) return targetPath;
 

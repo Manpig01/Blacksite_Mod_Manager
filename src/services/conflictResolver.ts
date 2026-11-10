@@ -83,7 +83,7 @@ function resolveModDependencies(mod: InstalledMod, allModsMap: Map<string, Insta
 }
 
 /**
- * Builds directed dependency graph: A -> B means "A requires B to load first".
+ * Builds directed dependency graph: A -> B means "A must load before B (A is a prerequisite of B)".
  */
 export function buildDependencyGraph(installedMods: InstalledMod[]) {
   const activeMods = installedMods.filter((m) => !m.isDisabled);
@@ -109,23 +109,24 @@ export function buildDependencyGraph(installedMods: InstalledMod[]) {
     for (const rawDep of rawDeps) {
       const targetId = idMap.get(normalizeIdentifier(rawDep)) || (modMap.has(rawDep) ? rawDep : null);
       if (targetId && targetId !== m.id && modMap.has(targetId)) {
-        const currentList = adj.get(m.id) || [];
-        if (!currentList.includes(targetId)) {
-          currentList.push(targetId);
-          adj.set(m.id, currentList);
+        // targetId is a prerequisite for m => targetId must load before m, so targetId -> m
+        const currentList = adj.get(targetId) || [];
+        if (!currentList.includes(m.id)) {
+          currentList.push(m.id);
+          adj.set(targetId, currentList);
         }
       }
     }
 
-    // loadBefore constraints (A must load before B => B depends on A, so B -> A)
+    // loadBefore constraints (m must load before targetB => m -> targetB)
     if (Array.isArray((m as any).loadBefore)) {
       for (const before of (m as any).loadBefore) {
         const targetB = idMap.get(normalizeIdentifier(before)) || (modMap.has(before) ? before : null);
         if (targetB && targetB !== m.id && modMap.has(targetB)) {
-          const bList = adj.get(targetB) || [];
-          if (!bList.includes(m.id)) {
-            bList.push(m.id);
-            adj.set(targetB, bList);
+          const mList = adj.get(m.id) || [];
+          if (!mList.includes(targetB)) {
+            mList.push(targetB);
+            adj.set(m.id, mList);
           }
         }
       }
@@ -330,11 +331,22 @@ export function detectFileCollisions(
 
   for (const mod of activeMods) {
     // 1. Client path (.dll plugin)
-    if (mod.clientPath) {
-      registerPath(mod.clientPath, mod);
-      // Also register file base name if direct DLL
-      const baseName = mod.clientPath.split('/').pop();
-      if (baseName && baseName.toLowerCase().endsWith('.dll')) {
+    const clientPathList = Array.isArray((mod as any).clientPaths) && (mod as any).clientPaths.length > 0
+      ? Array.from(new Set([mod.clientPath, ...(mod as any).clientPaths].filter(Boolean) as string[]))
+      : mod.clientPath
+        ? [mod.clientPath]
+        : [];
+
+    for (const cp of clientPathList) {
+      registerPath(cp, mod);
+      const normClient = cp.replace(/\\/g, '/');
+      const parts = normClient.split('/').filter(Boolean);
+      const baseName = parts[parts.length - 1];
+      const isRootPlugin =
+        parts.length === 1 ||
+        (parts.length === 3 && parts[0].toLowerCase() === 'bepinex' && parts[1].toLowerCase() === 'plugins');
+
+      if (isRootPlugin && baseName && baseName.toLowerCase().endsWith('.dll')) {
         registerPath(`BepInEx/plugins/${baseName}`, mod);
       }
     }
